@@ -1,8 +1,8 @@
 """
-WW-Link Protocol Layer
+LXB-Link Protocol Layer
 
 This module handles binary frame packing and unpacking operations with CRC32
-validation for the WW-Link reliable UDP protocol.
+validation for the LXB-Link reliable UDP protocol.
 
 Frame Format (Little Endian):
 ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
@@ -27,14 +27,14 @@ from .constants import (
     ERR_INVALID_VERSION,
     ERR_INVALID_CRC,
     ERR_INVALID_PAYLOAD_SIZE,
-    WWProtocolError,
-    WWChecksumError,
+    LXBProtocolError,
+    LXBChecksumError,
 )
 
 
 class ProtocolFrame:
     """
-    WW-Link protocol frame handler for packing and unpacking binary data.
+    LXB-Link protocol frame handler for packing and unpacking binary data.
 
     This class provides methods to construct binary frames from command data
     and parse received frames with comprehensive validation.
@@ -66,12 +66,12 @@ class ProtocolFrame:
             Complete binary frame with header, payload, and CRC32
 
         Raises:
-            WWProtocolError: If payload size exceeds maximum allowed size
+            LXBProtocolError: If payload size exceeds maximum allowed size
         """
         # Validate payload size
         payload_len = len(payload)
         if payload_len > MAX_PAYLOAD_SIZE:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Payload size {payload_len} exceeds maximum {MAX_PAYLOAD_SIZE}",
                 ERR_INVALID_PAYLOAD_SIZE
             )
@@ -110,12 +110,12 @@ class ProtocolFrame:
             Tuple of (sequence_number, command_id, payload)
 
         Raises:
-            WWProtocolError: If frame validation fails (magic/version mismatch)
-            WWChecksumError: If CRC32 checksum validation fails
+            LXBProtocolError: If frame validation fails (magic/version mismatch)
+            LXBChecksumError: If CRC32 checksum validation fails
         """
         # Validate minimum frame size
         if len(frame) < MIN_FRAME_SIZE:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Frame too short: {len(frame)} bytes (minimum {MIN_FRAME_SIZE})",
                 ERR_INVALID_MAGIC
             )
@@ -129,7 +129,7 @@ class ProtocolFrame:
         received_crc = struct.unpack(ProtocolFrame.CRC_FORMAT, received_crc_bytes)[0]
 
         if calculated_crc != received_crc:
-            raise WWChecksumError(
+            raise LXBChecksumError(
                 f"CRC mismatch: calculated 0x{calculated_crc:08X}, "
                 f"received 0x{received_crc:08X}"
             )
@@ -142,14 +142,14 @@ class ProtocolFrame:
 
         # Validate magic number
         if magic != MAGIC:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid magic number: 0x{magic:04X} (expected 0x{MAGIC:04X})",
                 ERR_INVALID_MAGIC
             )
 
         # Validate protocol version
         if version != VERSION:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid protocol version: 0x{version:02X} (expected 0x{VERSION:02X})",
                 ERR_INVALID_VERSION
             )
@@ -159,7 +159,7 @@ class ProtocolFrame:
 
         # Validate payload length matches header declaration
         if len(payload) != payload_len:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Payload length mismatch: header declares {payload_len}, "
                 f"actual {len(payload)}",
                 ERR_INVALID_PAYLOAD_SIZE
@@ -198,10 +198,10 @@ class ProtocolFrame:
             Tuple of (x, y) coordinates
 
         Raises:
-            WWProtocolError: If payload size is invalid
+            LXBProtocolError: If payload size is invalid
         """
         if len(payload) != 4:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid TAP payload size: {len(payload)} (expected 4)",
                 ERR_INVALID_PAYLOAD_SIZE
             )
@@ -278,7 +278,7 @@ class ProtocolFrame:
             Tuple of (img_id, total_size, num_chunks)
         """
         if len(payload) != 10:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid IMG_META payload size: {len(payload)} (expected 10)",
                 ERR_INVALID_PAYLOAD_SIZE
             )
@@ -318,7 +318,7 @@ class ProtocolFrame:
             Tuple of (chunk_index, chunk_data)
         """
         if len(payload) < 2:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid IMG_CHUNK payload size: {len(payload)} (minimum 2)",
                 ERR_INVALID_PAYLOAD_SIZE
             )
@@ -360,14 +360,14 @@ class ProtocolFrame:
             List of missing chunk indices
         """
         if len(payload) < 2:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"Invalid IMG_MISSING payload size: {len(payload)} (minimum 2)",
                 ERR_INVALID_PAYLOAD_SIZE
             )
 
         count = struct.unpack('<H', payload[:2])[0]
         if len(payload) != 2 + count * 2:
-            raise WWProtocolError(
+            raise LXBProtocolError(
                 f"IMG_MISSING payload size mismatch: expected {2 + count * 2}, got {len(payload)}",
                 ERR_INVALID_PAYLOAD_SIZE
             )

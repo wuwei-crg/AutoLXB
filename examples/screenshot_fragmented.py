@@ -17,7 +17,7 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
     print()
 
     # Create client
-    client = WWLinkClient('192.168.1.100', port=12345)
+    client = LXBLinkClient('192.168.1.100', port=12345)
 
     try:
         # Connect
@@ -86,7 +86,7 @@ def context_manager_example():
     print("=" * 50)
     print()
 
-    with WWLinkClient('192.168.1.100', port=12345) as client:
+    with LXBLinkClient('192.168.1.100', port=12345) as client:
         # Handshake
         client.handshake()
 

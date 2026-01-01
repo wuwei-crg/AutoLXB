@@ -2,7 +2,7 @@
 
 ## 概述
 
-为 WW-Link 协议库实现了基于**分片 + 选择性重传 (Fragmentation & Selective Repeat)** 的截图传输机制，专门用于高效传输大尺寸截图数据（50KB-200KB）。
+为 LXB-Link 协议库实现了基于**分片 + 选择性重传 (Fragmentation & Selective Repeat)** 的截图传输机制，专门用于高效传输大尺寸截图数据（50KB-200KB）。
 
 ## 🎯 核心特性
 
@@ -131,7 +131,7 @@ class Transport:
 用户友好的高级 API：
 
 ```python
-class WWLinkClient:
+class LXBLinkClient:
     def request_screenshot(self) -> bytes:
         """
         请求截图（分片传输模式，推荐）
@@ -180,9 +180,9 @@ def handle_screenshot_request(sock, addr, seq, packet_loss_rate):
 ### 基础用法
 
 ```python
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
-with WWLinkClient('192.168.1.100', port=12345) as client:
+with LXBLinkClient('192.168.1.100', port=12345) as client:
     # 握手
     client.handshake()
 
@@ -201,7 +201,7 @@ with WWLinkClient('192.168.1.100', port=12345) as client:
 ```python
 import time
 
-with WWLinkClient('192.168.1.100') as client:
+with LXBLinkClient('192.168.1.100') as client:
     client.handshake()
 
     # 方法 1: 分片传输（推荐）
@@ -263,7 +263,7 @@ python examples/screenshot_fragmented.py
 ✅ Connected!
 
 🤝 Performing handshake...
-✅ Handshake Success: WW-Link v1.0
+✅ Handshake Success: LXB-Link v1.0
    Time: 1.2ms
 
 --------------------------------------------------------------------
@@ -421,7 +421,7 @@ MIT License
 
 ## 👨‍💻 作者
 
-WW-Link Development Team
+LXB-Link Development Team
 
 ---
 

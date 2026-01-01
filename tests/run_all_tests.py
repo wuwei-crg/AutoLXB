@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WW-Link Quick Test Runner
+LXB-Link Quick Test Runner
 
 This script runs both basic and advanced tests automatically.
 It starts the mock device server and runs tests in sequence.
@@ -16,7 +16,7 @@ def run_test_suite():
     """Run complete test suite."""
 
     print("=" * 70)
-    print("WW-Link Automated Test Suite")
+    print("LXB-Link Automated Test Suite")
     print("=" * 70)
     print()
 

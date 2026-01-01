@@ -5,10 +5,10 @@
 ### 1. 客户端使用（新 API）
 
 ```python
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
 # 使用 Context Manager（推荐）
-with WWLinkClient('192.168.1.100', port=12345) as client:
+with LXBLinkClient('192.168.1.100', port=12345) as client:
     # 握手
     client.handshake()
 
@@ -40,10 +40,10 @@ python tests/test_screenshot_fragmented.py
 ## 📁 新增文件
 
 ### 核心实现
-- ✅ `src/ww_link/constants.py` - 新增命令定义（已扩展）
-- ✅ `src/ww_link/protocol.py` - 协议打包/解包（已扩展）
-- ✅ `src/ww_link/transport.py` - 客户端传输逻辑（新增方法）
-- ✅ `src/ww_link/client.py` - 高级 API（新增方法）
+- ✅ `src/lxb_link/constants.py` - 新增命令定义（已扩展）
+- ✅ `src/lxb_link/protocol.py` - 协议打包/解包（已扩展）
+- ✅ `src/lxb_link/transport.py` - 客户端传输逻辑（新增方法）
+- ✅ `src/lxb_link/client.py` - 高级 API（新增方法）
 - ✅ `tests/mock_device.py` - 服务端处理逻辑（已扩展）
 
 ### 测试和示例
@@ -74,9 +74,9 @@ python tests/test_screenshot_fragmented.py
 
 ```python
 import time
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
-with WWLinkClient('127.0.0.1', 12345) as client:
+with LXBLinkClient('127.0.0.1', 12345) as client:
     client.handshake()
 
     # 分片传输（推荐）
@@ -173,7 +173,7 @@ python tests/test_screenshot_fragmented.py
 
 ### 问题 1: 传输超时
 ```
-❌ WWTimeoutError: Failed to receive all chunks after 3 retries
+❌ LXBTimeoutError: Failed to receive all chunks after 3 retries
 ```
 
 **解决方案**：
@@ -183,7 +183,7 @@ python tests/test_screenshot_fragmented.py
 
 ### 问题 2: 导入错误
 ```
-ModuleNotFoundError: No module named 'ww_link'
+ModuleNotFoundError: No module named 'lxb_link'
 ```
 
 **解决方案**：

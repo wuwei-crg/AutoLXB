@@ -1,4 +1,4 @@
-# WW-Link: Reliable UDP Protocol for Android Device Control
+# LXB-Link: Reliable UDP Protocol for Android Device Control
 
 一个专为控制 Android 设备设计的**基于 UDP 的可靠应用层协议栈** (Reliable UDP Protocol)，采用 **Stop-and-Wait ARQ** 机制，在弱网环境下实现指令"必达"。
 
@@ -14,8 +14,8 @@
 ## 📦 项目结构
 
 ```
-WW-Link/
-├── src/ww-link/          # 核心库代码
+LXB-Link/
+├── src/lxb-link/          # 核心库代码
 │   ├── __init__.py       # 包导出
 │   ├── constants.py      # 协议常量和异常
 │   ├── protocol.py       # 二进制帧封包/解包
@@ -59,7 +59,7 @@ WW-Link/
 
 ```bash
 # 方法 1: 直接使用 (无需安装)
-cd WW-Link
+cd LXB-Link
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 
 # 方法 2: 开发安装 (推荐)
@@ -69,10 +69,10 @@ pip install -e .
 ### 基本用法
 
 ```python
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
 # 使用 Context Manager (推荐)
-with WWLinkClient('192.168.1.100', port=12345) as client:
+with LXBLinkClient('192.168.1.100', port=12345) as client:
     # 握手
     client.handshake()
 
@@ -94,9 +94,9 @@ with WWLinkClient('192.168.1.100', port=12345) as client:
 ### 手动连接管理
 
 ```python
-from ww_link import WWLinkClient, WWTimeoutError
+from lxb_link import LXBLinkClient, LXBTimeoutError
 
-client = WWLinkClient('192.168.1.100', port=12345, timeout=2.0)
+client = LXBLinkClient('192.168.1.100', port=12345, timeout=2.0)
 
 try:
     client.connect()
@@ -105,7 +105,7 @@ try:
     # 自定义命令
     response = client.send_custom_command(0xFF, b'payload', reliable=True)
 
-except WWTimeoutError as e:
+except LXBTimeoutError as e:
     print(f"超时错误: {e}")
 finally:
     client.disconnect()
@@ -115,7 +115,7 @@ finally:
 
 ### 测试套件概览
 
-WW-Link 提供两套测试程序:
+LXB-Link 提供两套测试程序:
 
 1. **基础测试** (`test_basic.py`) - 验证核心功能
 2. **高级测试** (`test_advanced.py`) - 测试丢包重传和大数据传输
@@ -152,12 +152,12 @@ python test_basic.py
 
 ```
 ============================================================
-WW-Link Client Test Suite
+LXB-Link Client Test Suite
 ============================================================
 
 --- Test 1: Handshake ---
 ✅ Handshake Success!
-   Response: b'WW-Link v1.0'
+   Response: b'LXB-Link v1.0'
    Time: 0.50ms
 
 --- Test 2: Tap Command ---
@@ -359,7 +359,7 @@ Total: 4/4 tests passed (100%)
    │        ┌──────────┐
    └────────│  FAILED  │
             └──────────┘
-       (Raise WWTimeoutError)
+       (Raise LXBTimeoutError)
 ```
 
 ## ⚙️ 配置参数
@@ -374,21 +374,21 @@ Total: 4/4 tests passed (100%)
 ## 🛡️ 异常处理
 
 ```python
-from ww_link import (
-    WWLinkError,        # 基础异常类
-    WWTimeoutError,     # 超时异常
-    WWProtocolError,    # 协议验证失败
-    WWChecksumError     # CRC32 校验失败
+from lxb_link import (
+    LXBLinkError,        # 基础异常类
+    LXBTimeoutError,     # 超时异常
+    LXBProtocolError,    # 协议验证失败
+    LXBChecksumError     # CRC32 校验失败
 )
 
 try:
-    with WWLinkClient('192.168.1.100') as client:
+    with LXBLinkClient('192.168.1.100') as client:
         client.tap(100, 200)
-except WWTimeoutError as e:
+except LXBTimeoutError as e:
     print(f"操作超时: {e}")
-except WWProtocolError as e:
+except LXBProtocolError as e:
     print(f"协议错误: {e}")
-except WWChecksumError as e:
+except LXBChecksumError as e:
     print(f"数据损坏: {e}")
 ```
 
@@ -411,9 +411,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-from ww_link import WWLinkClient
+from lxb_link import LXBLinkClient
 
-with WWLinkClient('192.168.1.100') as client:
+with LXBLinkClient('192.168.1.100') as client:
     client.tap(100, 200)
 ```
 
@@ -434,7 +434,7 @@ MIT License
 
 ## 👨‍💻 作者
 
-WW-Link Development Team
+LXB-Link Development Team
 
 ---
 

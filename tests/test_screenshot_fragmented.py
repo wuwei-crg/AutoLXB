@@ -25,7 +25,7 @@ if sys.platform == 'win32':
 # Add src to path for importing ww_link package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link import WWLinkClient, WWTimeoutError
+from lxb_link import LXBLinkClient, LXBTimeoutError
 
 
 def test_fragmented_screenshot_transfer():
@@ -35,7 +35,7 @@ def test_fragmented_screenshot_transfer():
     print("=" * 70)
     print()
 
-    client = WWLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=3)
+    client = LXBLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=3)
 
     try:
         # Step 1: Connect
@@ -129,7 +129,7 @@ def test_fragmented_screenshot_transfer():
         print("  ✓ Suitable for large screenshots (50KB-200KB)")
         print()
 
-    except WWTimeoutError as e:
+    except LXBTimeoutError as e:
         print(f"\n❌ Timeout Error: {e}")
         print("\n💡 Troubleshooting:")
         print("   1. Ensure mock_device.py is running:")
@@ -167,7 +167,7 @@ def test_with_high_packet_loss():
     input("Press Enter when ready to start stress test...")
     print()
 
-    client = WWLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=3)
+    client = LXBLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=3)
 
     try:
         client.connect()
@@ -191,7 +191,7 @@ def test_with_high_packet_loss():
 
         return True
 
-    except WWTimeoutError as e:
+    except LXBTimeoutError as e:
         print(f"\n❌ Transfer Failed: {e}")
         return False
 
@@ -208,7 +208,7 @@ def test_with_high_packet_loss():
 if __name__ == "__main__":
     print()
     print("╔" + "=" * 68 + "╗")
-    print("║" + " " * 10 + "WW-Link Fragmented Screenshot Test Suite" + " " * 16 + "║")
+    print("║" + " " * 10 + "LXB-Link Fragmented Screenshot Test Suite" + " " * 16 + "║")
     print("╚" + "=" * 68 + "╝")
     print()
 

@@ -1,5 +1,5 @@
 """
-WW-Link Setup Configuration
+LXB-Link Setup Configuration
 
 Install the package in development mode:
     pip install -e .
@@ -15,17 +15,17 @@ try:
     with open("README.md", "r", encoding="utf-8") as fh:
         long_description = fh.read()
 except FileNotFoundError:
-    long_description = "WW-Link: Reliable UDP Protocol for Android Device Control"
+    long_description = "LXB-Link: Reliable UDP Protocol for Android Device Control"
 
 setup(
-    name="ww-link",
+    name="lxb-link",
     version="1.0.0",
-    author="WW-Link Development Team",
-    author_email="dev@ww-link.example.com",
+    author="LXB-Link Development Team",
+    author_email="dev@lxb-link.example.com",
     description="Reliable UDP Protocol for Android Device Control using Stop-and-Wait ARQ",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ww-link",
+    url="https://github.com/yourusername/lxb-link",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     classifiers=[
@@ -71,8 +71,8 @@ setup(
         "networking",
     ],
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/ww-link/issues",
-        "Source": "https://github.com/yourusername/ww-link",
-        "Documentation": "https://github.com/yourusername/ww-link/blob/main/README.md",
+        "Bug Reports": "https://github.com/yourusername/lxb-link/issues",
+        "Source": "https://github.com/yourusername/lxb-link",
+        "Documentation": "https://github.com/yourusername/lxb-link/blob/main/README.md",
     },
 )

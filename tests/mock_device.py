@@ -1,7 +1,7 @@
 """
 Mock Android Device Server for Testing
 
-This script simulates an Android device that responds to WW-Link protocol commands.
+This script simulates an Android device that responds to LXB-Link protocol commands.
 It receives commands via UDP, validates frames, and sends ACK responses.
 
 Features:
@@ -33,8 +33,8 @@ if sys.platform == 'win32':
 # Add src to path for importing ww_link package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link.protocol import ProtocolFrame
-from ww_link.constants import (
+from lxb_link.protocol import ProtocolFrame
+from lxb_link.constants import (
     CMD_ACK,
     CMD_TAP,
     CMD_SCREENSHOT,
@@ -47,8 +47,8 @@ from ww_link.constants import (
     CMD_IMG_MISSING,
     CMD_IMG_FIN,
     CHUNK_SIZE,
-    WWProtocolError,
-    WWChecksumError,
+    LXBProtocolError,
+    LXBChecksumError,
 )
 
 
@@ -207,7 +207,7 @@ def handle_screenshot_request(
                 else:
                     print(f"⚠️  Unexpected command during transfer: 0x{recv_cmd:02X}")
 
-            except (WWProtocolError, WWChecksumError) as e:
+            except (LXBProtocolError, LXBChecksumError) as e:
                 print(f"❌ Invalid frame received: {e}")
                 continue
 
@@ -257,10 +257,10 @@ def run_mock_device(port=12345, packet_loss_rate=0.0):
                 seq, cmd, payload = ProtocolFrame.unpack(data)
                 print(f"✅ Valid frame: Seq={seq}, Cmd=0x{cmd:02X}, Payload={len(payload)} bytes")
 
-            except WWChecksumError as e:
+            except LXBChecksumError as e:
                 print(f"❌ CRC Error: {e}")
                 continue
-            except WWProtocolError as e:
+            except LXBProtocolError as e:
                 print(f"❌ Protocol Error: {e}")
                 continue
             except Exception as e:
@@ -279,7 +279,7 @@ def run_mock_device(port=12345, packet_loss_rate=0.0):
 
             if cmd == CMD_HANDSHAKE:
                 print(f"   🤝 [Action] Handshake received")
-                payload_to_send = b'WW-Link v1.0'
+                payload_to_send = b'LXB-Link v1.0'
 
             elif cmd == CMD_TAP:
                 if len(payload) == 4:

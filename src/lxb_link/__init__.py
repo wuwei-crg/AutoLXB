@@ -1,5 +1,5 @@
 """
-WW-Link: Reliable UDP Protocol for Android Device Control
+LXB-Link: Reliable UDP Protocol for Android Device Control
 
 A high-performance, reliable communication library for controlling Android devices
 over UDP using Stop-and-Wait ARQ protocol with automatic retry mechanism.
@@ -12,19 +12,19 @@ Features:
 - Context manager support for easy resource management
 
 Example:
-    >>> from ww_link import WWLinkClient
+    >>> from lxb_link import LXBLinkClient
     >>>
-    >>> with WWLinkClient('192.168.1.100') as client:
+    >>> with LXBLinkClient('192.168.1.100') as client:
     ...     client.handshake()
     ...     client.tap(500, 800)
     ...     data = client.screenshot()
 
 Version: 1.0.0
-Author: WW-Link Development Team
+Author: LXB-Link Development Team
 License: MIT
 """
 
-from .client import WWLinkClient
+from .client import LXBLinkClient
 from .constants import (
     # Protocol constants
     MAGIC,
@@ -44,20 +44,20 @@ from .constants import (
     MAX_RETRIES,
 
     # Exceptions
-    WWLinkError,
-    WWTimeoutError,
-    WWProtocolError,
-    WWChecksumError,
+    LXBLinkError,
+    LXBTimeoutError,
+    LXBProtocolError,
+    LXBChecksumError,
 )
 from .protocol import ProtocolFrame
 from .transport import Transport
 
 
 __version__ = '1.0.0'
-__author__ = 'WW-Link Development Team'
+__author__ = 'LXB-Link Development Team'
 __all__ = [
     # Main client class
-    'WWLinkClient',
+    'LXBLinkClient',
 
     # Protocol components
     'ProtocolFrame',
@@ -77,10 +77,10 @@ __all__ = [
     'MAX_RETRIES',
 
     # Exceptions
-    'WWLinkError',
-    'WWTimeoutError',
-    'WWProtocolError',
-    'WWChecksumError',
+    'LXBLinkError',
+    'LXBTimeoutError',
+    'LXBProtocolError',
+    'LXBChecksumError',
 ]
 
 

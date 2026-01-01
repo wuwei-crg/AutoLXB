@@ -1,5 +1,5 @@
 """
-WW-Link Transport Layer
+LXB-Link Transport Layer
 
 This module implements the reliable UDP transport layer using Stop-and-Wait ARQ
 (Automatic Repeat Request) protocol for guaranteed delivery in unreliable networks.
@@ -31,9 +31,9 @@ from .constants import (
     ERR_MAX_RETRIES,
     ERR_SEQ_MISMATCH,
     ERR_INVALID_ACK,
-    WWTimeoutError,
-    WWProtocolError,
-    WWChecksumError,
+    LXBTimeoutError,
+    LXBProtocolError,
+    LXBChecksumError,
 )
 from .protocol import ProtocolFrame
 
@@ -141,7 +141,7 @@ class Transport:
             OSError: If socket send operation fails
         """
         if not self._connected or not self._sock:
-            raise WWProtocolError("Transport not connected", 0)
+            raise LXBProtocolError("Transport not connected", 0)
 
         self._sock.sendto(frame, (self.remote_host, self.remote_port))
         logger.debug(f"Sent frame: {len(frame)} bytes")
@@ -158,7 +158,7 @@ class Transport:
             OSError: If socket receive operation fails
         """
         if not self._connected or not self._sock:
-            raise WWProtocolError("Transport not connected", 0)
+            raise LXBProtocolError("Transport not connected", 0)
 
         data, addr = self._sock.recvfrom(SOCKET_BUFFER_SIZE)
         logger.debug(f"Received frame: {len(data)} bytes from {addr}")
@@ -178,7 +178,7 @@ class Transport:
            - If invalid or mismatched -> DISCARD and continue waiting
         5. On timeout:
            - RETRY: Increment retry counter and retransmit
-           - If max retries exceeded -> FAIL (raise WWTimeoutError)
+           - If max retries exceeded -> FAIL (raise LXBTimeoutError)
 
         Args:
             cmd: Command ID to send
@@ -188,8 +188,8 @@ class Transport:
             ACK payload (typically empty for simple ACKs)
 
         Raises:
-            WWTimeoutError: If maximum retry attempts exceeded
-            WWProtocolError: If protocol validation fails
+            LXBTimeoutError: If maximum retry attempts exceeded
+            LXBProtocolError: If protocol validation fails
             OSError: If socket operation fails
         """
         # Get sequence number for this transmission
@@ -246,7 +246,7 @@ class Transport:
                                 )
                                 continue
 
-                        except (WWProtocolError, WWChecksumError) as e:
+                        except (LXBProtocolError, LXBChecksumError) as e:
                             # Frame validation failed - discard and continue waiting
                             logger.warning(f"Invalid frame received: {e}")
                             continue
@@ -278,10 +278,10 @@ class Transport:
                     f"seq={seq}, cmd=0x{cmd:02X}"
                 )
                 logger.error(error_msg)
-                raise WWTimeoutError(error_msg)
+                raise LXBTimeoutError(error_msg)
 
         # Should not reach here, but raise timeout error as fallback
-        raise WWTimeoutError(f"Failed to send reliable frame after {retry_count} attempts")
+        raise LXBTimeoutError(f"Failed to send reliable frame after {retry_count} attempts")
 
     def send_and_forget(self, cmd: int, payload: bytes = b'') -> None:
         """
@@ -337,11 +337,11 @@ class Transport:
             Complete screenshot image data as bytes
 
         Raises:
-            WWTimeoutError: If transfer fails after maximum retries
-            WWProtocolError: If protocol validation fails
+            LXBTimeoutError: If transfer fails after maximum retries
+            LXBProtocolError: If protocol validation fails
         """
         if not self._connected or not self._sock:
-            raise WWProtocolError("Transport not connected", 0)
+            raise LXBProtocolError("Transport not connected", 0)
 
         logger.info("Starting fragmented screenshot transfer...")
 
@@ -387,8 +387,8 @@ class Transport:
             Tuple of (img_id, total_size, num_chunks)
 
         Raises:
-            WWTimeoutError: If metadata not received within timeout
-            WWProtocolError: If received frame is invalid
+            LXBTimeoutError: If metadata not received within timeout
+            LXBProtocolError: If received frame is invalid
         """
         original_timeout = self._sock.gettimeout() # type: ignore
         self._sock.settimeout(timeout) # type: ignore
@@ -411,12 +411,12 @@ class Transport:
                         )
                         continue
 
-                except (WWProtocolError, WWChecksumError) as e:
+                except (LXBProtocolError, LXBChecksumError) as e:
                     logger.warning(f"Invalid frame received: {e}")
                     continue
 
         except socket.timeout:
-            raise WWTimeoutError("Timeout waiting for IMG_META")
+            raise LXBTimeoutError("Timeout waiting for IMG_META")
 
         finally:
             self._sock.settimeout(original_timeout) # type: ignore
@@ -445,7 +445,7 @@ class Transport:
             List of chunk data in correct order (indexed 0 to num_chunks-1)
 
         Raises:
-            WWTimeoutError: If not all chunks received after max retries
+            LXBTimeoutError: If not all chunks received after max retries
         """
         # Initialize buffer for chunks (None = not yet received)
         chunks: list = [None] * num_chunks
@@ -473,7 +473,7 @@ class Transport:
             )
 
             if retry_count >= max_retries:
-                raise WWTimeoutError(
+                raise LXBTimeoutError(
                     f"Failed to receive all chunks after {retry_count} retries. "
                     f"Missing: {len(missing_indices)}/{num_chunks}"
                 )
@@ -483,7 +483,7 @@ class Transport:
             retry_count += 1
 
         # Should not reach here
-        raise WWTimeoutError(
+        raise LXBTimeoutError(
             f"Screenshot transfer failed after {retry_count} retry attempts"
         )
 
@@ -543,7 +543,7 @@ class Transport:
                             f"0x{cmd:02X}"
                         )
 
-                except (WWProtocolError, WWChecksumError) as e:
+                except (LXBProtocolError, LXBChecksumError) as e:
                     logger.warning(f"Invalid chunk frame: {e}")
                     continue
 

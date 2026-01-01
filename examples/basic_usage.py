@@ -1,7 +1,7 @@
 """
-WW-Link Basic Usage Example
+LXB-Link Basic Usage Example
 
-This example demonstrates how to use the WW-Link client to control
+This example demonstrates how to use the LXB-Link client to control
 an Android device over UDP.
 """
 
@@ -12,7 +12,7 @@ import time
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link import WWLinkClient, WWTimeoutError
+from lxb_link import LXBLinkClient, WWTimeoutError
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
     print("=== Method 1: Using Context Manager ===\n")
 
     try:
-        with WWLinkClient(DEVICE_IP, DEVICE_PORT, timeout=2.0) as client:
+        with LXBLinkClient(DEVICE_IP, DEVICE_PORT, timeout=2.0) as client:
             # Perform handshake
             print("1. Handshake...")
             response = client.handshake()
@@ -65,7 +65,7 @@ def main():
     # Method 2: Manual connection management
     print("\n=== Method 2: Manual Connection ===\n")
 
-    client = WWLinkClient(DEVICE_IP, DEVICE_PORT)
+    client = LXBLinkClient(DEVICE_IP, DEVICE_PORT)
 
     try:
         # Connect to device

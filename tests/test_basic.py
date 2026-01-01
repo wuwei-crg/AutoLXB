@@ -1,7 +1,7 @@
 """
-WW-Link Client Test Suite
+LXB-Link Client Test Suite
 
-This script tests the WW-Link client against a mock device server.
+This script tests the LXB-Link client against a mock device server.
 Make sure to run mock_device.py first before running this test.
 
 Usage:
@@ -25,20 +25,20 @@ if sys.platform == 'win32':
 # Add src to path for importing ww_link package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link import WWLinkClient, WWTimeoutError
+from lxb_link import LXBLinkClient, LXBTimeoutError
 
 
 def test_client():
     """Run comprehensive tests against mock device."""
 
     print("=" * 60)
-    print("WW-Link Client Test Suite")
+    print("LXB-Link Client Test Suite")
     print("=" * 60)
     print("Make sure mock_device.py is running on 127.0.0.1:12345\n")
 
     # Create client with context manager
     try:
-        with WWLinkClient('127.0.0.1', port=12345, timeout=2.0) as client:
+        with LXBLinkClient('127.0.0.1', port=12345, timeout=2.0) as client:
 
             # Test 1: Handshake
             print("\n--- Test 1: Handshake ---")
@@ -49,7 +49,7 @@ def test_client():
                 print(f"✅ Handshake Success!")
                 print(f"   Response: {response}")
                 print(f"   Time: {elapsed*1000:.2f}ms")
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Handshake Failed: {e}")
             except Exception as e:
                 print(f"❌ Unexpected Error: {e}")
@@ -63,7 +63,7 @@ def test_client():
                 print(f"✅ Tap Success!")
                 print(f"   Response: {response}")
                 print(f"   Time: {elapsed*1000:.2f}ms")
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Tap Failed: {e}")
             except Exception as e:
                 print(f"❌ Unexpected Error: {e}")
@@ -89,7 +89,7 @@ def test_client():
                 print(f"✅ Swipe Success!")
                 print(f"   Response: {response}")
                 print(f"   Time: {elapsed*1000:.2f}ms")
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Swipe Failed: {e}")
             except Exception as e:
                 print(f"❌ Unexpected Error: {e}")
@@ -106,7 +106,7 @@ def test_client():
                 # Check JPEG header
                 if img_data[:2] == b'\xff\xd8':
                     print(f"   Format: Valid JPEG header detected")
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Screenshot Failed: {e}")
             except Exception as e:
                 print(f"❌ Unexpected Error: {e}")
@@ -120,7 +120,7 @@ def test_client():
                 print(f"✅ Wake Success!")
                 print(f"   Response: {response}")
                 print(f"   Time: {elapsed*1000:.2f}ms")
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Wake Failed: {e}")
             except Exception as e:
                 print(f"❌ Unexpected Error: {e}")

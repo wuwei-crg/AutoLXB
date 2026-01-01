@@ -1,5 +1,5 @@
 """
-WW-Link Advanced Test Suite
+LXB-Link Advanced Test Suite
 
 This test suite validates:
 1. Packet loss handling and retry mechanism
@@ -27,7 +27,7 @@ if sys.platform == 'win32':
 # Add src to path for importing ww_link package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src'))
 
-from ww_link import WWLinkClient, WWTimeoutError
+from lxb_link import LXBLinkClient, LXBTimeoutError
 
 
 def test_retry_mechanism():
@@ -39,7 +39,7 @@ def test_retry_mechanism():
     print("   Command: python tests/mock_device.py 12345 0.3\n")
 
     try:
-        with WWLinkClient('127.0.0.1', port=12345, timeout=1.0, max_retries=5) as client:
+        with LXBLinkClient('127.0.0.1', port=12345, timeout=1.0, max_retries=5) as client:
             success_count = 0
             retry_count = 0
             total_tests = 10
@@ -53,7 +53,7 @@ def test_retry_mechanism():
                     elapsed = time.time() - start
                     success_count += 1
                     print(f"✅ TAP #{i+1:2d}: Success in {elapsed*1000:6.1f}ms")
-                except WWTimeoutError as e:
+                except LXBTimeoutError as e:
                     print(f"❌ TAP #{i+1:2d}: Failed after max retries - {e}")
                 except Exception as e:
                     print(f"❌ TAP #{i+1:2d}: Unexpected error - {e}")
@@ -84,7 +84,7 @@ def test_large_data_transfer():
     print("Testing 60KB JPEG transfer (exceeds typical 1500 byte MTU)\n")
 
     try:
-        with WWLinkClient('127.0.0.1', port=12345, timeout=3.0, max_retries=5) as client:
+        with LXBLinkClient('127.0.0.1', port=12345, timeout=3.0, max_retries=5) as client:
             print("Requesting screenshot (60KB)...")
             start = time.time()
 
@@ -121,7 +121,7 @@ def test_large_data_transfer():
 
                 return True
 
-            except WWTimeoutError as e:
+            except LXBTimeoutError as e:
                 print(f"❌ Screenshot failed: {e}")
                 print(f"   This might indicate fragmentation issues or packet loss")
                 return False
@@ -141,7 +141,7 @@ def test_stress_with_packet_loss():
     print("Sending mixed commands under packet loss conditions\n")
 
     try:
-        with WWLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=5) as client:
+        with LXBLinkClient('127.0.0.1', port=12345, timeout=2.0, max_retries=5) as client:
             commands_sent = 0
             commands_success = 0
             total_time = 0
@@ -165,7 +165,7 @@ def test_stress_with_packet_loss():
                     total_time += elapsed
                     commands_success += 1
                     print(f"✅ {name:12s}: {elapsed*1000:6.1f}ms")
-                except WWTimeoutError as e:
+                except LXBTimeoutError as e:
                     print(f"❌ {name:12s}: Timeout")
                 except Exception as e:
                     print(f"❌ {name:12s}: {e}")
@@ -199,7 +199,7 @@ def test_timeout_behavior():
 
     try:
         # Use very short timeout and limited retries for this test
-        client = WWLinkClient('127.0.0.1', port=12345, timeout=0.5, max_retries=2)
+        client = LXBLinkClient('127.0.0.1', port=12345, timeout=0.5, max_retries=2)
         client.connect()
 
         print("Attempting to send command (will likely timeout with high packet loss)...")
@@ -210,7 +210,7 @@ def test_timeout_behavior():
             elapsed = time.time() - start
             print(f"✅ Command succeeded: {elapsed*1000:.1f}ms")
             result = True
-        except WWTimeoutError as e:
+        except LXBTimeoutError as e:
             elapsed = time.time() - start
             print(f"⏱️  Timeout occurred as expected: {elapsed*1000:.1f}ms")
             print(f"   Error: {e}")
@@ -231,7 +231,7 @@ def test_timeout_behavior():
 def main():
     """Run all advanced tests."""
     print("=" * 60)
-    print("WW-Link Advanced Test Suite")
+    print("LXB-Link Advanced Test Suite")
     print("=" * 60)
     print("\n⚠️  IMPORTANT: Start mock device with packet loss first:")
     print("   python tests/mock_device.py 12345 0.3\n")

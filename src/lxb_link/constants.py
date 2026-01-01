@@ -1,7 +1,7 @@
 """
-WW-Link Protocol Constants
+LXB-Link Protocol Constants
 
-This module defines all constants used in the WW-Link protocol including:
+This module defines all constants used in the LXB-Link protocol including:
 - Magic numbers and protocol version
 - Command set for device control
 - Error codes for exception handling
@@ -86,12 +86,12 @@ MAX_MISSING_RETRIES = 3         # Maximum retries for requesting missing chunks
 # =============================================================================
 
 
-class WWLinkError(Exception):
-    """Base exception class for WW-Link protocol errors."""
+class LXBLinkError(Exception):
+    """Base exception class for LXB-Link protocol errors."""
 
     def __init__(self, message: str, error_code: int = ERR_SUCCESS):
         """
-        Initialize WW-Link error.
+        Initialize LXB-Link error.
 
         Args:
             message: Human-readable error message
@@ -101,21 +101,21 @@ class WWLinkError(Exception):
         self.error_code = error_code
 
 
-class WWTimeoutError(WWLinkError):
+class LXBTimeoutError(LXBLinkError):
     """Exception raised when operation times out after maximum retries."""
 
     def __init__(self, message: str = "Operation timeout after maximum retries"):
         super().__init__(message, ERR_TIMEOUT)
 
 
-class WWProtocolError(WWLinkError):
+class LXBProtocolError(LXBLinkError):
     """Exception raised when protocol validation fails."""
 
     def __init__(self, message: str, error_code: int):
         super().__init__(message, error_code)
 
 
-class WWChecksumError(WWLinkError):
+class LXBChecksumError(LXBLinkError):
     """Exception raised when CRC32 checksum validation fails."""
 
     def __init__(self, message: str = "CRC32 checksum mismatch"):

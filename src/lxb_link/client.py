@@ -1,21 +1,21 @@
 """
-WW-Link Client API
+LXB-Link Client API
 
 This module provides the user-facing API for controlling Android devices using
-the WW-Link reliable UDP protocol. It abstracts low-level socket operations
+the LXB-Link reliable UDP protocol. It abstracts low-level socket operations
 and binary frame manipulation behind a simple, intuitive interface.
 
 Example:
-    >>> from ww_link import WWLinkClient
+    >>> from ww_link import LXBLinkClient
     >>>
     >>> # Using context manager (recommended)
-    >>> with WWLinkClient('192.168.1.100', 12345) as client:
+    >>> with LXBLinkClient('192.168.1.100', 12345) as client:
     ...     client.handshake()
     ...     client.tap(500, 800)
     ...     screenshot_data = client.screenshot()
     ...
     >>> # Manual connection management
-    >>> client = WWLinkClient('192.168.1.100', 12345)
+    >>> client = LXBLinkClient('192.168.1.100', 12345)
     >>> client.connect()
     >>> client.tap(100, 200)
     >>> client.disconnect()
@@ -42,12 +42,12 @@ from .protocol import ProtocolFrame
 logger = logging.getLogger(__name__)
 
 
-class WWLinkClient:
+class LXBLinkClient:
     """
-    High-level client for WW-Link protocol communication.
+    High-level client for LXB-Link protocol communication.
 
     This class provides a simple API for controlling Android devices through
-    the WW-Link protocol, hiding the complexity of UDP socket management,
+    the LXB-Link protocol, hiding the complexity of UDP socket management,
     frame packing/unpacking, and retry logic.
     """
 
@@ -59,7 +59,7 @@ class WWLinkClient:
         max_retries: int = MAX_RETRIES
     ):
         """
-        Initialize WW-Link client.
+        Initialize LXB-Link client.
 
         Args:
             host: Target device IP address or hostname
@@ -78,7 +78,7 @@ class WWLinkClient:
         # Connection state
         self._connected = False
 
-        logger.info(f"WWLinkClient initialized for {host}:{port}")
+        logger.info(f"LXBLinkClient initialized for {host}:{port}")
 
     def connect(self) -> None:
         """
@@ -142,7 +142,7 @@ class WWLinkClient:
             Response payload from device (typically empty or version info)
 
         Raises:
-            WWTimeoutError: If handshake times out
+            LXBTimeoutError: If handshake times out
             RuntimeError: If client is not connected
         """
         self._ensure_connected()
@@ -165,7 +165,7 @@ class WWLinkClient:
             Response payload from device
 
         Raises:
-            WWTimeoutError: If tap command times out
+            LXBTimeoutError: If tap command times out
             RuntimeError: If client is not connected
             ValueError: If coordinates are out of range
         """
@@ -210,7 +210,7 @@ class WWLinkClient:
             Response payload from device
 
         Raises:
-            WWTimeoutError: If swipe command times out
+            LXBTimeoutError: If swipe command times out
             RuntimeError: If client is not connected
             ValueError: If coordinates are out of range
         """
@@ -252,7 +252,7 @@ class WWLinkClient:
             typically JPEG or PNG encoded)
 
         Raises:
-            WWTimeoutError: If screenshot command times out
+            LXBTimeoutError: If screenshot command times out
             RuntimeError: If client is not connected
         """
         self._ensure_connected()
@@ -282,7 +282,7 @@ class WWLinkClient:
             typically JPEG or PNG encoded)
 
         Raises:
-            WWTimeoutError: If transfer fails after maximum retries
+            LXBTimeoutError: If transfer fails after maximum retries
             RuntimeError: If client is not connected
         """
         self._ensure_connected()
@@ -304,7 +304,7 @@ class WWLinkClient:
             Response payload from device
 
         Raises:
-            WWTimeoutError: If wake command times out
+            LXBTimeoutError: If wake command times out
             RuntimeError: If client is not connected
         """
         self._ensure_connected()
@@ -336,7 +336,7 @@ class WWLinkClient:
             Response payload if reliable=True, None otherwise
 
         Raises:
-            WWTimeoutError: If reliable command times out
+            LXBTimeoutError: If reliable command times out
             RuntimeError: If client is not connected
             ValueError: If command ID is out of range
         """
@@ -371,6 +371,6 @@ class WWLinkClient:
         """String representation of client."""
         status = "connected" if self._connected else "disconnected"
         return (
-            f"WWLinkClient(host='{self.host}', port={self.port}, "
+            f"LXBLinkClient(host='{self.host}', port={self.port}, "
             f"timeout={self.timeout}, status='{status}')"
         )
