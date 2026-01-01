@@ -127,6 +127,37 @@ def handle_screenshot_request(
         sock.sendto(meta_frame, addr)
         print(f"✅ Sent IMG_META (img_id={img_id}, chunks={num_chunks})")
 
+    # Step 3.5: Wait for ACK from client confirming META received
+    print(f"⏳ Waiting for client ACK to confirm META received...")
+    sock.settimeout(2.0)  # 2 second timeout for ACK
+
+    try:
+        while True:
+            try:
+                data, recv_addr = sock.recvfrom(65536)
+
+                # Only process if from same client
+                if recv_addr != addr:
+                    continue
+
+                recv_seq, recv_cmd, recv_payload = ProtocolFrame.unpack(data)
+
+                if recv_cmd == CMD_ACK and recv_seq == seq:
+                    print(f"✅ Received ACK for IMG_META - Client ready!")
+                    break
+                else:
+                    print(f"⚠️  Unexpected response: cmd=0x{recv_cmd:02X}, seq={recv_seq}")
+
+            except (LXBProtocolError, LXBChecksumError) as e:
+                print(f"⚠️  Invalid frame: {e}")
+                continue
+
+    except socket.timeout:
+        print(f"⚠️  No ACK received, proceeding anyway...")
+
+    # Reset timeout
+    sock.settimeout(None)
+
     # Step 4: Burst send all chunks
     print(f"\n🚀 [BURST MODE] Sending all {num_chunks} chunks...")
     sent_count = 0

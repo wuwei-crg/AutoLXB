@@ -378,7 +378,7 @@ class Transport:
 
     def _wait_for_img_meta(self, timeout: float = 2.0) -> Tuple[int, int, int]:
         """
-        Wait for IMG_META response from server.
+        Wait for IMG_META response from server and send ACK.
 
         Args:
             timeout: Maximum time to wait for metadata
@@ -403,6 +403,12 @@ class Transport:
                         img_id, total_size, num_chunks = ProtocolFrame.unpack_img_meta(
                             payload
                         )
+
+                        # Send ACK to confirm META received and buffer ready
+                        ack_frame = ProtocolFrame.pack_ack(seq)
+                        self._send_frame(ack_frame)
+                        logger.info(f"Sent ACK for IMG_META (seq={seq})")
+
                         return img_id, total_size, num_chunks
                     else:
                         logger.warning(
