@@ -198,3 +198,6 @@ config.local.py
 # LXB Server 构建产物
 /android/LXB-Ignition/lxb-core.jar
 /android/LXB-Ignition/lxb-server.zip
+
+# Compiled Java classes (IDE incremental build)
+/android/LXB-Ignition/*/bin/
