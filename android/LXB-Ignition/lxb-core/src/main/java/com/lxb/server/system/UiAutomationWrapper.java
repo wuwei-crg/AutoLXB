@@ -150,9 +150,23 @@ public class UiAutomationWrapper {
 
     /**
      * 创建 UiAutomation 实例
+     *
+     * 关键点 (来自 Android 源码分析):
+     * 1. 必须先有 Looper (prepareLooper 已处理)
+     * 2. UiAutomation 构造函数是 @hide 的，必须用反射
+     * 3. 构造后必须调用 connect() 方法
+     * 4. 不同 Android 版本构造函数签名不同:
+     *    - Android 7.x: UiAutomation(Looper, IUiAutomationConnection)
+     *    - Android 8.0+: UiAutomation(Looper, IUiAutomationConnection, int flags)
      */
     private Object createUiAutomation() throws Exception {
-        // 方法 1: 通过 Instrumentation 获取
+        // 方法 1: 直接通过反射创建 UiAutomation (最可靠的方式)
+        Object ua = createUiAutomationDirect();
+        if (ua != null) {
+            return ua;
+        }
+
+        // 方法 2: 通过 Instrumentation 获取 (需要正确的 ActivityThread 上下文)
         try {
             Class<?> activityThread = Class.forName("android.app.ActivityThread");
             Method systemMain = activityThread.getMethod("systemMain");
@@ -163,8 +177,15 @@ public class UiAutomationWrapper {
             Object instrumentation = instrumentationField.get(thread);
 
             if (instrumentation != null) {
-                Method getUiAutomation = instrumentation.getClass().getMethod("getUiAutomation");
-                Object ua = getUiAutomation.invoke(instrumentation);
+                // 尝试带 flags 的版本 (Android 7.0+)
+                try {
+                    Method getUiAutomation = instrumentation.getClass().getMethod("getUiAutomation", int.class);
+                    // FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES = 1
+                    ua = getUiAutomation.invoke(instrumentation, 1);
+                } catch (NoSuchMethodException e) {
+                    Method getUiAutomation = instrumentation.getClass().getMethod("getUiAutomation");
+                    ua = getUiAutomation.invoke(instrumentation);
+                }
                 if (ua != null) {
                     System.out.println(TAG + " Got UiAutomation via Instrumentation");
                     return ua;
@@ -174,7 +195,96 @@ public class UiAutomationWrapper {
             System.err.println(TAG + " Instrumentation method failed: " + e.getMessage());
         }
 
-        // 方法 2: 通过 UiAutomationConnection 直接创建
+        // 方法 3: 通过 ShellCommand 模拟 (使用 dumpsys 作为后备)
+        System.err.println(TAG + " All UiAutomation methods failed, will use shell fallback for UI operations");
+        return null;
+    }
+
+    /**
+     * 直接通过反射创建 UiAutomation 实例
+     * 这是最可靠的方式，不依赖 Instrumentation
+     */
+    private Object createUiAutomationDirect() {
+        try {
+            System.out.println(TAG + " Trying direct UiAutomation creation...");
+
+            // 获取必要的类
+            Class<?> uiAutoClass = Class.forName("android.app.UiAutomation");
+            Class<?> looperClass = Class.forName("android.os.Looper");
+            Class<?> handlerThreadClass = Class.forName("android.os.HandlerThread");
+
+            // 创建 HandlerThread 用于 UiAutomation 回调
+            Constructor<?> handlerThreadCtor = handlerThreadClass.getConstructor(String.class);
+            Object handlerThread = handlerThreadCtor.newInstance("UiAutomation");
+            Method start = handlerThreadClass.getMethod("start");
+            start.invoke(handlerThread);
+
+            Method getLooper = handlerThreadClass.getMethod("getLooper");
+            Object looper = getLooper.invoke(handlerThread);
+            System.out.println(TAG + " HandlerThread looper ready");
+
+            // 获取 UiAutomationConnection
+            Object connection = getUiAutomationConnection();
+            if (connection == null) {
+                System.err.println(TAG + " Failed to get UiAutomationConnection");
+                return null;
+            }
+
+            // 尝试不同的构造函数签名
+            Object ua = null;
+            Class<?> connClass = Class.forName("android.app.IUiAutomationConnection");
+
+            // Android 8.0+ (API 26+): UiAutomation(Looper, IUiAutomationConnection, int)
+            try {
+                Constructor<?> ctor3 = uiAutoClass.getDeclaredConstructor(looperClass, connClass, int.class);
+                ctor3.setAccessible(true);
+                // flags = 1 (FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                ua = ctor3.newInstance(looper, connection, 1);
+                System.out.println(TAG + " UiAutomation created (3-arg constructor)");
+            } catch (NoSuchMethodException e) {
+                // Android 7.x: UiAutomation(Looper, IUiAutomationConnection)
+                try {
+                    Constructor<?> ctor2 = uiAutoClass.getDeclaredConstructor(looperClass, connClass);
+                    ctor2.setAccessible(true);
+                    ua = ctor2.newInstance(looper, connection);
+                    System.out.println(TAG + " UiAutomation created (2-arg constructor)");
+                } catch (NoSuchMethodException e2) {
+                    System.err.println(TAG + " No suitable UiAutomation constructor found");
+                    return null;
+                }
+            }
+
+            if (ua == null) {
+                return null;
+            }
+
+            // 关键步骤: 调用 connect() 方法！
+            try {
+                Method connect = uiAutoClass.getDeclaredMethod("connect");
+                connect.setAccessible(true);
+                connect.invoke(ua);
+                System.out.println(TAG + " UiAutomation.connect() called");
+            } catch (NoSuchMethodException e) {
+                // 某些版本可能没有 connect 方法，尝试其他方式
+                System.out.println(TAG + " No connect() method, trying alternative...");
+            }
+
+            System.out.println(TAG + " Got UiAutomation via direct creation");
+            return ua;
+
+        } catch (Exception e) {
+            System.err.println(TAG + " Direct UiAutomation creation failed: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * 获取 UiAutomationConnection
+     * 通过 ActivityManagerService 获取真正的连接
+     */
+    private Object getUiAutomationConnection() {
+        // 方法 1: 通过 ServiceManager 获取已注册的服务
         try {
             Class<?> serviceManager = Class.forName("android.os.ServiceManager");
             Method getService = serviceManager.getMethod("getService", String.class);
@@ -182,65 +292,28 @@ public class UiAutomationWrapper {
 
             if (binder != null) {
                 Class<?> stubClass = Class.forName("android.app.IUiAutomationConnection$Stub");
-                Method asInterface = stubClass.getMethod("asInterface",
-                        Class.forName("android.os.IBinder"));
+                Method asInterface = stubClass.getMethod("asInterface", Class.forName("android.os.IBinder"));
                 Object connection = asInterface.invoke(null, binder);
-
                 if (connection != null) {
-                    Class<?> uiAutoClass = Class.forName("android.app.UiAutomation");
-                    Class<?> looperClass = Class.forName("android.os.Looper");
-                    Class<?> connClass = Class.forName("android.app.IUiAutomationConnection");
-
-                    Constructor<?> constructor = uiAutoClass.getDeclaredConstructor(
-                            looperClass, connClass);
-                    constructor.setAccessible(true);
-
-                    Method myLooper = looperClass.getMethod("myLooper");
-                    Object looper = myLooper.invoke(null);
-
-                    Object ua = constructor.newInstance(looper, connection);
-                    System.out.println(TAG + " Got UiAutomation via direct creation");
-                    return ua;
+                    System.out.println(TAG + " Got UiAutomationConnection via ServiceManager");
+                    return connection;
                 }
             }
         } catch (Exception e) {
-            System.err.println(TAG + " Direct creation failed: " + e.getMessage());
+            System.err.println(TAG + " ServiceManager method failed: " + e.getMessage());
         }
 
-        // 方法 3: 通过创建新的 Instrumentation 实例获取
+        // 方法 2: 创建 UiAutomationConnection 实例
         try {
-            System.out.println(TAG + " Trying new Instrumentation instance...");
-
-            Class<?> instrumentationClass = Class.forName("android.app.Instrumentation");
-            Constructor<?> instrConstructor = instrumentationClass.getDeclaredConstructor();
-            instrConstructor.setAccessible(true);
-            Object instrumentation = instrConstructor.newInstance();
-
-            // 尝试 getUiAutomation(int flags) - Android 7.0+
-            // FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES = 1
-            try {
-                Method getUiAutomation = instrumentationClass.getMethod("getUiAutomation", int.class);
-                Object ua = getUiAutomation.invoke(instrumentation, 1);
-                if (ua != null) {
-                    System.out.println(TAG + " Got UiAutomation via new Instrumentation with flags");
-                    return ua;
-                }
-            } catch (NoSuchMethodException e) {
-                // 尝试无参数版本
-                Method getUiAutomation = instrumentationClass.getMethod("getUiAutomation");
-                Object ua = getUiAutomation.invoke(instrumentation);
-                if (ua != null) {
-                    System.out.println(TAG + " Got UiAutomation via new Instrumentation");
-                    return ua;
-                }
-            }
+            Class<?> connClass = Class.forName("android.app.UiAutomationConnection");
+            Constructor<?> ctor = connClass.getDeclaredConstructor();
+            ctor.setAccessible(true);
+            Object connection = ctor.newInstance();
+            System.out.println(TAG + " Created new UiAutomationConnection instance");
+            return connection;
         } catch (Exception e) {
-            System.err.println(TAG + " New Instrumentation method failed: " + e.getMessage());
+            System.err.println(TAG + " UiAutomationConnection creation failed: " + e.getMessage());
         }
-
-        // 方法 4: 通过 ShellCommand 模拟 (使用 dumpsys 作为后备)
-        // 这个方法不需要 UiAutomation，而是直接用 shell 命令获取 UI 树
-        System.err.println(TAG + " All UiAutomation methods failed, will use shell fallback for UI operations");
 
         return null;
     }
