@@ -48,6 +48,12 @@ class VLMPageResult:
     inference_time_ms: float = 0.0      # 推理耗时
     image_size: Tuple[int, int] = (0, 0)  # 图像尺寸 (width, height)
 
+    # 并发推理信息
+    concurrent_enabled: bool = False    # 是否使用了并发推理
+    concurrent_requests: int = 0        # 并发请求数量
+    concurrent_results: int = 0         # 成功的并发结果数量
+    aggregated_count: int = 0           # 聚合后的检测数量
+
 
 # =============================================================================
 # XML 节点 (来自 dump_actions)
@@ -226,6 +232,11 @@ class ExplorationConfig:
     enable_od: bool = True              # 启用目标检测
     enable_ocr: bool = True             # 启用 OCR
     enable_caption: bool = True         # 启用图像描述
+
+    # VLM 并发推理配置
+    vlm_concurrent_enabled: bool = False    # 启用 VLM 并发推理
+    vlm_concurrent_requests: int = 5        # 并发请求数量
+    vlm_occurrence_threshold: int = 2       # 出现阈值（检测框出现多少次才认为有效）
 
     # 融合配置
     iou_threshold: float = 0.5          # IoU 匹配阈值

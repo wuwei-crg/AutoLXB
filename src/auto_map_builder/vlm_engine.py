@@ -16,6 +16,14 @@ import hashlib
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 from .models import VLMDetection, VLMPageResult, BBox
 
@@ -40,6 +48,11 @@ class VLMConfig:
     # 缓存
     cache_enabled: bool = True
     max_cache_size: int = 100
+
+    # 并发推理配置
+    concurrent_enabled: bool = False        # 是否启用并发推理
+    concurrent_requests: int = 5            # 并发请求数量
+    occurrence_threshold: int = 2           # 出现阈值（检测框出现多少次才认为有效）
 
 
 _global_config: Optional[VLMConfig] = None
@@ -275,15 +288,15 @@ label: tab, nav_item, button, icon, input, search
             print(f"[VLMEngine] Caption failed: {e}")
             return ""
 
-    def infer(self, screenshot_bytes: bytes) -> VLMPageResult:
+    def infer(self, screenshot_bytes: bytes, bypass_cache: bool = False) -> VLMPageResult:
         """执行 VLM 推理"""
         from PIL import Image
 
         start = time.time()
         image_hash = hashlib.md5(screenshot_bytes).hexdigest()
 
-        # 缓存检查
-        if self.config.cache_enabled and image_hash in self._cache:
+        # 缓存检查（并发模式下禁用缓存）
+        if self.config.cache_enabled and not bypass_cache and image_hash in self._cache:
             self.stats["cache_hits"] += 1
             return self._cache[image_hash]
 
@@ -308,12 +321,203 @@ label: tab, nav_item, button, icon, input, search
         self.stats["total_inferences"] += 1
         self.stats["total_time_ms"] += result.inference_time_ms
 
-        if self.config.cache_enabled:
+        # 设置并发信息（单次模式）
+        result.concurrent_enabled = False
+        result.concurrent_requests = 0
+        result.concurrent_results = 0
+        result.aggregated_count = len(result.detections)
+
+        if self.config.cache_enabled and not bypass_cache:
             if len(self._cache) >= self.config.max_cache_size:
                 next(iter(self._cache.popitem()))  # FIFO 淘汰
             self._cache[image_hash] = result
 
         return result
+
+    def infer_concurrent(self, screenshot_bytes: bytes) -> VLMPageResult:
+        """执行并发 VLM 推理 - 多次调用后聚合结果"""
+        from PIL import Image
+
+        if not self.config.concurrent_enabled:
+            print("[VLM] 并发模式未启用，使用单次推理")
+            return self.infer(screenshot_bytes)
+
+        print(f"[VLM] 🚀 并发推理模式: {self.config.concurrent_requests} 次并发, 阈值 {self.config.occurrence_threshold}")
+
+        start = time.time()
+        image = Image.open(io.BytesIO(screenshot_bytes))
+        width, height = image.width, image.height
+        image_size = (width, height)
+
+        # 并发执行多次推理
+        num_requests = self.config.concurrent_requests
+        results = []
+        lock = threading.Lock()
+
+        def single_inference(idx: int):
+            """单次推理"""
+            try:
+                print(f"[VLM]   └─ 启动推理 #{idx + 1}/{num_requests}...")
+                result = self.infer(screenshot_bytes, bypass_cache=True)  # 绕过缓存，强制调用 API
+                with lock:
+                    results.append(result)
+                print(f"[VLM]   └─ 推理 #{idx + 1} 完成: 检测到 {len(result.detections)} 个元素")
+                return result
+            except Exception as e:
+                print(f"[VLM]   └─ 推理 #{idx + 1} 失败: {e}")
+                return None
+
+        # 使用线程池并发执行
+        print(f"[VLM] 启动 {num_requests} 个并发推理线程...")
+        with ThreadPoolExecutor(max_workers=min(num_requests, 10)) as executor:
+            futures = [executor.submit(single_inference, i) for i in range(num_requests)]
+            for future in as_completed(futures):
+                future.result()  # 等待完成，结果已在 results 中
+
+        print(f"[VLM] 并发完成: 成功 {len(results)}/{num_requests} 次")
+
+        if not results:
+            # 所有请求都失败了，返回空结果
+            print("[VLM] ⚠️ 所有推理均失败，返回空结果")
+            return VLMPageResult(
+                page_caption="",
+                detections=[],
+                inference_time_ms=(time.time() - start) * 1000,
+                image_size=image_size
+            )
+
+        # 打印原始检测结果
+        for i, r in enumerate(results):
+            print(f"[VLM]   结果 #{i + 1}: {len(r.detections)} 个检测")
+
+        # 聚合结果
+        aggregated = self._aggregate_detections(
+            results,
+            width,
+            height,
+            self.config.occurrence_threshold
+        )
+
+        print(f"[VLM] ✅ 聚合后: {len(aggregated)} 个有效检测 (阈值={self.config.occurrence_threshold})")
+
+        # 聚合 caption（取最常见的）
+        captions = [r.page_caption for r in results if r.page_caption]
+        caption = max(set(captions), key=captions.count) if captions else ""
+
+        total_time = (time.time() - start) * 1000
+        print(f"[VLM] ⏱️ 并发推理总耗时: {total_time:.0f}ms")
+
+        return VLMPageResult(
+            page_caption=caption,
+            detections=aggregated,
+            inference_time_ms=total_time,
+            image_size=image_size,
+            concurrent_enabled=True,
+            concurrent_requests=num_requests,
+            concurrent_results=len(results),
+            aggregated_count=len(aggregated)
+        )
+
+    def _aggregate_detections(
+        self,
+        results: List[VLMPageResult],
+        image_width: int,
+        image_height: int,
+        threshold: int
+    ) -> List[VLMDetection]:
+        """
+        聚合多次 VLM 推理的检测结果
+
+        策略：
+        1. 收集所有检测框
+        2. 按 IoU 分组（IoU > 0.5 认为是同一位置）
+        3. 统计每组出现的次数
+        4. 只保留出现次数 >= threshold 的检测框
+        5. 每组取平均位置和最常见的标签
+        """
+        if not results:
+            return []
+
+        # 收集所有检测
+        all_detections = []
+        for result in results:
+            all_detections.extend(result.detections)
+
+        print(f"[VLM] 🔍 聚合: 共 {len(all_detections)} 个原始检测")
+
+        if not all_detections:
+            return []
+
+        # 按位置分组
+        groups = []  # 每组是相似的检测框列表
+        used = set()
+
+        for i, det in enumerate(all_detections):
+            if i in used:
+                continue
+
+            # 创建新组
+            group = [det]
+            used.add(i)
+
+            # 查找相似的检测框
+            for j, other in enumerate(all_detections):
+                if j in used or j == i:
+                    continue
+
+                if self._iou(det.bbox, other.bbox) > 0.5:
+                    group.append(other)
+                    used.add(j)
+
+            groups.append(group)
+
+        print(f"[VLM] 🔍 聚合: 分组为 {len(groups)} 个候选")
+
+        # 过滤并聚合
+        aggregated = []
+        filtered_count = 0
+        for group in groups:
+            if len(group) < threshold:
+                filtered_count += 1
+                continue  # 出现次数不足，认为是噪声
+
+            # 计算平均位置
+            bboxes = [g.bbox for g in group]
+            if HAS_NUMPY:
+                avg_bbox = (
+                    int(np.mean([b[0] for b in bboxes])),
+                    int(np.mean([b[1] for b in bboxes])),
+                    int(np.mean([b[2] for b in bboxes])),
+                    int(np.mean([b[3] for b in bboxes]))
+                )
+            else:
+                # 纯 Python 实现
+                avg_bbox = (
+                    sum(b[0] for b in bboxes) // len(bboxes),
+                    sum(b[1] for b in bboxes) // len(bboxes),
+                    sum(b[2] for b in bboxes) // len(bboxes),
+                    sum(b[3] for b in bboxes) // len(bboxes)
+                )
+
+            # 取最常见的标签和文本
+            labels = [g.label for g in group]
+            texts = [g.ocr_text for g in group if g.ocr_text]
+
+            most_common_label = max(set(labels), key=labels.count)
+            most_common_text = max(set(texts), key=texts.count) if texts else None
+
+            aggregated.append(VLMDetection(
+                bbox=avg_bbox,
+                label=most_common_label,
+                confidence=len(group) / len(results),  # 置信度 = 出现比例
+                ocr_text=most_common_text
+            ))
+
+        print(f"[VLM] 🔍 聚合: 过滤掉 {filtered_count} 个噪声组，保留 {len(aggregated)} 个有效检测")
+        for i, det in enumerate(aggregated):
+            print(f"[VLM]   └─ #{i+1}: {det.label} @ {det.bbox} (置信度: {det.confidence:.2f})")
+
+        return aggregated
 
     def is_available(self) -> bool:
         """检查 VLM 是否可用"""

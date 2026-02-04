@@ -691,6 +691,10 @@ def explore_start():
             enable_od=data.get('enable_od', True),
             enable_ocr=data.get('enable_ocr', True),
             enable_caption=data.get('enable_caption', True),
+            # 并发推理配置
+            vlm_concurrent_enabled=data.get('vlm_concurrent_enabled', False),
+            vlm_concurrent_requests=data.get('vlm_concurrent_requests', 5),
+            vlm_occurrence_threshold=data.get('vlm_occurrence_threshold', 2),
             iou_threshold=data.get('iou_threshold', 0.5),
             action_delay_ms=data.get('action_delay_ms', 1000),
             scroll_enabled=data.get('scroll_enabled', True),
@@ -928,7 +932,11 @@ def vlm_config_get():
                 'enable_od': config.enable_od,
                 'enable_ocr': config.enable_ocr,
                 'enable_caption': config.enable_caption,
-                'timeout': config.timeout
+                'timeout': config.timeout,
+                # 并发配置
+                'concurrent_enabled': config.concurrent_enabled,
+                'concurrent_requests': config.concurrent_requests,
+                'occurrence_threshold': config.occurrence_threshold or 2
             }
         })
     except Exception as e:
@@ -955,7 +963,11 @@ def vlm_config_set():
             enable_od=data.get('enable_od', current_config.enable_od),
             enable_ocr=data.get('enable_ocr', current_config.enable_ocr),
             enable_caption=data.get('enable_caption', current_config.enable_caption),
-            timeout=data.get('timeout', current_config.timeout)
+            timeout=data.get('timeout', current_config.timeout),
+            # 并发配置
+            concurrent_enabled=data.get('concurrent_enabled', current_config.concurrent_enabled),
+            concurrent_requests=data.get('concurrent_requests', current_config.concurrent_requests),
+            occurrence_threshold=data.get('occurrence_threshold', current_config.occurrence_threshold or 2)
         )
 
         set_config(new_config)
@@ -1077,10 +1089,10 @@ def debug_analyze_page():
         # 获取截图
         screenshot = client.request_screenshot()
 
-        # VLM 推理
+        # VLM 推理 - 使用并发推理（如果已配置）
         vlm_engine = VLMEngine()
         start = time.time()
-        vlm_result = vlm_engine.infer(screenshot)
+        vlm_result = vlm_engine.infer_concurrent(screenshot)
         vlm_time = (time.time() - start) * 1000
 
         # XML 解析
@@ -1136,7 +1148,7 @@ def debug_analyze_page():
 
         return jsonify({
             'success': True,
-            'message': f'分析完成: VLM 检测 {fusion_stats.get("total_vlm_detections", 0)} 个, 匹配 {len(fused_nodes)} 个',
+            'message': f'分析完成: VLM 检测 {len(vlm_result.detections)} 个, 匹配 {len(fused_nodes)} 个',
             'response': {
                 'page_id': page_id,
                 'activity': activity,
@@ -1147,8 +1159,13 @@ def debug_analyze_page():
                 'node_count': len(fused_nodes),
                 'clickable_count': len([n for n in fused_nodes if n.clickable]),
                 'image_size': list(vlm_result.image_size),
+                # 并发推理信息
+                'concurrent_enabled': vlm_result.concurrent_enabled,
+                'concurrent_requests': vlm_result.concurrent_requests,
+                'concurrent_results': vlm_result.concurrent_results,
+                'aggregated_count': vlm_result.aggregated_count,
                 'fusion_stats': {
-                    'vlm_detections': fusion_stats.get("total_vlm_detections", 0),
+                    'vlm_detections': len(vlm_result.detections),
                     'xml_nodes': fusion_stats.get("total_xml_nodes", 0),
                     'matched': fusion_stats.get("matched_count", 0),
                     'unmatched_vlm': fusion_stats.get("unmatched_vlm", 0)

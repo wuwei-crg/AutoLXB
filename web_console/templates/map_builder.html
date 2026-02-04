@@ -108,6 +108,10 @@
             font-size: 13px;
             transition: all 0.2s;
         }
+        .form-group input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
         .form-group input:focus {
             outline: none;
             border-color: #00d4ff;
@@ -473,6 +477,31 @@
                     <label>模型名称</label>
                     <input type="text" id="vlm-model-name" value="qwen-vl-plus">
                 </div>
+
+                <!-- 并发推理配置 -->
+                <div style="border-top: 1px solid #2a2a4a; padding-top: 12px; margin-top: 12px;">
+                    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <input type="checkbox" id="vlm-concurrent-enabled" style="margin-right: 8px;">
+                        <label for="vlm-concurrent-enabled" style="margin: 0; cursor: pointer;">启用并发推理</label>
+                        <span style="font-size: 10px; color: #888; margin-left: auto;">提高识别准确性</span>
+                    </div>
+                    <div id="concurrent-config" style="display: none;">
+                        <div class="form-group">
+                            <label>并发请求数 <span style="color: #888; font-size: 11px;">(同时调用 VLM 次数)</span></label>
+                            <input type="number" id="vlm-concurrent-requests" value="5" min="1" max="10">
+                        </div>
+                        <div class="form-group">
+                            <label>出现阈值 <span style="color: #888; font-size: 11px;">(检测框出现 ≥N 次才认为有效，建议 2-3)</span></label>
+                            <input type="number" id="vlm-occurrence-threshold" value="2" min="1" max="10">
+                        </div>
+                        <div style="font-size: 11px; color: #ff6b6b; padding: 8px; background: rgba(233, 69, 96, 0.1); border-radius: 6px;">
+                            ⚠️ 如果没有检测到元素，尝试：
+                            <br>• 降低阈值（设为 2）
+                            <br>• 或者关闭并发模式
+                        </div>
+                    </div>
+                </div>
+
                 <div style="display: flex; gap: 8px; margin-top: 12px;">
                     <button class="btn btn-primary" style="flex: 1;" onclick="saveVLMConfig()">💾 保存</button>
                     <button class="btn btn-secondary" onclick="loadVLMConfig()">🔄 刷新</button>
@@ -628,6 +657,9 @@
             checkConnection();
             setInterval(checkConnection, 5000);
 
+            // 绑定并发配置复选框事件
+            document.getElementById('vlm-concurrent-enabled').addEventListener('change', updateConcurrentConfigVisibility);
+
             // 如果从 localStorage 加载了配置，显示提示
             if (localStorage.getItem('vlm_config')) {
                 setTimeout(() => {
@@ -675,6 +707,11 @@
                     document.getElementById('package-name').value = config.package_name || '';
                     document.getElementById('max-pages').value = config.max_pages || 30;
                     document.getElementById('max-depth').value = config.max_depth || 5;
+                    // 并发配置
+                    document.getElementById('vlm-concurrent-enabled').checked = config.concurrent_enabled || false;
+                    document.getElementById('vlm-concurrent-requests').value = config.concurrent_requests || 5;
+                    document.getElementById('vlm-occurrence-threshold').value = config.occurrence_threshold || 2;
+                    updateConcurrentConfigVisibility();
                     badge.style.display = 'inline';
                 } catch (e) {
                     console.error('Parse localStorage error:', e);
@@ -693,6 +730,11 @@
                     document.getElementById('vlm-api-url').value = data.data.api_base_url || '';
                     document.getElementById('vlm-api-key').value = data.data.api_key || '';
                     document.getElementById('vlm-model-name').value = data.data.model_name || 'qwen-vl-plus';
+                    // 并发配置
+                    document.getElementById('vlm-concurrent-enabled').checked = data.data.concurrent_enabled || false;
+                    document.getElementById('vlm-concurrent-requests').value = data.data.concurrent_requests || 5;
+                    document.getElementById('vlm-occurrence-threshold').value = data.data.occurrence_threshold || 3;
+                    updateConcurrentConfigVisibility();
                 }
             } catch (e) {
                 console.error('Load config error:', e);
@@ -705,9 +747,10 @@
                 api_base_url: document.getElementById('vlm-api-url').value.trim(),
                 api_key: document.getElementById('vlm-api-key').value.trim(),
                 model_name: document.getElementById('vlm-model-name').value.trim(),
-                package_name: document.getElementById('package-name').value.trim(),
-                max_pages: parseInt(document.getElementById('max-pages').value) || 30,
-                max_depth: parseInt(document.getElementById('max-depth').value) || 5
+                // 并发配置
+                concurrent_enabled: document.getElementById('vlm-concurrent-enabled').checked,
+                concurrent_requests: parseInt(document.getElementById('vlm-concurrent-requests').value) || 5,
+                occurrence_threshold: parseInt(document.getElementById('vlm-occurrence-threshold').value) || 2,
             };
 
             if (!config.api_base_url || !config.api_key) {
@@ -715,8 +758,12 @@
                 return;
             }
 
-            // 保存到 localStorage
-            localStorage.setItem('vlm_config', JSON.stringify(config));
+            // 保存到 localStorage（包含探索配置）
+            const localConfig = { ...config };
+            localConfig.package_name = document.getElementById('package-name').value.trim();
+            localConfig.max_pages = parseInt(document.getElementById('max-pages').value) || 30;
+            localConfig.max_depth = parseInt(document.getElementById('max-depth').value) || 5;
+            localStorage.setItem('vlm_config', JSON.stringify(localConfig));
             document.getElementById('config-badge').style.display = 'inline';
 
             try {
@@ -727,7 +774,10 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    addLog('info', '✓ 配置已保存（本地+服务器）');
+                    const concurrentMsg = config.concurrent_enabled
+                        ? ` (并发: ${config.concurrent_requests}次, 阈值${config.occurrence_threshold})`
+                        : '';
+                    addLog('info', `✓ 配置已保存（本地+服务器）${concurrentMsg}`);
                     checkVLMStatus();
                 } else {
                     addLog('error', data.message);
@@ -735,6 +785,12 @@
             } catch (e) {
                 addLog('error', `保存失败: ${e.message}`);
             }
+        }
+
+        // 更新并发配置可见性
+        function updateConcurrentConfigVisibility() {
+            const enabled = document.getElementById('vlm-concurrent-enabled').checked;
+            document.getElementById('concurrent-config').style.display = enabled ? 'block' : 'none';
         }
 
         // 检查 VLM 状态
@@ -767,6 +823,11 @@
                 document.getElementById('package-name').value = '';
                 document.getElementById('max-pages').value = 30;
                 document.getElementById('max-depth').value = 5;
+                // 清空并发配置
+                document.getElementById('vlm-concurrent-enabled').checked = false;
+                document.getElementById('vlm-concurrent-requests').value = 5;
+                document.getElementById('vlm-occurrence-threshold').value = 2;
+                updateConcurrentConfigVisibility();
                 document.getElementById('config-badge').style.display = 'none';
                 addLog('info', '配置已清除');
                 checkVLMStatus();
@@ -900,6 +961,17 @@
                 if (data2.success) {
                     currentAnalysis = data2.response;
                     const resp = data2.response;
+
+                    // 显示并发信息
+                    if (resp.concurrent_enabled) {
+                        addLog('info', `🚀 并发: ${resp.concurrent_requests}次 → ${resp.concurrent_results}成功 → ${resp.aggregated_count}个检测`);
+                        addLog('info', `📊 融合: ${resp.fusion_stats.xml_nodes}个XML + ${resp.fusion_stats.vlm_detections}个VLM → ${resp.fusion_stats.matched}个匹配`);
+                        if (resp.aggregated_count === 0) {
+                            addLog('warn', '⚠️ 没有有效的 VLM 检测，可能阈值太高，建议降低阈值或关闭并发模式');
+                        }
+                    } else {
+                        addLog('info', `📊 融合: ${resp.fusion_stats.xml_nodes}个XML + ${resp.fusion_stats.vlm_detections}个VLM → ${resp.fusion_stats.matched}个匹配`);
+                    }
 
                     // 显示页面描述
                     document.getElementById('page-caption').textContent =
@@ -1120,7 +1192,11 @@
             const config = {
                 package: packageName,
                 max_pages: parseInt(document.getElementById('max-pages').value),
-                max_depth: parseInt(document.getElementById('max-depth').value)
+                max_depth: parseInt(document.getElementById('max-depth').value),
+                // VLM 并发配置
+                vlm_concurrent_enabled: document.getElementById('vlm-concurrent-enabled').checked,
+                vlm_concurrent_requests: parseInt(document.getElementById('vlm-concurrent-requests').value) || 5,
+                vlm_occurrence_threshold: parseInt(document.getElementById('vlm-occurrence-threshold').value) || 2
             };
 
             document.getElementById('btn-start').classList.add('hidden');
@@ -1129,6 +1205,14 @@
             logIndex = 0;
 
             addLog('info', `开始探索: ${packageName}`);
+
+            // 显示并发配置状态
+            if (config.vlm_concurrent_enabled) {
+                addLog('info', `🚀 VLM 并发模式: ${config.vlm_concurrent_requests} 次并发, 阈值 ${config.vlm_occurrence_threshold}`);
+            } else {
+                addLog('info', `VLM 单次推理模式`);
+            }
+
             pollInterval = setInterval(pollLogs, 1000);
 
             try {

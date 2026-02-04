@@ -65,6 +65,10 @@ class Explorer:
         vlm_config.enable_od = self.config.enable_od
         vlm_config.enable_ocr = self.config.enable_ocr
         vlm_config.enable_caption = self.config.enable_caption
+        # 设置并发推理配置
+        vlm_config.concurrent_enabled = self.config.vlm_concurrent_enabled
+        vlm_config.concurrent_requests = self.config.vlm_concurrent_requests
+        vlm_config.occurrence_threshold = self.config.vlm_occurrence_threshold
 
         self.vlm_engine = VLMEngine(vlm_config)
         self.fusion_engine = FusionEngine(self.config.iou_threshold)
@@ -235,7 +239,7 @@ class Explorer:
             xml_nodes = parse_xml_nodes(raw_nodes)
 
             # 4. VLM 推理
-            vlm_result = self.vlm_engine.infer(screenshot)
+            vlm_result = self.vlm_engine.infer_concurrent(screenshot)
 
             # 5. 融合
             fused_nodes = self.fusion_engine.fuse(xml_nodes, vlm_result)
@@ -381,7 +385,7 @@ class Explorer:
             if not screenshot:
                 break
 
-            vlm_result = self.vlm_engine.infer(screenshot)
+            vlm_result = self.vlm_engine.infer_concurrent(screenshot)
             new_labels = {det.label for det in vlm_result.detections}
 
             # 检查是否重复内容
