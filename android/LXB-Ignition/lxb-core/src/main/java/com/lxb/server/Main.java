@@ -6,6 +6,7 @@ import com.lxb.server.dispatcher.CommandDispatcher;
 import com.lxb.server.execution.ExecutionEngine;
 import com.lxb.server.network.UdpServer;
 import com.lxb.server.perception.PerceptionEngine;
+// import com.lxb.server.popup.PopupDetector;  // 暂时禁用，改用 Python 端 VLM 检测
 import com.lxb.server.protocol.FrameCodec;
 import com.lxb.server.system.HiddenApiBypass;
 import com.lxb.server.system.UiAutomationWrapper;
@@ -70,6 +71,10 @@ public class Main {
             executionEngine.setUiAutomation(uiAutomation);
             executionEngine.initialize();
 
+            // 弹窗检测器暂时禁用，改用 Python 端 VLM 检测
+            // PopupDetector popupDetector = new PopupDetector();
+            // popupDetector.initialize(uiAutomation);
+
             // =================================================================
             // Phase 4: 守护层初始化
             // =================================================================
@@ -81,6 +86,7 @@ public class Main {
             CommandDispatcher dispatcher = new CommandDispatcher(
                 perceptionEngine,
                 executionEngine,
+                // popupDetector,  // 暂时禁用
                 sequenceTracker,
                 circuitBreaker
             );

@@ -172,6 +172,58 @@
             margin-top: 4px;
         }
 
+        /* 弹窗/Block 列表 */
+        .popup-list, .block-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .popup-item, .block-item {
+            padding: 10px 12px;
+            background: #0f0f1a;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            border-left: 3px solid;
+        }
+        .popup-item {
+            border-left-color: #f5a623;
+        }
+        .block-item {
+            border-left-color: #f55;
+        }
+        .popup-type, .block-type {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 4px;
+        }
+        .popup-type {
+            background: rgba(245, 166, 35, 0.2);
+            color: #f5a623;
+        }
+        .block-type {
+            background: rgba(255, 85, 85, 0.2);
+            color: #f55;
+        }
+        .popup-desc, .block-desc {
+            font-size: 12px;
+            color: #eee;
+            margin-bottom: 4px;
+        }
+        .popup-meta, .block-meta {
+            font-size: 10px;
+            color: #666;
+        }
+        .locator-info {
+            font-size: 10px;
+            color: #888;
+            background: #1a1a2e;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-top: 6px;
+            font-family: monospace;
+        }
+
         /* 右侧图形区域 */
         .graph-panel {
             background: #0a0a14;
@@ -373,6 +425,14 @@
                         <div class="stat-value" id="stat-transitions">0</div>
                         <div class="stat-label">跳转</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-popups" style="color: #f5a623;">0</div>
+                        <div class="stat-label">弹窗</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-blocks" style="color: #f55;">0</div>
+                        <div class="stat-label">异常页</div>
+                    </div>
                 </div>
             </div>
 
@@ -386,6 +446,18 @@
             <div class="card" id="transitions-card" style="display: none;">
                 <h3>🔗 跳转关系</h3>
                 <div class="transition-list" id="transition-list"></div>
+            </div>
+
+            <!-- 弹窗列表 -->
+            <div class="card" id="popups-card" style="display: none;">
+                <h3>🚫 弹窗/广告</h3>
+                <div class="popup-list" id="popup-list"></div>
+            </div>
+
+            <!-- 异常页面列表 -->
+            <div class="card" id="blocks-card" style="display: none;">
+                <h3>⚠️ 异常页面</h3>
+                <div class="block-list" id="block-list"></div>
             </div>
         </div>
 
@@ -456,6 +528,32 @@
                     { from: "search", to: "home", description: "点击首页" },
                     { from: "search", to: "detail", description: "点击搜索结果" },
                     { from: "settings", to: "profile", description: "点击返回" }
+                ],
+                popups: [
+                    {
+                        id: "popup_980_120",
+                        type: "splash_ad",
+                        description: "开屏广告-跳过按钮",
+                        close_locator: { resource_id: "skip_btn", text: "跳过" },
+                        first_seen_page: "home"
+                    },
+                    {
+                        id: "popup_540_1200",
+                        type: "update",
+                        description: "更新提示-以后再说按钮",
+                        close_locator: { text: "以后再说" },
+                        first_seen_page: "home"
+                    }
+                ],
+                blocks: [
+                    {
+                        type: "captcha",
+                        description: "滑块验证-向右滑动完成验证",
+                        activity: "com.example.demo/.CaptchaActivity",
+                        identifiers: ["slider_view", "captcha_image", "verify_btn"],
+                        trigger_node: "搜索",
+                        hit_count: 2
+                    }
                 ]
             };
             renderMap();
@@ -572,14 +670,35 @@
             // 统计
             const pages = mapData.pages || {};
             const transitions = mapData.transitions || [];
+            const popups = mapData.popups || [];
+            const blocks = mapData.blocks || [];
+
             document.getElementById('stat-pages').textContent = Object.keys(pages).length;
             document.getElementById('stat-transitions').textContent = transitions.length;
+            document.getElementById('stat-popups').textContent = popups.length;
+            document.getElementById('stat-blocks').textContent = blocks.length;
 
             // 页面列表
             renderPageList(pages);
 
             // 跳转列表
             renderTransitionList(transitions);
+
+            // 弹窗列表
+            if (popups.length > 0) {
+                document.getElementById('popups-card').style.display = 'block';
+                renderPopupList(popups);
+            } else {
+                document.getElementById('popups-card').style.display = 'none';
+            }
+
+            // 异常页面列表
+            if (blocks.length > 0) {
+                document.getElementById('blocks-card').style.display = 'block';
+                renderBlockList(blocks);
+            } else {
+                document.getElementById('blocks-card').style.display = 'none';
+            }
 
             // 绘制图形
             renderGraph(pages, transitions);
@@ -630,6 +749,80 @@
                         network.selectNodes([trans.from, trans.to]);
                     }
                 };
+                container.appendChild(item);
+            }
+        }
+
+        // 弹窗类型映射
+        const popupTypeLabels = {
+            'splash_ad': '开屏广告',
+            'update': '更新提示',
+            'teen_mode': '青少年模式',
+            'permission': '权限请求',
+            'rating': '评价提示',
+            'dialog': '弹窗对话框'
+        };
+
+        // 渲染弹窗列表
+        function renderPopupList(popups) {
+            const container = document.getElementById('popup-list');
+            container.innerHTML = '';
+
+            for (const popup of popups) {
+                const item = document.createElement('div');
+                item.className = 'popup-item';
+
+                const typeLabel = popupTypeLabels[popup.type] || popup.type;
+                const locator = popup.close_locator || {};
+                const locatorStr = Object.entries(locator)
+                    .filter(([k, v]) => v)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ');
+
+                item.innerHTML = `
+                    <span class="popup-type">${typeLabel}</span>
+                    <div class="popup-desc">${popup.description || '-'}</div>
+                    <div class="popup-meta">
+                        首次出现: ${popup.first_seen_page || '-'}
+                        ${popup.hit_count ? ` · 命中 ${popup.hit_count} 次` : ''}
+                    </div>
+                    ${locatorStr ? `<div class="locator-info">${locatorStr}</div>` : ''}
+                `;
+                container.appendChild(item);
+            }
+        }
+
+        // Block 类型映射
+        const blockTypeLabels = {
+            'captcha': '人机验证',
+            'risk_control': '风控拦截',
+            'login_required': '强制登录',
+            'network_error': '网络错误',
+            'crash': '应用崩溃'
+        };
+
+        // 渲染异常页面列表
+        function renderBlockList(blocks) {
+            const container = document.getElementById('block-list');
+            container.innerHTML = '';
+
+            for (const block of blocks) {
+                const item = document.createElement('div');
+                item.className = 'block-item';
+
+                const typeLabel = blockTypeLabels[block.type] || block.type;
+                const identifiers = block.identifiers || [];
+
+                item.innerHTML = `
+                    <span class="block-type">${typeLabel}</span>
+                    <div class="block-desc">${block.description || '-'}</div>
+                    <div class="block-meta">
+                        触发节点: ${block.trigger_node || '-'}
+                        ${block.hit_count ? ` · 命中 ${block.hit_count} 次` : ''}
+                    </div>
+                    ${block.activity ? `<div class="locator-info">Activity: ${block.activity}</div>` : ''}
+                    ${identifiers.length > 0 ? `<div class="locator-info">IDs: ${identifiers.slice(0, 5).join(', ')}${identifiers.length > 5 ? '...' : ''}</div>` : ''}
+                `;
                 container.appendChild(item);
             }
         }

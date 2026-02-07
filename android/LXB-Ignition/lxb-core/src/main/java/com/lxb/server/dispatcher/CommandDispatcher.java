@@ -4,6 +4,7 @@ import com.lxb.server.daemon.CircuitBreaker;
 import com.lxb.server.daemon.SequenceTracker;
 import com.lxb.server.execution.ExecutionEngine;
 import com.lxb.server.perception.PerceptionEngine;
+// import com.lxb.server.popup.PopupDetector;  // 暂时禁用，改用 Python 端 VLM 检测
 import com.lxb.server.protocol.FrameCodec;
 
 import java.util.LinkedHashMap;
@@ -19,6 +20,7 @@ import java.util.Map;
  * - 0x10-0x1F: Input Layer (tap, swipe, long_press, unlock)
  * - 0x20-0x2F: Input Extension (text input, key events)
  * - 0x30-0x3F: Sense Layer (activity, UI tree, screen state)
+ *   - 0x34-0x35, 0x38: 弹窗检测命令 (暂时禁用，改用 Python 端 VLM 检测)
  * - 0x40-0x4F: Lifecycle Layer (launch/stop app)
  */
 public class CommandDispatcher {
@@ -27,6 +29,7 @@ public class CommandDispatcher {
 
     private final PerceptionEngine perceptionEngine;
     private final ExecutionEngine executionEngine;
+    // private final PopupDetector popupDetector;  // 暂时禁用
     private final SequenceTracker sequenceTracker;
     private final CircuitBreaker circuitBreaker;
 
@@ -41,10 +44,12 @@ public class CommandDispatcher {
     public CommandDispatcher(
             PerceptionEngine perceptionEngine,
             ExecutionEngine executionEngine,
+            // PopupDetector popupDetector,  // 暂时禁用
             SequenceTracker sequenceTracker,
             CircuitBreaker circuitBreaker) {
         this.perceptionEngine = perceptionEngine;
         this.executionEngine = executionEngine;
+        // this.popupDetector = popupDetector;  // 暂时禁用
         this.sequenceTracker = sequenceTracker;
         this.circuitBreaker = circuitBreaker;
     }
@@ -129,12 +134,22 @@ public class CommandDispatcher {
                 case 0x33:  // CMD_DUMP_ACTIONS ⭐ NEW
                     response = perceptionEngine.handleDumpActions(payload);
                     break;
+                // 弹窗检测命令暂时禁用，改用 Python 端 VLM 检测
+                // case 0x34:  // CMD_DISMISS_POPUP
+                //     response = popupDetector.handleDismissPopup(payload);
+                //     break;
+                // case 0x35:  // CMD_DETECT_POPUP
+                //     response = popupDetector.handleDetectPopup(payload);
+                //     break;
                 case 0x36:  // CMD_GET_SCREEN_STATE ⭐ NEW
                     response = perceptionEngine.handleGetScreenState();
                     break;
                 case 0x37:  // CMD_GET_SCREEN_SIZE ⭐ NEW
                     response = perceptionEngine.handleGetScreenSize();
                     break;
+                // case 0x38:  // CMD_POPUP_WATCHDOG_CTRL (暂时禁用)
+                //     response = popupDetector.handleWatchdogCtrl(payload);
+                //     break;
 
                 // =================================================================
                 // Lifecycle Layer (0x40-0x4F)

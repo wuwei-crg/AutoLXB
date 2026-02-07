@@ -176,6 +176,131 @@ class NavNode:
 
 
 @dataclass
+class PopupInfo:
+    """
+    弹窗/广告信息 - VLM 识别的干扰元素
+
+    用于记录广告、弹窗、更新提示等需要关闭的元素。
+    建图时发现后记录到 map，执行时自动检测并关闭。
+    """
+    popup_id: str                   # 唯一标识 (基于 locator 生成)
+    popup_type: str                 # 类型: splash_ad, update, teen_mode, permission, rating, other
+    description: str                # 描述 (如 "开屏广告-跳过按钮")
+    close_locator: NodeLocator      # 关闭按钮的定位器
+    trigger_locator: Optional[NodeLocator] = None  # 触发弹窗的元素 (可选)
+    first_seen_page: str = ""       # 首次发现的页面
+    hit_count: int = 0              # 命中次数
+
+    def to_dict(self) -> dict:
+        d = {
+            "id": self.popup_id,
+            "type": self.popup_type,
+            "description": self.description,
+            "close_locator": self.close_locator.to_dict()
+        }
+        if self.trigger_locator:
+            d["trigger_locator"] = self.trigger_locator.to_dict()
+        if self.first_seen_page:
+            d["first_seen_page"] = self.first_seen_page
+        return d
+
+    @staticmethod
+    def from_dict(d: dict) -> "PopupInfo":
+        return PopupInfo(
+            popup_id=d.get("id", ""),
+            popup_type=d.get("type", "other"),
+            description=d.get("description", ""),
+            close_locator=NodeLocator.from_dict(d.get("close_locator", {})),
+            trigger_locator=NodeLocator.from_dict(d["trigger_locator"]) if d.get("trigger_locator") else None,
+            first_seen_page=d.get("first_seen_page", ""),
+            hit_count=d.get("hit_count", 0)
+        )
+
+    def unique_key(self) -> str:
+        """生成唯一标识"""
+        return self.close_locator.unique_key()
+
+
+@dataclass
+class BlockInfo:
+    """
+    异常/拦截页面信息 - VLM 识别的阻断页面
+
+    用于记录人机验证、风控拦截等需要特殊处理的页面。
+    遇到这类页面时需要重启应用并重新探索触发该页面的节点。
+    """
+    block_type: str                 # 类型: captcha, risk_control, login_required, network_error, crash
+    description: str                # 描述 (如 "滑块验证-向右滑动完成验证")
+    activity: Optional[str] = None  # Activity 名称（用于快速识别）
+    identifiers: List[str] = field(default_factory=list)  # 页面特征 resource_id 列表
+    trigger_node: Optional[str] = None  # 触发该页面的节点名称
+    trigger_locator: Optional[NodeLocator] = None  # 触发该页面的节点定位器
+    hit_count: int = 0              # 命中次数
+
+    def to_dict(self) -> dict:
+        d = {
+            "type": self.block_type,
+            "description": self.description,
+            "hit_count": self.hit_count
+        }
+        if self.activity:
+            d["activity"] = self.activity
+        if self.identifiers:
+            d["identifiers"] = self.identifiers
+        if self.trigger_node:
+            d["trigger_node"] = self.trigger_node
+        if self.trigger_locator:
+            d["trigger_locator"] = self.trigger_locator.to_dict()
+        return d
+
+    @staticmethod
+    def from_dict(d: dict) -> "BlockInfo":
+        return BlockInfo(
+            block_type=d.get("type", ""),
+            description=d.get("description", ""),
+            activity=d.get("activity"),
+            identifiers=d.get("identifiers", []),
+            trigger_node=d.get("trigger_node"),
+            trigger_locator=NodeLocator.from_dict(d["trigger_locator"]) if d.get("trigger_locator") else None,
+            hit_count=d.get("hit_count", 0)
+        )
+
+    def matches_xml(self, xml_nodes: List[Dict], activity: Optional[str] = None) -> bool:
+        """
+        检查当前 XML 是否匹配此 Block 页面
+
+        匹配策略：
+        1. 如果有 activity，先匹配 activity
+        2. 检查 identifiers 中的 resource_id 是否存在
+        """
+        # Activity 匹配
+        if self.activity and activity:
+            if self.activity not in activity:
+                return False
+
+        # 如果没有 identifiers，只靠 activity 匹配
+        if not self.identifiers:
+            return bool(self.activity and activity and self.activity in activity)
+
+        # 检查 identifiers（至少匹配一半）
+        matched = 0
+        xml_ids = set()
+        for node in xml_nodes:
+            rid = node.get("resource_id", "")
+            if rid:
+                # 只取 id 部分
+                short_id = rid.split("/")[-1] if "/" in rid else rid
+                xml_ids.add(short_id)
+
+        for identifier in self.identifiers:
+            if identifier in xml_ids:
+                matched += 1
+
+        # 至少匹配一半的 identifiers
+        return matched >= len(self.identifiers) / 2
+
+
+@dataclass
 class ExploreTask:
     """探索任务"""
     locator: NodeLocator
@@ -213,6 +338,8 @@ class NavigationMap:
         self.package: str = ""
         self.pages: Dict[str, PageInfo] = {}          # page_id → PageInfo
         self.transitions: List[Transition] = []       # 跳转列表
+        self.popups: Dict[str, PopupInfo] = {}        # popup_id → PopupInfo (弹窗/广告)
+        self.blocks: List[BlockInfo] = []             # 异常页面记录
         self._explored_edges: Set[Tuple[str, str]] = set()  # 已探索的边 (from, to)
 
     def add_page(self, page: PageInfo):
@@ -227,6 +354,24 @@ class NavigationMap:
             self._explored_edges.add(edge)
             self.transitions.append(trans)
 
+    def add_popup(self, popup: PopupInfo):
+        """添加弹窗记录（去重）"""
+        key = popup.unique_key()
+        if key not in self.popups:
+            self.popups[key] = popup
+        else:
+            # 已存在，增加命中计数
+            self.popups[key].hit_count += 1
+
+    def add_block(self, block: BlockInfo):
+        """添加异常页面记录"""
+        # 检查是否已存在相同类型和触发节点的记录
+        for existing in self.blocks:
+            if existing.block_type == block.block_type and existing.trigger_node == block.trigger_node:
+                existing.hit_count += 1
+                return
+        self.blocks.append(block)
+
     def get_page(self, page_id: str) -> Optional[PageInfo]:
         return self.pages.get(page_id)
 
@@ -238,6 +383,8 @@ class NavigationMap:
         return {
             "total_pages": len(self.pages),
             "total_transitions": len(self.transitions),
+            "total_popups": len(self.popups),
+            "total_blocks": len(self.blocks),
             "explored_nodes": len(self._explored_edges)
         }
 
@@ -245,7 +392,9 @@ class NavigationMap:
         return {
             "package": self.package,
             "pages": {pid: p.to_dict() for pid, p in self.pages.items()},
-            "transitions": [t.to_dict() for t in self.transitions]
+            "transitions": [t.to_dict() for t in self.transitions],
+            "popups": [p.to_dict() for p in self.popups.values()],
+            "blocks": [b.to_dict() for b in self.blocks]
         }
 
     def save(self, filepath: str):
@@ -272,15 +421,56 @@ class NodeExplorer:
 **屏幕分辨率: {width} x {height} 像素**
 
 ## 任务
-1. 识别当前页面类型，给出页面ID
-2. 描述页面功能
-3. 找出**页面跳转入口**和**输入框**
+1. **首先判断**：当前页面是否是异常页面（人机验证、风控拦截等）
+2. **其次判断**：当前页面是否有**遮挡型弹窗**需要关闭
+3. 识别当前页面类型，给出页面ID
+4. 描述页面功能
+5. 找出**页面跳转入口**和**输入框**
 
 ## 输出格式
 ```
+BLOCK|类型|描述
+POPUP|x|y|类型|描述
 PAGE|页面ID|页面名称|功能描述|页面内功能列表
 NAV|x|y|节点名称|类型|目标页面ID
 ```
+
+## BLOCK 类型（异常/拦截页面，必须最先输出）
+如果检测到以下情况，输出 BLOCK 行，**不要输出 PAGE 和 NAV**：
+- `captcha`: 人机验证（滑块验证、图片验证、点选验证、拼图验证）
+- `risk_control`: 风控拦截（账号异常、操作频繁、安全验证）
+- `login_required`: 强制登录（必须登录才能继续）
+- `network_error`: 网络错误页面
+- `crash`: 应用崩溃/ANR 页面
+
+**识别特征**：
+- 滑块验证：有滑块、"向右滑动"、"拖动滑块"
+- 图片验证：有多张图片、"点击包含XX的图片"
+- 风控拦截：有"操作频繁"、"账号异常"、"安全验证"
+- 强制登录：整个页面只有登录入口，无法跳过
+
+## POPUP 类型（只识别遮挡型弹窗！）
+
+**只识别以下弹窗**：
+- 在屏幕**中央**弹出的对话框/弹窗
+- **遮挡了主要内容**，必须关闭才能继续操作
+- 有明显的关闭按钮（×、关闭、跳过、取消等）
+
+**严格忽略以下内容（不要输出 POPUP）**：
+- 屏幕边缘的小广告横幅（顶部/底部的条状广告）
+- 悬浮的小图标、小按钮
+- 不影响正常操作的角标、红点
+- 页面内嵌的广告卡片
+
+**弹窗类型**：
+- `splash_ad`: 开屏广告（全屏，有"跳过"倒计时）
+- `update`: 更新提示弹窗（中央弹出，有"暂不更新"）
+- `teen_mode`: 青少年模式弹窗（中央弹出，有"我知道了"）
+- `permission`: 权限请求弹窗（系统弹窗，有"拒绝"）
+- `rating`: 评价提示弹窗（中央弹出，有"以后再说"）
+- `dialog`: 其他中央弹出的对话框
+
+**POPUP 坐标必须是关闭/跳过按钮的位置！**
 
 ## 页面ID规则
 用小写英文，如：home, search, profile, settings, detail, list, login, chat, cart
@@ -291,11 +481,28 @@ NAV|x|y|节点名称|类型|目标页面ID
 - `back`: 返回按钮
 - `input`: 输入框
 
-## 严格排除
+## 严格排除（不要输出为 NAV）
 - 页面内操作（排序、筛选、收藏、分享）
-- 列表项、卡片、商品、广告
+- 列表项、卡片、商品
 
-## 示例
+## 示例1：人机验证页面
+```
+BLOCK|captcha|滑块验证-向右滑动完成验证
+```
+
+## 示例2：有开屏广告（全屏遮挡）
+```
+POPUP|980|120|splash_ad|开屏广告-跳过按钮
+```
+
+## 示例3：有更新弹窗（中央弹出）
+```
+POPUP|540|1200|update|更新提示-以后再说按钮
+PAGE|home|首页|浏览推荐内容|下拉刷新,内容卡片
+NAV|{ex1_x}|{ex1_y}|首页|tab|home
+```
+
+## 示例4：正常页面（边缘有小广告但不输出 POPUP）
 ```
 PAGE|home|首页|浏览推荐内容|下拉刷新,内容卡片,排序筛选
 NAV|{ex1_x}|{ex1_y}|首页|tab|home
@@ -613,12 +820,12 @@ NAV|540|80|搜索|jump|search
 
     # === VLM 分析 ===
 
-    def _analyze_page(self, screenshot: bytes) -> Tuple[str, List[NavNode]]:
+    def _analyze_page(self, screenshot: bytes) -> Tuple[Optional[PageInfo], List[NavNode], List[PopupInfo], Optional[BlockInfo]]:
         """
         分析页面（支持并发推理）
 
         Returns:
-            (页面描述, 导航节点列表)
+            (页面信息, 导航节点列表, 弹窗列表, 异常页面信息)
         """
         try:
             w, h = self._screen_width, self._screen_height
@@ -645,16 +852,16 @@ NAV|540|80|搜索|jump|search
                 response = self.vlm._call_api(screenshot, prompt)
                 self.log("info", f"VLM 响应 ({len(response)} 字符)")
                 self.log("debug", f"VLM 原始响应:\n{response[:800]}")
-                desc, nodes = self._parse_response(response)
-                self.log("info", f"解析结果: desc={desc[:50] if desc else 'None'}, nodes={len(nodes)}")
-                return desc, nodes
+                page_info, nodes, popups, block_info = self._parse_response(response)
+                self.log("info", f"解析结果: page={page_info.page_id if page_info else 'None'}, nodes={len(nodes)}, popups={len(popups)}, block={block_info.block_type if block_info else 'None'}")
+                return page_info, nodes, popups, block_info
         except Exception as e:
             import traceback
             self.log("error", f"VLM 分析失败: {e}")
             self.log("error", traceback.format_exc())
-            return None, []
+            return None, [], [], None
 
-    def _analyze_page_concurrent(self, screenshot: bytes, prompt: str) -> Tuple[Optional[PageInfo], List[NavNode]]:
+    def _analyze_page_concurrent(self, screenshot: bytes, prompt: str) -> Tuple[Optional[PageInfo], List[NavNode], List[PopupInfo], Optional[BlockInfo]]:
         """
         并发推理分析页面
 
@@ -674,9 +881,9 @@ NAV|540|80|搜索|jump|search
         def single_call(idx: int):
             try:
                 response = self.vlm._call_api(screenshot, prompt)
-                page_info, nodes = self._parse_response(response)
+                page_info, nodes, popups, block_info = self._parse_response(response)
                 with lock:
-                    results.append((page_info, nodes))
+                    results.append((page_info, nodes, popups, block_info))
                 return True
             except Exception as e:
                 self.log("debug", f"  并发推理 #{idx+1} 失败: {e}")
@@ -689,25 +896,116 @@ NAV|540|80|搜索|jump|search
                 future.result()
 
         if not results:
-            return None, []
+            return None, [], [], None
+
+        # 聚合异常页面信息（如果有任何一个检测到 BLOCK，就认为是异常页面）
+        final_block = None
+        block_counts = {}
+        for _, _, _, block_info in results:
+            if block_info:
+                key = block_info.block_type
+                if key not in block_counts:
+                    block_counts[key] = (0, block_info)
+                block_counts[key] = (block_counts[key][0] + 1, block_info)
+
+        # 如果超过半数检测到同一类型的 BLOCK，就认为是异常页面
+        for block_type, (count, block_info) in block_counts.items():
+            if count >= num_requests // 2:
+                final_block = block_info
+                self.log("warn", f"  检测到异常页面: {block_type} ({count}/{num_requests})")
+                break
+
+        # 如果检测到异常页面，不需要聚合其他信息
+        if final_block:
+            # 但仍然聚合弹窗，因为可能需要先关闭弹窗
+            all_popups = []
+            for _, _, popups, _ in results:
+                all_popups.extend(popups)
+            aggregated_popups = self._aggregate_popups(all_popups, 1)
+            return None, [], aggregated_popups, final_block
 
         # 聚合页面信息（取第一个有效的）
         final_page = None
-        for page_info, _ in results:
+        for page_info, _, _, _ in results:
             if page_info:
                 final_page = page_info
                 break
 
         # 聚合导航节点（按坐标分组，出现次数 >= threshold 的保留）
         all_nodes = []
-        for _, nodes in results:
+        for _, nodes, _, _ in results:
             all_nodes.extend(nodes)
 
         aggregated_nodes = self._aggregate_nav_nodes(all_nodes, threshold)
 
-        self.log("info", f"  并发结果: {len(results)}/{num_requests} 成功, 聚合 {len(aggregated_nodes)} 个节点")
+        # 聚合弹窗（按坐标分组，出现次数 >= 1 就保留，因为弹窗很重要）
+        all_popups = []
+        for _, _, popups, _ in results:
+            all_popups.extend(popups)
 
-        return final_page, aggregated_nodes
+        aggregated_popups = self._aggregate_popups(all_popups, max(1, threshold - 1))
+
+        self.log("info", f"  并发结果: {len(results)}/{num_requests} 成功, 聚合 {len(aggregated_nodes)} 节点, {len(aggregated_popups)} 弹窗")
+
+        return final_page, aggregated_nodes, aggregated_popups, None
+
+    def _aggregate_popups(self, popups: List[PopupInfo], threshold: int) -> List[PopupInfo]:
+        """聚合多次推理的弹窗信息"""
+        if not popups:
+            return []
+
+        # 按坐标分组（允许 100 像素误差，弹窗按钮位置可能有偏差）
+        groups = []
+        used = set()
+
+        for i, popup in enumerate(popups):
+            if i in used:
+                continue
+
+            if not popup.close_locator.bounds:
+                continue
+
+            x1, y1 = popup.close_locator.bounds[0], popup.close_locator.bounds[1]
+            group = [popup]
+            used.add(i)
+
+            for j, other in enumerate(popups):
+                if j in used or not other.close_locator.bounds:
+                    continue
+
+                x2, y2 = other.close_locator.bounds[0], other.close_locator.bounds[1]
+                if abs(x1 - x2) < 100 and abs(y1 - y2) < 100:
+                    group.append(other)
+                    used.add(j)
+
+            groups.append(group)
+
+        # 过滤并聚合
+        aggregated = []
+        for group in groups:
+            if len(group) < threshold:
+                continue
+
+            # 取平均坐标
+            avg_x = sum(p.close_locator.bounds[0] for p in group) // len(group)
+            avg_y = sum(p.close_locator.bounds[1] for p in group) // len(group)
+
+            # 取最常见的类型
+            types = [p.popup_type for p in group]
+            most_common_type = max(set(types), key=types.count)
+
+            # 取最常见的描述
+            descs = [p.description for p in group]
+            most_common_desc = max(set(descs), key=descs.count)
+
+            aggregated.append(PopupInfo(
+                popup_id=f"popup_{avg_x}_{avg_y}",
+                popup_type=most_common_type,
+                description=most_common_desc,
+                close_locator=NodeLocator(bounds=(avg_x, avg_y, avg_x, avg_y))
+            ))
+
+        return aggregated
 
     def _aggregate_nav_nodes(self, nodes: List[NavNode], threshold: int) -> List[NavNode]:
         """
@@ -776,18 +1074,58 @@ NAV|540|80|搜索|jump|search
 
         return aggregated
 
-    def _parse_response(self, response: str) -> Tuple[Optional[PageInfo], List[NavNode]]:
-        """解析 VLM 响应，返回 (页面信息, 导航节点列表)"""
+    def _parse_response(self, response: str) -> Tuple[Optional[PageInfo], List[NavNode], List[PopupInfo], Optional[BlockInfo]]:
+        """解析 VLM 响应，返回 (页面信息, 导航节点列表, 弹窗列表, 异常页面信息)"""
         page_info = None
         nav_nodes = []
+        popups = []
+        block_info = None
 
         for line in response.strip().split("\n"):
             line = line.strip()
             if not line or line.startswith("```"):
                 continue
 
+            # BLOCK|类型|描述 (异常页面，最高优先级)
+            if line.startswith("BLOCK|"):
+                parts = line.split("|")
+                if len(parts) >= 3:
+                    block_type = parts[1].strip().lower()
+                    description = parts[2].strip()
+                    block_info = BlockInfo(
+                        block_type=block_type,
+                        description=description
+                    )
+                    # 遇到 BLOCK 后，后续的 PAGE 和 NAV 应该被忽略
+                    # 但我们继续解析以防 VLM 输出了 POPUP（可能需要先关闭弹窗）
+
+            # POPUP|x|y|类型|描述
+            elif line.startswith("POPUP|"):
+                parts = line.split("|")
+                if len(parts) >= 4:
+                    try:
+                        x = int(parts[1].strip())
+                        y = int(parts[2].strip())
+                        popup_type = parts[3].strip().lower()
+                        description = parts[4].strip() if len(parts) >= 5 else popup_type
+
+                        # 创建 PopupInfo
+                        close_locator = NodeLocator(bounds=(x, y, x, y))
+                        popup = PopupInfo(
+                            popup_id=f"popup_{x}_{y}",
+                            popup_type=popup_type,
+                            description=description,
+                            close_locator=close_locator
+                        )
+                        popups.append(popup)
+                    except ValueError:
+                        continue
+
             # 新格式: PAGE|页面ID|页面名称|功能描述|功能列表
-            if line.startswith("PAGE|"):
+            elif line.startswith("PAGE|"):
+                # 如果已经检测到 BLOCK，忽略 PAGE
+                if block_info:
+                    continue
                 parts = line.split("|")
                 if len(parts) >= 4:
                     page_id = parts[1].strip().lower()
@@ -804,6 +1142,9 @@ NAV|540|80|搜索|jump|search
 
             # NAV|x|y|节点名称|类型|目标页面ID
             elif line.startswith("NAV|"):
+                # 如果已经检测到 BLOCK，忽略 NAV
+                if block_info:
+                    continue
                 parts = line.split("|")
                 if len(parts) >= 5:
                     try:
@@ -824,7 +1165,7 @@ NAV|540|80|搜索|jump|search
                     except ValueError:
                         continue
 
-        return page_info, nav_nodes
+        return page_info, nav_nodes, popups, block_info
 
     def _match_xml_node(self, vlm_x: int, vlm_y: int, vlm_desc: str, xml_nodes: List[Dict]) -> Optional[Dict]:
         """
@@ -989,6 +1330,252 @@ NAV|540|80|搜索|jump|search
         self.log("info", f"  匹配结果: {len(enriched)}/{len(nav_nodes)} 个节点")
         return enriched
 
+    def _enrich_popup_locators(self, popups: List[PopupInfo], xml_nodes: List[Dict]) -> List[PopupInfo]:
+        """
+        用 XML 信息丰富弹窗定位器
+
+        弹窗关闭按钮的匹配策略：
+        1. 坐标在 bounds 内的 clickable 节点
+        2. 距离最近的 clickable 节点
+        3. 文本匹配（跳过、关闭、×等）
+        """
+        enriched = []
+
+        # 弹窗关闭按钮关键词
+        close_keywords = [
+            "跳过", "跳過", "skip", "关闭", "關閉", "close",
+            "×", "✕", "✖", "x", "X",
+            "以后再说", "暂不", "取消", "拒绝", "不允许",
+            "我知道了", "知道了", "残忍拒绝"
+        ]
+
+        for popup in popups:
+            if not popup.close_locator.bounds:
+                continue
+
+            vlm_x, vlm_y = popup.close_locator.bounds[0], popup.close_locator.bounds[1]
+            self.log("debug", f"  弹窗「{popup.description}」VLM坐标: ({vlm_x}, {vlm_y})")
+
+            # 获取所有 clickable 节点
+            clickable_nodes = [n for n in xml_nodes if n.get("clickable", False)]
+
+            best_match = None
+            best_score = -1
+
+            for node in clickable_nodes:
+                bounds = node.get("bounds", [0, 0, 0, 0])
+                if len(bounds) < 4:
+                    continue
+
+                x1, y1, x2, y2 = bounds
+                center_x = (x1 + x2) // 2
+                center_y = (y1 + y2) // 2
+
+                score = 0
+
+                # 策略1: 坐标在 bounds 内 (+100分)
+                if x1 <= vlm_x <= x2 and y1 <= vlm_y <= y2:
+                    score += 100
+
+                # 策略2: 距离近 (+50分，距离越近分越高)
+                dist = ((vlm_x - center_x) ** 2 + (vlm_y - center_y) ** 2) ** 0.5
+                if dist < 150:
+                    score += max(0, 50 - dist / 3)
+
+                # 策略3: 文本匹配 (+80分)
+                text = (node.get("text") or node.get("content_desc") or "").lower()
+                for kw in close_keywords:
+                    if kw.lower() in text:
+                        score += 80
+                        break
+
+                # 策略4: resource_id 包含 close/skip (+60分)
+                res_id = (node.get("resource_id") or "").lower()
+                if "close" in res_id or "skip" in res_id or "dismiss" in res_id:
+                    score += 60
+
+                if score > best_score:
+                    best_score = score
+                    best_match = node
+
+            if best_match and best_score >= 50:
+                # 用 XML 信息更新 locator
+                popup.close_locator = self._create_locator_from_xml(best_match)
+                xml_text = best_match.get("text") or best_match.get("content_desc") or best_match.get("resource_id", "")[:20]
+                self.log("info", f"    ✓ 弹窗「{popup.description}」→ XML「{xml_text}」(score={best_score})")
+                enriched.append(popup)
+            else:
+                # 没匹配到 XML，保留原始坐标
+                self.log("debug", f"    ✗ 弹窗「{popup.description}」未匹配到XML，使用VLM坐标")
+                enriched.append(popup)
+
+        return enriched
+
+    def _handle_popups(self, popups: List[PopupInfo], xml_nodes: List[Dict], current_page: str):
+        """
+        处理弹窗：点击关闭并记录到 map
+
+        Args:
+            popups: VLM 识别的弹窗列表
+            xml_nodes: 当前页面的 XML 节点
+            current_page: 当前页面ID
+        """
+        if not popups:
+            return
+
+        self.log("info", f"  检测到 {len(popups)} 个弹窗/广告")
+
+        # 用 XML 丰富弹窗定位器
+        enriched_popups = self._enrich_popup_locators(popups, xml_nodes)
+
+        for popup in enriched_popups:
+            popup.first_seen_page = current_page
+
+            # 获取点击坐标
+            click_point = popup.close_locator.click_point()
+            if not click_point:
+                self.log("warn", f"    弹窗「{popup.description}」无法获取点击坐标")
+                continue
+
+            self.log("info", f"    关闭弹窗: {popup.popup_type} - {popup.description}")
+            self.log("info", f"      点击 ({click_point[0]}, {click_point[1]})")
+
+            # 点击关闭
+            self._tap(*click_point)
+            time.sleep(0.3)
+
+            # 记录到 map
+            self.nav_map.add_popup(popup)
+            self.log("info", f"      已记录到 map (共 {len(self.nav_map.popups)} 个弹窗)")
+
+    def _check_and_dismiss_popups(self, xml_nodes: List[Dict]) -> bool:
+        """
+        检查当前页面是否有已知弹窗，如果有则关闭
+
+        用于执行操作前的弹窗检测（基于已记录的弹窗）
+
+        Returns:
+            True 如果关闭了弹窗，False 如果没有弹窗
+        """
+        if not self.nav_map.popups:
+            return False
+
+        dismissed = False
+
+        for popup_key, popup in self.nav_map.popups.items():
+            # 检查弹窗的 locator 是否在当前 XML 中存在
+            locator = popup.close_locator
+
+            for node in xml_nodes:
+                matched = False
+
+                # 匹配 resource_id
+                if locator.resource_id:
+                    node_rid = node.get("resource_id", "")
+                    if locator.resource_id in node_rid or node_rid.endswith(locator.resource_id):
+                        matched = True
+
+                # 匹配 text
+                if not matched and locator.text:
+                    if node.get("text") == locator.text:
+                        matched = True
+
+                # 匹配 content_desc
+                if not matched and locator.content_desc:
+                    if node.get("content_desc") == locator.content_desc:
+                        matched = True
+
+                if matched and node.get("clickable", False):
+                    # 找到匹配的弹窗，点击关闭
+                    bounds = node.get("bounds", [0, 0, 0, 0])
+                    if len(bounds) >= 4:
+                        x = (bounds[0] + bounds[2]) // 2
+                        y = (bounds[1] + bounds[3]) // 2
+                        self.log("info", f"  检测到已知弹窗「{popup.description}」，自动关闭")
+                        self._tap(x, y)
+                        time.sleep(0.3)
+                        popup.hit_count += 1
+                        dismissed = True
+                        break
+
+            if dismissed:
+                break
+
+        return dismissed
+
+    def _check_for_known_blocks(self, xml_nodes: List[Dict]) -> Optional[BlockInfo]:
+        """
+        检查当前页面是否是已知的 Block 页面
+
+        Returns:
+            匹配的 BlockInfo，或 None
+        """
+        if not self.nav_map.blocks:
+            return None
+
+        # 获取当前 activity
+        current_activity = None
+        try:
+            ok, _, activity = self.client.get_activity()
+            if ok:
+                current_activity = activity
+        except:
+            pass
+
+        for block in self.nav_map.blocks:
+            if block.matches_xml(xml_nodes, current_activity):
+                block.hit_count += 1
+                return block
+
+        return None
+
+    def _extract_block_identifiers(self, xml_nodes: List[Dict]) -> List[str]:
+        """
+        从 XML 中提取 Block 页面的特征 identifiers
+
+        提取策略：
+        1. 优先提取包含关键词的 resource_id
+        2. 提取所有非空的 resource_id（去重，最多 10 个）
+        """
+        # Block 页面关键词
+        block_keywords = [
+            "captcha", "verify", "slider", "puzzle", "code",
+            "security", "risk", "check", "validate", "confirm",
+            "login", "sign", "auth", "error", "retry"
+        ]
+
+        identifiers = []
+        all_ids = []
+
+        for node in xml_nodes:
+            rid = node.get("resource_id", "")
+            if not rid:
+                continue
+
+            # 只取 id 部分
+            short_id = rid.split("/")[-1] if "/" in rid else rid
+            if not short_id or short_id in all_ids:
+                continue
+
+            all_ids.append(short_id)
+
+            # 优先添加包含关键词的
+            rid_lower = short_id.lower()
+            for kw in block_keywords:
+                if kw in rid_lower:
+                    identifiers.append(short_id)
+                    break
+
+        # 如果关键词匹配的不够，补充其他 id
+        if len(identifiers) < 5:
+            for rid in all_ids:
+                if rid not in identifiers:
+                    identifiers.append(rid)
+                if len(identifiers) >= 10:
+                    break
+
+        return identifiers[:10]  # 最多 10 个
+
     # === 并行 VLM 推理 ===
 
     def _submit_vlm_task(self, node_key: str, screenshot: bytes, xml_nodes: List[Dict],
@@ -1001,12 +1588,18 @@ NAV|540|80|搜索|jump|search
 
         def vlm_work():
             try:
-                page_info, nav_nodes = self._analyze_page(screenshot)
+                page_info, nav_nodes, popups, block_info = self._analyze_page(screenshot)
+                # 处理弹窗
+                if popups:
+                    enriched_popups = self._enrich_popup_locators(popups, xml_nodes)
+                    for popup in enriched_popups:
+                        popup.first_seen_page = from_page
+                        self.nav_map.add_popup(popup)
                 nav_nodes = self._enrich_nav_nodes(nav_nodes, xml_nodes)
-                return (page_info, nav_nodes)
+                return (page_info, nav_nodes, popups, block_info)
             except Exception as e:
                 self.log("error", f"VLM 后台推理失败: {e}")
-                return (None, [])
+                return (None, [], [], None)
 
         future = self._vlm_executor.submit(vlm_work)
         task = PendingVLMTask(
@@ -1043,7 +1636,15 @@ NAV|540|80|搜索|jump|search
         for task in completed:
             try:
                 result = task.future.result(timeout=0.1)
-                new_page, new_nav_nodes = result
+                new_page, new_nav_nodes, new_popups, block_info = result
+
+                # 检测到异常页面（人机验证等）
+                if block_info:
+                    self.log("warn", f"  [VLM完成] {task.node_name} → 异常页面: {block_info.block_type}")
+                    block_info.trigger_node = task.node_name
+                    self.nav_map.add_block(block_info)
+                    # 并行模式下无法重新探索，只记录
+                    continue
 
                 # 确定目标页面ID
                 if new_page:
@@ -1054,7 +1655,7 @@ NAV|540|80|搜索|jump|search
                     target_page_id = task.expected_target or "unknown"
                     self.log("info", f"  [VLM完成] {task.node_name} → {target_page_id}")
 
-                self.log("info", f"    发现 {len(new_nav_nodes)} 个导航节点")
+                self.log("info", f"    发现 {len(new_nav_nodes)} 个导航节点, {len(new_popups)} 个弹窗")
 
                 # 添加跳转记录
                 trans = Transition(
@@ -1194,12 +1795,33 @@ NAV|540|80|搜索|jump|search
             self.log("info", f"XML 节点数: {len(xml_nodes)}")
 
             self.log("info", "调用 VLM 分析...")
-            home_page, home_nav_nodes = self._analyze_page(screenshot)
+            home_page, home_nav_nodes, home_popups, home_block = self._analyze_page(screenshot)
+
+            # 首页检测到异常页面（极少见，但可能有）
+            if home_block:
+                self.log("error", f"首页检测到异常页面: {home_block.block_type} - {home_block.description}")
+                self.log("error", "无法继续探索，请检查应用状态")
+                self.nav_map.add_block(home_block)
+                self.status = ExplorationStatus.STOPPED
+                return self._build_result(package_name)
+
             if home_page:
-                self.log("info", f"VLM 返回: page={home_page.page_id}({home_page.name}), 原始节点={len(home_nav_nodes)}")
+                self.log("info", f"VLM 返回: page={home_page.page_id}({home_page.name}), 原始节点={len(home_nav_nodes)}, 弹窗={len(home_popups)}")
             else:
                 self.log("warn", "VLM 未返回页面信息")
                 home_page = PageInfo(page_id="home", name="首页", description="应用首页", features=[])
+
+            # 处理首页弹窗
+            if home_popups:
+                self._handle_popups(home_popups, xml_nodes, home_page.page_id)
+                # 弹窗关闭后重新截图分析
+                time.sleep(0.5)
+                screenshot = self._screenshot()
+                if screenshot:
+                    xml_nodes = self._dump_actions()
+                    home_page, home_nav_nodes, more_popups, _ = self._analyze_page(screenshot)
+                    if more_popups:
+                        self._handle_popups(more_popups, xml_nodes, home_page.page_id if home_page else "home")
 
             # 打印原始节点
             for nav in home_nav_nodes:
@@ -1311,6 +1933,12 @@ NAV|540|80|搜索|jump|search
                         else:
                             self.log("warn", f"    步骤 {i+1}: 无法获取点击坐标")
 
+                # 操作前检测已知弹窗
+                pre_xml = self._dump_actions()
+                if self._check_and_dismiss_popups(pre_xml):
+                    # 弹窗被关闭，重新获取 XML
+                    pre_xml = self._dump_actions()
+
                 # 点击目标节点
                 click_point = task.locator.click_point()
                 if not click_point:
@@ -1333,11 +1961,47 @@ NAV|540|80|搜索|jump|search
 
                 # 等待页面响应（使用配置的延迟时间）
                 time.sleep(self._click_delay)
+
+                # ============================================================
+                # 点击后先用 XML 检查：1. 已知弹窗 2. 已知 Block 页面
+                # ============================================================
+                new_xml = self._dump_actions()
+
+                # 检查已知 Block 页面
+                known_block = self._check_for_known_blocks(new_xml)
+                if known_block:
+                    self.log("warn", f"  ⚠ 检测到已知异常页面: {known_block.block_type} - {known_block.description}")
+                    # 重启应用并重新探索
+                    self.log("info", f"  重启应用并重新探索节点: {task.name}")
+                    self._launch_app(package_name)
+                    time.sleep(2)
+                    # 将该节点重新加入队列
+                    self.explored_keys.discard(node_key)
+                    task.depth += 1
+                    if task.depth < self.config.max_depth + 2:
+                        self.pending_tasks.appendleft(task)
+                    continue
+
+                # 检查已知弹窗并关闭
+                popup_dismissed = False
+                dismiss_attempts = 0
+                while dismiss_attempts < 3:  # 最多尝试关闭 3 次
+                    if self._check_and_dismiss_popups(new_xml):
+                        popup_dismissed = True
+                        time.sleep(0.3)
+                        new_xml = self._dump_actions()
+                        dismiss_attempts += 1
+                    else:
+                        break
+
+                if popup_dismissed:
+                    self.log("info", f"  已关闭 {dismiss_attempts} 个已知弹窗")
+
+                # 弹窗关闭后重新截图
                 new_screenshot = self._screenshot()
                 if not new_screenshot:
                     continue
 
-                new_xml = self._dump_actions()
                 new_path = task.path + [task.locator]
 
                 # 根据模式处理 VLM 分析
@@ -1355,8 +2019,64 @@ NAV|540|80|搜索|jump|search
                         self._realtime["current_screenshot"] = base64.b64encode(new_screenshot).decode()
                         self._realtime["last_action"] = f"{task.name} → (分析中...)"
                 else:
-                    # 串行模式：等待 VLM 返回
-                    new_page, new_nav_nodes = self._analyze_page(new_screenshot)
+                    # 串行模式：VLM 分析
+                    new_page, new_nav_nodes, new_popups, block_info = self._analyze_page(new_screenshot)
+
+                    # ============================================================
+                    # VLM 检测到新异常页面 → 提取特征 + 记录 + 重启 + 重新探索
+                    # ============================================================
+                    if block_info:
+                        self.log("warn", f"  ⚠ VLM 检测到新异常页面: {block_info.block_type} - {block_info.description}")
+
+                        # 提取页面特征用于后续快速识别
+                        block_info.identifiers = self._extract_block_identifiers(new_xml)
+                        try:
+                            ok, _, activity = self.client.get_activity()
+                            if ok:
+                                block_info.activity = activity
+                        except:
+                            pass
+
+                        block_info.trigger_node = task.name
+                        block_info.trigger_locator = task.locator
+                        self.nav_map.add_block(block_info)
+
+                        self.log("info", f"    特征: activity={block_info.activity}, ids={block_info.identifiers[:5]}")
+
+                        # 重启应用
+                        self.log("info", f"  重启应用并重新探索节点: {task.name}")
+                        self._launch_app(package_name)
+                        time.sleep(2)
+
+                        # 将该节点重新加入队列（移除已探索标记）
+                        self.explored_keys.discard(node_key)
+                        task.depth += 1
+                        if task.depth < self.config.max_depth + 2:
+                            self.pending_tasks.appendleft(task)
+                        continue
+
+                    # ============================================================
+                    # 检测到新弹窗（VLM 发现的）→ 记录 + 关闭 + 重新探索该节点
+                    # ============================================================
+                    if new_popups:
+                        self.log("info", f"  VLM 检测到 {len(new_popups)} 个新弹窗，记录并关闭")
+                        self._handle_popups(new_popups, new_xml, task.from_page)
+
+                        # 重启应用并重新探索该节点
+                        self.log("info", f"  重启应用并重新探索节点: {task.name}")
+                        self._launch_app(package_name)
+                        time.sleep(2)
+
+                        # 将该节点重新加入队列（移除已探索标记）
+                        self.explored_keys.discard(node_key)
+                        task.depth += 1
+                        if task.depth < self.config.max_depth + 2:
+                            self.pending_tasks.appendleft(task)
+                        continue
+
+                    # ============================================================
+                    # 正常页面 → 记录跳转 + 发现新节点
+                    # ============================================================
                     new_nav_nodes = self._enrich_nav_nodes(new_nav_nodes, new_xml)
 
                     # 确定目标页面ID
@@ -1414,6 +2134,7 @@ NAV|540|80|搜索|jump|search
             self.log("info", "=" * 50)
             self.log("info", "探索完成!")
             self.log("info", f"页面: {stats['total_pages']}, 跳转: {stats['total_transitions']}")
+            self.log("info", f"弹窗: {stats['total_popups']}, 异常页面: {stats['total_blocks']}")
             self.log("info", f"动作: {self._stats['total_actions']}, 耗时: {elapsed:.1f}s")
             self.log("info", "=" * 50)
 
