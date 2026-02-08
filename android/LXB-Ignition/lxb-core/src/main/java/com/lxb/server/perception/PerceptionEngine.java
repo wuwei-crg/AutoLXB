@@ -27,9 +27,11 @@ import com.lxb.server.system.UiAutomationWrapper;
  * 处理的命令:
  * - 0x30 GET_ACTIVITY: 获取当前 Activity
  * - 0x31 DUMP_HIERARCHY: 获取 UI 树
- * - 0x32 FIND_NODE: 查找节点
+ * - 0x32 FIND_NODE: 查找节点（单字段匹配）
+ * - 0x33 DUMP_ACTIONS: 获取可交互节点
  * - 0x36 GET_SCREEN_STATE: 获取屏幕状态
  * - 0x37 GET_SCREEN_SIZE: 获取屏幕尺寸
+ * - 0x39 FIND_NODE_COMPOUND: 复合特征节点查找（多条件组合）
  */
 public class PerceptionEngine {
 
@@ -69,6 +71,23 @@ public class PerceptionEngine {
     private static final int RETURN_COORDS = 0;
     private static final int RETURN_BOUNDS = 1;
     private static final int RETURN_FULL = 2;
+
+    // Compound find field types
+    private static final int COMPOUND_FIELD_TEXT = 0;
+    private static final int COMPOUND_FIELD_RESOURCE_ID = 1;
+    private static final int COMPOUND_FIELD_CONTENT_DESC = 2;
+    private static final int COMPOUND_FIELD_CLASS_NAME = 3;
+    private static final int COMPOUND_FIELD_PARENT_RESOURCE_ID = 4;
+    private static final int COMPOUND_FIELD_ACTIVITY = 5;
+    private static final int COMPOUND_FIELD_CHILD_INDEX = 6;
+    private static final int COMPOUND_FIELD_CLICKABLE = 7;
+    private static final int COMPOUND_FIELD_CLICKABLE_INDEX = 8;
+
+    // Compound find match operations
+    private static final int COMPOUND_OP_EQUALS = 0;
+    private static final int COMPOUND_OP_CONTAINS = 1;
+    private static final int COMPOUND_OP_STARTS_WITH = 2;
+    private static final int COMPOUND_OP_ENDS_WITH = 3;
 
     /**
      * 设置 UiAutomation 依赖
@@ -325,6 +344,322 @@ public class PerceptionEngine {
         }
 
         // RETURN_FULL - 暂不实现
+        return new byte[]{0x01, (byte) results.size()};
+    }
+
+    /**
+     * BFS 包装类，追踪父节点
+     */
+    private static class NodeWithParent {
+        Object node;
+        Object parent;  // null for root
+        int childIndex; // index among parent's children, -1 for root
+
+        NodeWithParent(Object node, Object parent, int childIndex) {
+            this.node = node;
+            this.parent = parent;
+            this.childIndex = childIndex;
+        }
+    }
+
+    /**
+     * 复合条件结构
+     */
+    private static class CompoundCondition {
+        int field;
+        int op;
+        String value;
+
+        CompoundCondition(int field, int op, String value) {
+            this.field = field;
+            this.op = op;
+            this.value = value;
+        }
+    }
+
+    /**
+     * 处理 FIND_NODE_COMPOUND 命令 (0x39)
+     *
+     * 支持多特征组合查询，BFS 遍历时逐条检查所有条件，全部满足才算匹配。
+     *
+     * 请求格式:
+     *   return_mode[1B] + flags[1B] + cond_count[1B] + conditions[...]
+     *   flags: bit 0 = multi_match (0=仅首个, 1=全部)
+     *   每个 condition: field[1B] + op[1B] + val_len[2B] + value[UTF-8]
+     *
+     * 响应格式: 复用 FIND_NODE 响应格式
+     *   status[1B] + count[1B] + results[...]
+     *
+     * @param payload 请求负载
+     * @return 响应数据
+     */
+    public byte[] handleFindNodeCompound(byte[] payload) {
+        if (payload.length < 3) {
+            System.err.println(TAG + " FIND_NODE_COMPOUND payload too short: " + payload.length);
+            return new byte[]{0x00, 0x00};
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        buffer.order(ByteOrder.BIG_ENDIAN);
+
+        int returnMode = buffer.get() & 0xFF;
+        int flags = buffer.get() & 0xFF;
+        int condCount = buffer.get() & 0xFF;
+        boolean multiMatch = (flags & 0x01) != 0;
+
+        // 解析条件列表
+        List<CompoundCondition> conditions = new ArrayList<>();
+        for (int i = 0; i < condCount; i++) {
+            if (buffer.remaining() < 4) {
+                System.err.println(TAG + " FIND_NODE_COMPOUND condition truncated at #" + i);
+                return new byte[]{0x00, 0x00};
+            }
+            int field = buffer.get() & 0xFF;
+            int op = buffer.get() & 0xFF;
+            int valLen = buffer.getShort() & 0xFFFF;
+
+            if (buffer.remaining() < valLen) {
+                System.err.println(TAG + " FIND_NODE_COMPOUND value truncated at #" + i);
+                return new byte[]{0x00, 0x00};
+            }
+            byte[] valBytes = new byte[valLen];
+            buffer.get(valBytes);
+            String value = new String(valBytes, StandardCharsets.UTF_8);
+
+            conditions.add(new CompoundCondition(field, op, value));
+        }
+
+        System.out.println(TAG + " FIND_NODE_COMPOUND: " + condCount + " conditions, " +
+                "returnMode=" + returnMode + ", multiMatch=" + multiMatch);
+        for (CompoundCondition c : conditions) {
+            System.out.println(TAG + "   field=" + c.field + " op=" + c.op + " value=\"" + c.value + "\"");
+        }
+
+        if (uiAutomation == null) {
+            System.err.println(TAG + " UiAutomation not available");
+            return new byte[]{0x00, 0x00};
+        }
+
+        Object rootNode = uiAutomation.getRootNode();
+        if (rootNode == null) {
+            System.err.println(TAG + " Failed to get root node");
+            return new byte[]{0x00, 0x00};
+        }
+
+        // 预获取 activity（一次性，用于 field=5 匹配）
+        String currentActivity = "";
+        boolean needsActivity = false;
+        for (CompoundCondition c : conditions) {
+            if (c.field == COMPOUND_FIELD_ACTIVITY) {
+                needsActivity = true;
+                break;
+            }
+        }
+        if (needsActivity) {
+            String[] actResult = uiAutomation.getCurrentActivity();
+            currentActivity = actResult[1];  // activity name
+        }
+
+        // BFS with NodeWithParent
+        List<int[]> results = new ArrayList<>();
+        try {
+            findNodesCompoundBFS(rootNode, conditions, currentActivity, multiMatch, results);
+        } catch (Exception e) {
+            System.err.println(TAG + " FIND_NODE_COMPOUND error: " + e.getMessage());
+        }
+
+        System.out.println(TAG + " FIND_NODE_COMPOUND found " + results.size() + " matches");
+
+        if (results.isEmpty()) {
+            return new byte[]{0x00, 0x00};
+        }
+
+        // 构建响应（复用 FIND_NODE 格式）
+        return buildFindNodeResponse(returnMode, results);
+    }
+
+    /**
+     * BFS 遍历查找复合条件节点
+     */
+    private void findNodesCompoundBFS(Object root, List<CompoundCondition> conditions,
+                                       String currentActivity, boolean multiMatch,
+                                       List<int[]> results) throws Exception {
+        if (getChildCountMethod == null) {
+            System.err.println(TAG + " Reflection cache not initialized");
+            return;
+        }
+
+        // 获取屏幕尺寸，用于过滤离屏节点
+        int screenWidth = 0, screenHeight = 0;
+        if (uiAutomation != null) {
+            int[] screenSize = uiAutomation.getScreenSize();
+            screenWidth = screenSize[0];
+            screenHeight = screenSize[1];
+        }
+
+        Queue<NodeWithParent> queue = new LinkedList<>();
+        queue.offer(new NodeWithParent(root, null, -1));
+
+        while (!queue.isEmpty()) {
+            NodeWithParent nwp = queue.poll();
+            if (nwp == null || nwp.node == null) continue;
+
+            // 检查当前节点是否满足所有条件
+            if (matchesAllConditions(nwp, conditions, currentActivity)) {
+                int[] bounds = getNodeBounds(nwp.node);
+                if (bounds != null) {
+                    // 过滤离屏节点（ViewPager/RecyclerView 中的不可见页面）
+                    if (screenWidth > 0 && screenHeight > 0) {
+                        int centerX = (bounds[0] + bounds[2]) / 2;
+                        int centerY = (bounds[1] + bounds[3]) / 2;
+                        if (centerX < 0 || centerX > screenWidth ||
+                            centerY < 0 || centerY > screenHeight) {
+                            continue;  // 跳过离屏节点
+                        }
+                    }
+                    results.add(bounds);
+                    if (!multiMatch) {
+                        return;
+                    }
+                }
+            }
+
+            // 添加子节点到队列（当前节点作为父节点，记录 child index）
+            int childCount = (Integer) getChildCountMethod.invoke(nwp.node);
+            for (int i = 0; i < childCount; i++) {
+                Object child = getChildMethod.invoke(nwp.node, i);
+                if (child != null) {
+                    queue.offer(new NodeWithParent(child, nwp.node, i));
+                }
+            }
+        }
+    }
+
+    /**
+     * 检查节点是否满足所有复合条件
+     */
+    private boolean matchesAllConditions(NodeWithParent nwp, List<CompoundCondition> conditions,
+                                          String currentActivity) throws Exception {
+        for (CompoundCondition cond : conditions) {
+            String fieldValue = getCompoundFieldValue(nwp, cond.field, currentActivity);
+            if (!matchesOp(fieldValue, cond.op, cond.value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 获取复合条件的字段值
+     */
+    private String getCompoundFieldValue(NodeWithParent nwp, int field,
+                                          String currentActivity) throws Exception {
+        switch (field) {
+            case COMPOUND_FIELD_TEXT: {
+                CharSequence text = (CharSequence) getTextMethod.invoke(nwp.node);
+                return text != null ? text.toString() : "";
+            }
+            case COMPOUND_FIELD_RESOURCE_ID: {
+                String resId = (String) getViewIdResourceNameMethod.invoke(nwp.node);
+                return resId != null ? resId : "";
+            }
+            case COMPOUND_FIELD_CONTENT_DESC: {
+                CharSequence desc = (CharSequence) getContentDescriptionMethod.invoke(nwp.node);
+                return desc != null ? desc.toString() : "";
+            }
+            case COMPOUND_FIELD_CLASS_NAME: {
+                CharSequence cls = (CharSequence) getClassNameMethod.invoke(nwp.node);
+                return cls != null ? cls.toString() : "";
+            }
+            case COMPOUND_FIELD_PARENT_RESOURCE_ID: {
+                if (nwp.parent == null) return "";
+                String parentResId = (String) getViewIdResourceNameMethod.invoke(nwp.parent);
+                return parentResId != null ? parentResId : "";
+            }
+            case COMPOUND_FIELD_ACTIVITY: {
+                return currentActivity != null ? currentActivity : "";
+            }
+            case COMPOUND_FIELD_CHILD_INDEX: {
+                return String.valueOf(nwp.childIndex);
+            }
+            case COMPOUND_FIELD_CLICKABLE: {
+                boolean clickable = (Boolean) isClickableMethod.invoke(nwp.node);
+                return clickable ? "true" : "false";
+            }
+            case COMPOUND_FIELD_CLICKABLE_INDEX: {
+                // 在父节点的可点击子节点中排第几
+                if (nwp.parent == null) return "-1";
+                try {
+                    int parentChildCount = (Integer) getChildCountMethod.invoke(nwp.parent);
+                    int clickableIdx = 0;
+                    for (int i = 0; i < parentChildCount; i++) {
+                        Object sibling = getChildMethod.invoke(nwp.parent, i);
+                        if (sibling == null) continue;
+                        boolean sibClickable = (Boolean) isClickableMethod.invoke(sibling);
+                        if (!sibClickable) continue;
+                        if (i == nwp.childIndex) {
+                            return String.valueOf(clickableIdx);
+                        }
+                        clickableIdx++;
+                    }
+                } catch (Exception e) {
+                    System.err.println(TAG + " CLICKABLE_INDEX error: " + e.getMessage());
+                }
+                return "-1";
+            }
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * 执行匹配操作
+     */
+    private boolean matchesOp(String fieldValue, int op, String condValue) {
+        if (fieldValue == null) fieldValue = "";
+        switch (op) {
+            case COMPOUND_OP_EQUALS:
+                return fieldValue.equals(condValue);
+            case COMPOUND_OP_CONTAINS:
+                return fieldValue.contains(condValue);
+            case COMPOUND_OP_STARTS_WITH:
+                return fieldValue.startsWith(condValue);
+            case COMPOUND_OP_ENDS_WITH:
+                return fieldValue.endsWith(condValue);
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * 构建 FIND_NODE 响应（复用格式）
+     */
+    private byte[] buildFindNodeResponse(int returnMode, List<int[]> results) {
+        if (returnMode == RETURN_COORDS) {
+            ByteBuffer respBuffer = ByteBuffer.allocate(2 + results.size() * 4);
+            respBuffer.order(ByteOrder.BIG_ENDIAN);
+            respBuffer.put((byte) 0x01);
+            respBuffer.put((byte) results.size());
+            for (int[] bounds : results) {
+                int centerX = (bounds[0] + bounds[2]) / 2;
+                int centerY = (bounds[1] + bounds[3]) / 2;
+                respBuffer.putShort((short) centerX);
+                respBuffer.putShort((short) centerY);
+            }
+            return respBuffer.array();
+        } else if (returnMode == RETURN_BOUNDS) {
+            ByteBuffer respBuffer = ByteBuffer.allocate(2 + results.size() * 8);
+            respBuffer.order(ByteOrder.BIG_ENDIAN);
+            respBuffer.put((byte) 0x01);
+            respBuffer.put((byte) results.size());
+            for (int[] bounds : results) {
+                respBuffer.putShort((short) bounds[0]);
+                respBuffer.putShort((short) bounds[1]);
+                respBuffer.putShort((short) bounds[2]);
+                respBuffer.putShort((short) bounds[3]);
+            }
+            return respBuffer.array();
+        }
         return new byte[]{0x01, (byte) results.size()};
     }
 
@@ -1256,14 +1591,14 @@ public class PerceptionEngine {
 
                 action.classId = pool.addShort(info.className);
 
-                // 获取显示文本 - 关键逻辑：如果交互节点没有文本，使用边界包含法收集子节点文本
+                // 获取显示文本：优先自身 text，其次 content_desc，最后聚合子节点文本
                 String displayText = info.text;
-                if (displayText.isEmpty() && isInteractive) {
-                    // 使用边界包含法收集所有子节点的文本
-                    displayText = collectTextInBoundsFromXml(allNodes, i, info);
-                }
                 if (displayText.isEmpty()) {
                     displayText = info.contentDesc;
+                }
+                if (displayText.isEmpty() && isInteractive) {
+                    // 自身无文本的可交互节点，聚合子节点文本辅助识别
+                    displayText = collectTextInBoundsFromXml(allNodes, i, info);
                 }
                 action.textId = pool.addLong(displayText);
 
@@ -1384,13 +1719,14 @@ public class PerceptionEngine {
             CharSequence className = (CharSequence) getClassNameMethod.invoke(node);
             action.classId = pool.addShort(className != null ? className.toString() : "");
 
-            // 获取文本 - 如果自身没有文本，使用边界包含法收集子节点文本
+            // 获取文本：优先自身 text，其次 content_desc，最后聚合子节点文本
             String displayText = textStr;
-            if (displayText.isEmpty() && isInteractive) {
-                displayText = getAggregatedTextInBounds(node);
-            }
             if (displayText.isEmpty()) {
                 displayText = descStr;
+            }
+            if (displayText.isEmpty() && isInteractive) {
+                // 自身无文本的可交互节点，聚合子节点文本辅助识别
+                displayText = getAggregatedTextInBounds(node);
             }
             action.textId = pool.addLong(displayText);
 

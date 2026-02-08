@@ -101,7 +101,8 @@ CMD_WAIT_FOR = 0x34        # Wait for element to appear (new)
 CMD_OCR_REGION = 0x35      # OCR on device (new)
 CMD_GET_SCREEN_STATE = 0x36  # Get screen state (off/on/locked) ⭐
 CMD_GET_SCREEN_SIZE = 0x37   # Get screen size and density ⭐
-# 0x38-0x3F: Reserved for AI enhancements
+CMD_FIND_NODE_COMPOUND = 0x39  # Compound multi-condition node find ⭐
+# 0x38, 0x3A-0x3F: Reserved for AI enhancements
 
 # -----------------------------------------------------------------------------
 # Lifecycle Layer (0x40-0x4F) - Application Management
@@ -195,6 +196,7 @@ CHANNEL_MAP = {
     CMD_SWIPE: CH_CONTROL,
     CMD_KEY_EVENT: CH_CONTROL,
     CMD_FIND_NODE: CH_CONTROL,
+    CMD_FIND_NODE_COMPOUND: CH_CONTROL,
     CMD_GET_ACTIVITY: CH_CONTROL,
     CMD_INPUT_TEXT: CH_CONTROL,
     CMD_UNLOCK: CH_CONTROL,
@@ -421,6 +423,29 @@ MATCH_DESCRIPTION = 5       # Match by content-desc
 RETURN_COORDS = 0           # Return only center coordinates (x, y)
 RETURN_BOUNDS = 1           # Return bounding boxes (left, top, right, bottom)
 RETURN_FULL = 2             # Return full node information
+
+# =============================================================================
+# FIND_NODE_COMPOUND Field Types
+# =============================================================================
+
+COMPOUND_FIELD_TEXT = 0              # getText()
+COMPOUND_FIELD_RESOURCE_ID = 1      # getViewIdResourceName()
+COMPOUND_FIELD_CONTENT_DESC = 2     # getContentDescription()
+COMPOUND_FIELD_CLASS_NAME = 3       # getClassName()
+COMPOUND_FIELD_PARENT_RESOURCE_ID = 4  # parent's getViewIdResourceName()
+COMPOUND_FIELD_ACTIVITY = 5         # current Activity name
+COMPOUND_FIELD_CHILD_INDEX = 6      # index among parent's children
+COMPOUND_FIELD_CLICKABLE = 7        # "true"/"false" — node is clickable
+COMPOUND_FIELD_CLICKABLE_INDEX = 8  # index among parent's clickable children
+
+# =============================================================================
+# FIND_NODE_COMPOUND Match Operations
+# =============================================================================
+
+COMPOUND_OP_EQUALS = 0              # Exact match
+COMPOUND_OP_CONTAINS = 1            # Contains substring
+COMPOUND_OP_STARTS_WITH = 2         # Starts with prefix
+COMPOUND_OP_ENDS_WITH = 3           # Ends with suffix
 
 # =============================================================================
 # INPUT_TEXT Methods

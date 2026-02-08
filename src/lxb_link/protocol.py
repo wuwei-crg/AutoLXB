@@ -1314,4 +1314,33 @@ class ProtocolFrame:
 
         return ProtocolFrame.pack(seq, CMD_STOP_APP, payload)
 
+    @staticmethod
+    def pack_find_node_compound(seq: int, return_mode: int, conditions: list,
+                                multi_match: bool = False) -> bytes:
+        """
+        Pack FIND_NODE_COMPOUND command for multi-condition node search.
+
+        Args:
+            seq: Sequence number
+            return_mode: Return mode (RETURN_COORDS or RETURN_BOUNDS)
+            conditions: List of (field, op, value) tuples
+                - field: COMPOUND_FIELD_* constant (0-5)
+                - op: COMPOUND_OP_* constant (0-3)
+                - value: UTF-8 string to match
+            multi_match: Return all matches (True) or first only (False)
+
+        Returns:
+            Complete binary frame for FIND_NODE_COMPOUND command
+        """
+        from .constants import CMD_FIND_NODE_COMPOUND
+
+        flags = 0x01 if multi_match else 0x00
+        payload = struct.pack('>BBB', return_mode, flags, len(conditions))
+
+        for field, op, value in conditions:
+            val_bytes = value.encode('utf-8')
+            payload += struct.pack('>BBH', field, op, len(val_bytes)) + val_bytes
+
+        return ProtocolFrame.pack(seq, CMD_FIND_NODE_COMPOUND, payload)
+
 

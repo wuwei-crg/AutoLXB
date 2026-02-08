@@ -36,6 +36,7 @@ from .constants import (
     # Sense Layer commands
     CMD_GET_ACTIVITY,
     CMD_FIND_NODE,
+    CMD_FIND_NODE_COMPOUND,
     CMD_DUMP_HIERARCHY,
     # Input Extension commands
     CMD_INPUT_TEXT,
@@ -515,6 +516,77 @@ class LXBLinkClient:
             return status, results
         else:
             # RETURN_FULL not yet implemented in this version
+            raise NotImplementedError("RETURN_FULL mode not yet implemented")
+
+    def find_node_compound(
+        self,
+        conditions: list,
+        return_mode: int = RETURN_COORDS,
+        multi_match: bool = False
+    ) -> tuple[int, list]:
+        """
+        Find UI node using compound multi-condition matching.
+
+        Unlike find_node() which supports only a single field match,
+        this method sends multiple conditions (field + op + value) to the
+        device. The device BFS-traverses the UI tree and returns only nodes
+        that satisfy ALL conditions.
+
+        Args:
+            conditions: List of (field, op, value) tuples
+                - field: COMPOUND_FIELD_* constant
+                    0=TEXT, 1=RESOURCE_ID, 2=CONTENT_DESC,
+                    3=CLASS_NAME, 4=PARENT_RESOURCE_ID, 5=ACTIVITY
+                - op: COMPOUND_OP_* constant
+                    0=EQUALS, 1=CONTAINS, 2=STARTS_WITH, 3=ENDS_WITH
+                - value: UTF-8 string to match
+            return_mode: What to return (default: RETURN_COORDS)
+                - RETURN_COORDS: Center (x, y) coordinates
+                - RETURN_BOUNDS: Bounding boxes (left, top, right, bottom)
+            multi_match: Return all matches (True) or first only (False)
+
+        Returns:
+            Tuple of (status, results)
+            - status: 0=not found, 1=success
+            - results: List depends on return_mode
+
+        Raises:
+            LXBTimeoutError: If command times out
+            RuntimeError: If client is not connected
+
+        Example:
+            >>> # Find "确定" button inside a dialog
+            >>> status, coords = client.find_node_compound([
+            ...     (0, 0, "确定"),           # TEXT EQUALS "确定"
+            ...     (4, 1, "dialog"),          # PARENT_RESOURCE_ID CONTAINS "dialog"
+            ... ])
+        """
+        self._ensure_connected()
+
+        logger.info(f"Sending FIND_NODE_COMPOUND: {len(conditions)} conditions, "
+                    f"return_mode={return_mode}, multi_match={multi_match}")
+
+        # Build payload: return_mode[1B] + flags[1B] + cond_count[1B] + conditions
+        import struct
+        flags = 0x01 if multi_match else 0x00
+        payload = struct.pack('>BBB', return_mode, flags, len(conditions))
+
+        for field, op, value in conditions:
+            val_bytes = value.encode('utf-8')
+            payload += struct.pack('>BBH', field, op, len(val_bytes)) + val_bytes
+
+        response = self._transport.send_reliable(CMD_FIND_NODE_COMPOUND, payload)
+
+        # Response format is identical to FIND_NODE
+        if return_mode == RETURN_COORDS:
+            status, results = ProtocolFrame.unpack_find_node_coords(response)
+            logger.info(f"FIND_NODE_COMPOUND: status={status}, found {len(results)} nodes")
+            return status, results
+        elif return_mode == RETURN_BOUNDS:
+            status, results = ProtocolFrame.unpack_find_node_bounds(response)
+            logger.info(f"FIND_NODE_COMPOUND: status={status}, found {len(results)} nodes")
+            return status, results
+        else:
             raise NotImplementedError("RETURN_FULL mode not yet implemented")
 
     def dump_hierarchy(

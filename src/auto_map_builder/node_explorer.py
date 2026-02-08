@@ -57,6 +57,7 @@ class NodeLocator:
     text: Optional[str] = None
     content_desc: Optional[str] = None
     class_name: Optional[str] = None
+    parent_resource_id: Optional[str] = None
     bounds: Optional[Tuple[int, int, int, int]] = None
 
     def to_dict(self) -> dict:
@@ -70,7 +71,13 @@ class NodeLocator:
             d["text"] = self.text
         if self.content_desc:
             d["content_desc"] = self.content_desc
-        # bounds 和 class_name 不保存到 map（运行时查找）
+        if self.parent_resource_id:
+            prid = self.parent_resource_id.split("/")[-1] if "/" in self.parent_resource_id else self.parent_resource_id
+            d["parent_rid"] = prid
+        # bounds 作为 hint 预留（用于自学习，不用于定位）
+        if self.bounds and len(self.bounds) >= 4:
+            d["bounds_hint"] = list(self.bounds)
+        # class_name 不保存到 map
         return d
 
     def unique_key(self) -> str:
@@ -87,20 +94,72 @@ class NodeLocator:
         return f"unknown:{id(self)}"
 
     def click_point(self) -> Optional[Tuple[int, int]]:
-        """获取点击坐标（bounds 中心）"""
+        """获取点击坐标（bounds 中心），仅作为 fallback"""
         if self.bounds and len(self.bounds) >= 4:
             return ((self.bounds[0] + self.bounds[2]) // 2,
                     (self.bounds[1] + self.bounds[3]) // 2)
         return None
 
+    def find_queries(self) -> List[Tuple[int, str]]:
+        """
+        生成 find_node 查询参数列表（按优先级排序）
+
+        Returns:
+            [(match_type, query_string), ...] 优先级从高到低
+            match_type 对应 constants.py 中的 MATCH_* 常量:
+              0=MATCH_EXACT_TEXT, 1=MATCH_CONTAINS_TEXT, 2=MATCH_REGEX,
+              3=MATCH_RESOURCE_ID, 4=MATCH_CLASS, 5=MATCH_DESCRIPTION
+        """
+        queries = []
+        # 优先级1: resource_id（最稳定）
+        if self.resource_id:
+            queries.append((3, self.resource_id))  # MATCH_RESOURCE_ID
+        # 优先级2: text（精确匹配）
+        if self.text and len(self.text) <= 30:
+            queries.append((0, self.text))  # MATCH_EXACT_TEXT
+        # 优先级3: content_desc
+        if self.content_desc and len(self.content_desc) <= 30:
+            queries.append((5, self.content_desc))  # MATCH_DESCRIPTION
+        return queries
+
+    def compound_conditions(self, activity: str = None) -> List[Tuple[int, int, str]]:
+        """
+        生成复合查询条件列表 [(field, op, value), ...]
+
+        field/op 常量对应 constants.py 中的 COMPOUND_FIELD_* / COMPOUND_OP_*:
+          field: 0=TEXT, 1=RESOURCE_ID, 2=CONTENT_DESC, 3=CLASS_NAME,
+                 4=PARENT_RESOURCE_ID, 5=ACTIVITY
+          op:    0=EQUALS, 1=CONTAINS, 2=STARTS_WITH, 3=ENDS_WITH
+        """
+        conditions = []
+        if self.resource_id:
+            conditions.append((1, 0, self.resource_id))   # RESOURCE_ID, EQUALS
+        if self.text:
+            conditions.append((0, 0, self.text))           # TEXT, EQUALS
+        if self.content_desc:
+            conditions.append((2, 0, self.content_desc))   # CONTENT_DESC, EQUALS
+        if self.class_name:
+            conditions.append((3, 3, self.class_name.split(".")[-1]))  # CLASS, ENDS_WITH
+        if self.parent_resource_id:
+            conditions.append((4, 0, self.parent_resource_id))  # PARENT_RESOURCE_ID, EQUALS
+        if activity:
+            conditions.append((5, 0, activity))            # ACTIVITY, EQUALS
+        return conditions
+
     @staticmethod
     def from_dict(d: dict) -> "NodeLocator":
+        bounds = None
+        if d.get("bounds"):
+            bounds = tuple(d["bounds"])
+        elif d.get("bounds_hint"):
+            bounds = tuple(d["bounds_hint"])
         return NodeLocator(
             resource_id=d.get("resource_id"),
             text=d.get("text"),
             content_desc=d.get("content_desc"),
             class_name=d.get("class_name"),
-            bounds=tuple(d["bounds"]) if d.get("bounds") else None
+            parent_resource_id=d.get("parent_rid"),
+            bounds=bounds
         )
 
     def __hash__(self):
@@ -719,6 +778,64 @@ NAV|540|80|搜索|jump|search
         self._stats["total_actions"] += 1
         time.sleep(self.config.action_delay_ms / 1000)
 
+    def _tap_node(self, locator: NodeLocator, label: str = "", activity: str = None) -> bool:
+        """
+        通过 find_node 定位并点击节点
+
+        优先使用 find_node_compound（复合条件），fallback 到 find_node（单字段），
+        最后 fallback 到 bounds 坐标。
+
+        Args:
+            locator: 节点定位器
+            label: 日志标签
+            activity: 当前 Activity 名称（可选，用于复合查询）
+
+        Returns:
+            True 如果成功点击，False 如果失败
+        """
+        desc = label or locator.unique_key()
+
+        # 1. 尝试 find_node_compound（复合条件 >= 2 时使用）
+        conditions = locator.compound_conditions(activity=activity)
+        if len(conditions) >= 2:
+            try:
+                status, coords = self.client.find_node_compound(
+                    conditions, return_mode=0, multi_match=False
+                )
+                if status == 1 and coords:
+                    x, y = coords[0]
+                    self.log("debug", f"    find_node_compound 成功: {desc} → ({x}, {y}) [{len(conditions)} 条件]")
+                    self._tap(x, y)
+                    return True
+            except Exception as e:
+                self.log("debug", f"    find_node_compound 异常: {desc} → {e}")
+
+        # 2. fallback: find_node 逐个尝试（单字段）
+        queries = locator.find_queries()
+        for match_type, query in queries:
+            try:
+                status, coords = self.client.find_node(
+                    query, match_type=match_type, return_mode=0, timeout_ms=3000
+                )
+                if status == 1 and coords:
+                    x, y = coords[0]
+                    self.log("debug", f"    find_node 成功: {desc} → ({x}, {y}) [query={query}]")
+                    self._tap(x, y)
+                    return True
+            except Exception as e:
+                self.log("debug", f"    find_node 异常: {query} → {e}")
+                continue
+
+        # 3. fallback: 使用 bounds 坐标
+        click_point = locator.click_point()
+        if click_point:
+            self.log("warn", f"    find_node 失败，使用 bounds fallback: {desc} → {click_point}")
+            self._tap(*click_point)
+            return True
+
+        self.log("warn", f"    无法定位节点: {desc}")
+        return False
+
     def _back(self):
         """按返回键"""
         self.client.key_event(4)
@@ -1244,15 +1361,48 @@ NAV|540|80|搜索|jump|search
 
         return None
 
-    def _create_locator_from_xml(self, xml_node: Dict) -> NodeLocator:
-        """从 XML 节点创建 Locator"""
+    def _create_locator_from_xml(self, xml_node: Dict, xml_nodes: List[Dict] = None) -> NodeLocator:
+        """从 XML 节点创建 Locator，可选从 xml_nodes 中查找父节点 resource_id"""
+        parent_rid = None
+        if xml_nodes:
+            bounds = xml_node.get("bounds", [0, 0, 0, 0])
+            if len(bounds) >= 4 and any(b > 0 for b in bounds):
+                parent_rid = self._find_parent_resource_id(xml_node, xml_nodes)
         return NodeLocator(
             resource_id=xml_node.get("resource_id"),
             text=xml_node.get("text"),
             content_desc=xml_node.get("content_desc"),
-            class_name=xml_node.get("class_name"),
+            class_name=xml_node.get("class_name") or xml_node.get("class"),
+            parent_resource_id=parent_rid,
             bounds=tuple(xml_node.get("bounds", [0, 0, 0, 0]))
         )
+
+    def _find_parent_resource_id(self, child_node: Dict, xml_nodes: List[Dict]) -> Optional[str]:
+        """从 xml_nodes 中找到包含 child_node 的最小父节点的 resource_id"""
+        child_bounds = child_node.get("bounds", [0, 0, 0, 0])
+        if len(child_bounds) < 4:
+            return None
+        cl, ct, cr, cb = child_bounds
+
+        best_rid = None
+        best_area = float('inf')
+
+        for node in xml_nodes:
+            if node is child_node:
+                continue
+            nb = node.get("bounds", [0, 0, 0, 0])
+            if len(nb) < 4:
+                continue
+            nl, nt, nr, nb_ = nb
+            # 父节点必须严格包含子节点
+            if nl <= cl and nt <= ct and nr >= cr and nb_ >= cb and (nl < cl or nt < ct or nr > cr or nb_ > cb):
+                area = (nr - nl) * (nb_ - nt)
+                rid = node.get("resource_id") or node.get("resource-id", "")
+                if rid and area < best_area:
+                    best_area = area
+                    best_rid = rid
+
+        return best_rid
 
     # 垃圾功能关键词（运营塞进来的无用入口）
     _JUNK_KEYWORDS = [
@@ -1319,7 +1469,7 @@ NAV|540|80|搜索|jump|search
             if xml_node:
                 xml_text = xml_node.get("text") or xml_node.get("content_desc") or ""
                 # 用 XML 信息更新 locator
-                nav.locator = self._create_locator_from_xml(xml_node)
+                nav.locator = self._create_locator_from_xml(xml_node, xml_nodes)
                 new_center = nav.locator.click_point()
                 self.log("info", f"    ✓ VLM「{nav.name}」({vlm_x},{vlm_y}) → XML「{xml_text}」{new_center}")
                 enriched.append(nav)
@@ -1400,7 +1550,7 @@ NAV|540|80|搜索|jump|search
 
             if best_match and best_score >= 50:
                 # 用 XML 信息更新 locator
-                popup.close_locator = self._create_locator_from_xml(best_match)
+                popup.close_locator = self._create_locator_from_xml(best_match, xml_nodes)
                 xml_text = best_match.get("text") or best_match.get("content_desc") or best_match.get("resource_id", "")[:20]
                 self.log("info", f"    ✓ 弹窗「{popup.description}」→ XML「{xml_text}」(score={best_score})")
                 enriched.append(popup)
@@ -1431,17 +1581,13 @@ NAV|540|80|搜索|jump|search
         for popup in enriched_popups:
             popup.first_seen_page = current_page
 
-            # 获取点击坐标
-            click_point = popup.close_locator.click_point()
-            if not click_point:
-                self.log("warn", f"    弹窗「{popup.description}」无法获取点击坐标")
+            self.log("info", f"    关闭弹窗: {popup.popup_type} - {popup.description}")
+
+            # 通过 find_node 定位并点击关闭按钮
+            if not self._tap_node(popup.close_locator, label=f"弹窗关闭:{popup.description}"):
+                self.log("warn", f"    弹窗「{popup.description}」无法定位关闭按钮")
                 continue
 
-            self.log("info", f"    关闭弹窗: {popup.popup_type} - {popup.description}")
-            self.log("info", f"      点击 ({click_point[0]}, {click_point[1]})")
-
-            # 点击关闭
-            self._tap(*click_point)
             time.sleep(0.3)
 
             # 记录到 map
@@ -1486,13 +1632,9 @@ NAV|540|80|搜索|jump|search
                         matched = True
 
                 if matched and node.get("clickable", False):
-                    # 找到匹配的弹窗，点击关闭
-                    bounds = node.get("bounds", [0, 0, 0, 0])
-                    if len(bounds) >= 4:
-                        x = (bounds[0] + bounds[2]) // 2
-                        y = (bounds[1] + bounds[3]) // 2
-                        self.log("info", f"  检测到已知弹窗「{popup.description}」，自动关闭")
-                        self._tap(x, y)
+                    # 找到匹配的弹窗，通过 find_node 点击关闭
+                    self.log("info", f"  检测到已知弹窗「{popup.description}」，自动关闭")
+                    if self._tap_node(locator, label=f"已知弹窗:{popup.description}"):
                         time.sleep(0.3)
                         popup.hit_count += 1
                         dismissed = True
@@ -1925,13 +2067,16 @@ NAV|540|80|搜索|jump|search
                 # 按路径到达
                 if task.path:
                     self.log("info", f"  重放路径 ({len(task.path)} 步)...")
+                    path_ok = True
                     for i, step in enumerate(task.path):
-                        click_point = step.click_point()
-                        if click_point:
-                            self.log("debug", f"    步骤 {i+1}: 点击 {click_point}")
-                            self._tap(*click_point)
-                        else:
-                            self.log("warn", f"    步骤 {i+1}: 无法获取点击坐标")
+                        self.log("debug", f"    步骤 {i+1}: {step.unique_key()}")
+                        if not self._tap_node(step, label=f"路径步骤{i+1}"):
+                            self.log("warn", f"    步骤 {i+1}: 无法定位节点，路径中断")
+                            path_ok = False
+                            break
+                    if not path_ok:
+                        self.log("warn", f"  路径重放失败，跳过")
+                        continue
 
                 # 操作前检测已知弹窗
                 pre_xml = self._dump_actions()
@@ -1939,25 +2084,31 @@ NAV|540|80|搜索|jump|search
                     # 弹窗被关闭，重新获取 XML
                     pre_xml = self._dump_actions()
 
-                # 点击目标节点
-                click_point = task.locator.click_point()
-                if not click_point:
-                    self.log("warn", f"  无法获取点击坐标，跳过")
-                    continue
+                # 点击目标节点（通过 find_node 定位）
+                self.log("info", f"  点击目标: {task.name} [{task.locator.unique_key()}]")
 
-                # 打印详细的点击信息
-                self.log("info", f"  点击 ({click_point[0]}, {click_point[1]}) - {task.name}")
+                # 获取当前 activity（用于复合查询）
+                current_activity = None
+                try:
+                    ok, _, act = self.client.get_activity()
+                    if ok:
+                        current_activity = act
+                except:
+                    pass
 
                 # 截图并标记（点击前）
                 screenshot = self._screenshot()
-                if screenshot:
+                click_point = task.locator.click_point()  # 仅用于截图标记
+                if screenshot and click_point:
                     marked = self._mark_point(screenshot, click_point[0], click_point[1], task.name)
                     with self._realtime_lock:
                         self._realtime["current_screenshot"] = base64.b64encode(marked).decode()
                         self._realtime["current_node"] = task.name
 
-                # 执行点击
-                self._tap(*click_point)
+                # 执行点击（compound 优先，find_node fallback，bounds fallback）
+                if not self._tap_node(task.locator, label=task.name, activity=current_activity):
+                    self.log("warn", f"  无法定位目标节点，跳过")
+                    continue
 
                 # 等待页面响应（使用配置的延迟时间）
                 time.sleep(self._click_delay)

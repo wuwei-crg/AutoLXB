@@ -147,6 +147,9 @@ public class CommandDispatcher {
                 case 0x37:  // CMD_GET_SCREEN_SIZE ⭐ NEW
                     response = perceptionEngine.handleGetScreenSize();
                     break;
+                case 0x39:  // CMD_FIND_NODE_COMPOUND ⭐ NEW
+                    response = perceptionEngine.handleFindNodeCompound(payload);
+                    break;
                 // case 0x38:  // CMD_POPUP_WATCHDOG_CTRL (暂时禁用)
                 //     response = popupDetector.handleWatchdogCtrl(payload);
                 //     break;
