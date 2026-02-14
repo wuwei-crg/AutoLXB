@@ -8,6 +8,7 @@ from flask_cors import CORS
 import sys
 import os
 import base64
+import json
 
 # 尝试加载 python-dotenv (如果存在)
 try:
@@ -47,6 +48,228 @@ connection_info = {
     'port': None
 }
 
+CORTEX_LLM_CONFIG_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), '.cortex_llm_planner.json')
+)
+
+
+def _default_cortex_llm_config() -> dict:
+    return {
+        'api_base_url': os.getenv('CORTEX_LLM_API_BASE_URL', ''),
+        'api_key': os.getenv('CORTEX_LLM_API_KEY', ''),
+        'model_name': os.getenv('CORTEX_LLM_MODEL_NAME', 'qwen-plus'),
+        'temperature': float(os.getenv('CORTEX_LLM_TEMPERATURE', '0.1')),
+        'timeout': int(os.getenv('CORTEX_LLM_TIMEOUT', '30')),
+    }
+
+
+def _load_cortex_llm_config() -> dict:
+    cfg = _default_cortex_llm_config()
+    if not os.path.exists(CORTEX_LLM_CONFIG_FILE):
+        return cfg
+    try:
+        with open(CORTEX_LLM_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            stored = json.load(f)
+        if isinstance(stored, dict):
+            cfg.update(stored)
+    except Exception:
+        pass
+    return cfg
+
+
+def _save_cortex_llm_config(config: dict) -> None:
+    current = _default_cortex_llm_config()
+    current.update(config or {})
+    os.makedirs(os.path.dirname(CORTEX_LLM_CONFIG_FILE), exist_ok=True)
+    with open(CORTEX_LLM_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+
+
+def _build_llm_complete(config: dict):
+    from openai import OpenAI
+
+    api_base_url = (config.get('api_base_url') or '').strip()
+    api_key = (config.get('api_key') or '').strip()
+    model_name = (config.get('model_name') or '').strip()
+    if not api_base_url or not api_key or not model_name:
+        raise ValueError('LLM 配置不完整：api_base_url / api_key / model_name 必填')
+
+    client = OpenAI(
+        base_url=api_base_url,
+        api_key=api_key,
+        timeout=float(config.get('timeout', 30)),
+    )
+    temperature = float(config.get('temperature', 0.1))
+
+    def complete(prompt: str) -> str:
+        response = client.chat.completions.create(
+            model=model_name,
+            temperature=temperature,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a route planner. Output strict JSON only with keys: "
+                        "package_name, target_page."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return (response.choices[0].message.content or '').strip()
+
+    return complete
+
+
+def _extract_json_object(text: str) -> dict:
+    text = (text or '').strip()
+    if not text:
+        return {}
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        pass
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return {}
+    try:
+        obj = json.loads(text[start:end + 1])
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _infer_app_name_from_package(package_name: str) -> str:
+    if not package_name:
+        return ''
+    parts = [x for x in package_name.split('.') if x]
+    if not parts:
+        return package_name
+    tail = parts[-1]
+    return tail.replace('_', ' ')
+
+
+def _normalize_installed_apps(raw_apps) -> list:
+    out = []
+    for item in raw_apps or []:
+        if isinstance(item, dict):
+            package_name = str(item.get('package') or '').strip()
+            if not package_name:
+                continue
+            name = str(item.get('name') or item.get('label') or '').strip()
+            out.append({
+                'package': package_name,
+                'name': name or _infer_app_name_from_package(package_name),
+            })
+            continue
+
+        package_name = str(item or '').strip()
+        if not package_name:
+            continue
+        out.append({
+            'package': package_name,
+            'name': _infer_app_name_from_package(package_name),
+        })
+    return out
+
+
+def _has_map_for_package(base_dir: str, package_name: str) -> bool:
+    pkg_path = os.path.join(base_dir, package_name.replace('.', '_'))
+    if not os.path.isdir(pkg_path):
+        return False
+    import glob
+    return len(glob.glob(os.path.join(pkg_path, 'nav_map_*.json'))) > 0
+
+
+def _select_package_by_llm(
+    llm_complete,
+    user_task: str,
+    app_candidates: list,
+) -> dict:
+    rows = []
+    for app in app_candidates[:120]:
+        rows.append({
+            'package': app.get('package', ''),
+            'name': app.get('name', ''),
+        })
+
+    prompt = (
+        "You are selecting an Android app package for user intent routing.\n"
+        "Output JSON only:\n"
+        '{"package_name":"...","reason":"..."}\n'
+        "Rules:\n"
+        "1) package_name must be chosen from candidate package list.\n"
+        "2) prefer semantic app name match first, then package token match.\n\n"
+        f"user_task:\n{user_task}\n\n"
+        f"candidates:\n{json.dumps(rows, ensure_ascii=False)}"
+    )
+    raw = llm_complete(prompt)
+    payload = _extract_json_object(raw)
+    package_name = str(payload.get('package_name') or '').strip()
+    reason = str(payload.get('reason') or '').strip()
+    return {'package_name': package_name, 'reason': reason, 'raw': raw}
+
+
+def _select_target_page_by_llm(
+    llm_complete,
+    user_task: str,
+    map_path: str,
+) -> dict:
+    with open(map_path, 'r', encoding='utf-8') as f:
+        raw_map = json.load(f)
+
+    pages = raw_map.get('pages') or {}
+    transitions = raw_map.get('transitions') or []
+
+    page_rows = []
+    for page_id, page in pages.items():
+        page_rows.append({
+            'page_id': page_id,
+            'legacy_page_id': page.get('legacy_page_id', ''),
+            'name': page.get('name', ''),
+            'description': page.get('description', ''),
+            'features': (page.get('features') or [])[:12],
+            'aliases': (page.get('target_aliases') or [])[:8],
+        })
+
+    edge_rows = []
+    for t in transitions:
+        edge_rows.append({
+            'from': t.get('from', ''),
+            'to': t.get('to', ''),
+            'trigger': t.get('description', ''),
+        })
+
+    prompt = (
+        "You are selecting target_page for mobile app routing.\n"
+        "Output JSON only:\n"
+        '{"target_page":"...","reason":"..."}\n'
+        "Rules:\n"
+        "1) target_page must be one page_id or legacy_page_id from pages.\n"
+        "2) You MUST use semantic fields: name, description, features, aliases.\n"
+        "3) Prefer the page whose semantics most directly satisfy the user task.\n\n"
+        f"user_task:\n{user_task}\n\n"
+        f"map:\n{json.dumps({'package': raw_map.get('package', ''), 'pages': page_rows, 'transitions': edge_rows}, ensure_ascii=False)}"
+    )
+    raw = llm_complete(prompt)
+    payload = _extract_json_object(raw)
+    target_page = str(payload.get('target_page') or '').strip()
+    reason = str(payload.get('reason') or '').strip()
+    return {'target_page': target_page, 'reason': reason, 'raw': raw}
+
+
+class _FixedPlanPlanner:
+    def __init__(self, package_name: str, target_page: str):
+        self.package_name = package_name
+        self.target_page = target_page
+
+    def plan(self, user_task, route_map):
+        from src.cortex import RoutePlan
+        pkg = self.package_name or route_map.package
+        return RoutePlan(pkg, self.target_page)
+
 
 @app.route('/')
 def index():
@@ -64,6 +287,12 @@ def map_builder():
 def map_viewer():
     """Map Viewer 页面"""
     return render_template('map_viewer.html')
+
+
+@app.route('/cortex_route')
+def cortex_route():
+    """Cortex Route 调试页面"""
+    return render_template('cortex_route.html')
 
 
 @app.route('/api/connect', methods=['POST'])
@@ -560,30 +789,23 @@ def cmd_stop_app():
 
 @app.route('/api/command/list_apps', methods=['POST'])
 def cmd_list_apps():
-    """发送 LIST_APPS 命令，获取已安装应用列表"""
+    """?????????"""
     if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+        return jsonify({'success': False, 'message': '???'}), 400
 
-    data = request.json
+    data = request.json or {}
     filter_type = data.get('filter', 'user')  # user / system / all
 
     try:
-        apps = client.list_apps(filter_type)
-
-        # 尝试获取应用名称（通过 adb 命令）
-        apps_with_names = []
-        for pkg in apps:
-            apps_with_names.append({
-                'package': pkg,
-                'name': pkg.split('.')[-1]  # 默认使用包名最后一段作为名称
-            })
+        raw_apps = client.list_apps(filter_type)
+        apps_with_names = _normalize_installed_apps(raw_apps)
 
         return jsonify({
             'success': True,
-            'message': f'获取应用列表成功: {len(apps)} 个应用',
+            'message': f'????????: {len(apps_with_names)} ???',
             'response': {
                 'filter': filter_type,
-                'count': len(apps),
+                'count': len(apps_with_names),
                 'apps': apps_with_names
             }
         })
@@ -1639,6 +1861,272 @@ def maps_load():
             'message': str(e),
             'traceback': traceback.format_exc()
         }), 500
+
+
+@app.route('/api/cortex/llm/config', methods=['GET'])
+def cortex_llm_config_get():
+    """Get Cortex Route Planner LLM config."""
+    try:
+        cfg = _load_cortex_llm_config()
+        return jsonify({
+            'success': True,
+            'data': {
+                'api_base_url': cfg.get('api_base_url', ''),
+                'api_key': '***' if cfg.get('api_key') else '',
+                'model_name': cfg.get('model_name', ''),
+                'temperature': cfg.get('temperature', 0.1),
+                'timeout': cfg.get('timeout', 30),
+            }
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/cortex/llm/config', methods=['POST'])
+def cortex_llm_config_set():
+    """Save Cortex Route Planner LLM config."""
+    try:
+        data = request.json or {}
+        current = _load_cortex_llm_config()
+
+        cfg = {
+            'api_base_url': (data.get('api_base_url', current.get('api_base_url')) or '').strip(),
+            'api_key': current.get('api_key', ''),
+            'model_name': (data.get('model_name', current.get('model_name')) or '').strip(),
+            'temperature': float(data.get('temperature', current.get('temperature', 0.1))),
+            'timeout': int(data.get('timeout', current.get('timeout', 30))),
+        }
+        raw_key = data.get('api_key')
+        if raw_key and raw_key != '***':
+            cfg['api_key'] = raw_key.strip()
+
+        _save_cortex_llm_config(cfg)
+        return jsonify({'success': True, 'message': 'LLM config saved'})
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/cortex/llm/test', methods=['POST'])
+def cortex_llm_test():
+    """Test Cortex Route Planner LLM connectivity."""
+    try:
+        cfg = _load_cortex_llm_config()
+        data = request.json or {}
+        prompt = (data.get('prompt') or 'Return {"package_name":"com.test.app","target_page":"home"}').strip()
+        complete = _build_llm_complete(cfg)
+        output = complete(prompt)
+        return jsonify({
+            'success': True,
+            'message': f'LLM test ok: {cfg.get("model_name", "")}',
+            'response': output[:1200]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'message': f'LLM test failed: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/cortex/route/run', methods=['POST'])
+@app.route('/api/cortex/route_then_act/run', methods=['POST'])
+def cortex_route_then_act_run():
+    """Run route stage: resolve app -> target_page -> BFS -> device routing."""
+    global client
+
+    if not client:
+        return jsonify({'success': False, 'message': 'device not connected'}), 400
+
+    try:
+        from src.cortex import RouteThenActCortex, RouteConfig, MapPromptPlanner
+
+        data = request.json or {}
+        user_task = (data.get('user_task') or '').strip()
+        if not user_task:
+            return jsonify({'success': False, 'message': 'user_task is required'}), 400
+
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'maps'))
+        map_path = (data.get('map_filepath') or '').strip()
+        manual_package = (data.get('package_name') or '').strip()
+
+        planner_cfg = _load_cortex_llm_config()
+        llm_complete = _build_llm_complete(planner_cfg) if bool(data.get('use_llm_planner', True)) else None
+
+        app_resolution = {
+            'mode': 'manual' if manual_package else 'auto',
+            'selected_package': manual_package or None,
+            'reason': '',
+            'candidate_count': 0,
+        }
+
+        round1_app = {}
+        round2_page = {}
+
+        # Round-1: resolve package if map path not provided
+        if not map_path:
+            selected_package = manual_package
+
+            if not selected_package:
+                raw_apps = client.list_apps('user')
+                installed_apps = _normalize_installed_apps(raw_apps)
+                map_ready_apps = [a for a in installed_apps if _has_map_for_package(base_dir, a.get('package', ''))]
+                app_resolution['candidate_count'] = len(map_ready_apps)
+
+                if not map_ready_apps:
+                    return jsonify({'success': False, 'message': 'no installed app with local map found'}), 404
+
+                if llm_complete:
+                    picked = _select_package_by_llm(llm_complete, user_task, map_ready_apps)
+                    picked_pkg = picked.get('package_name') or ''
+                    round1_app = picked
+                    exists = any(a.get('package') == picked_pkg for a in map_ready_apps)
+                    if exists:
+                        selected_package = picked_pkg
+                        app_resolution['mode'] = 'llm'
+                        app_resolution['selected_package'] = picked_pkg
+                        app_resolution['reason'] = picked.get('reason', '')
+                    else:
+                        # fallback: first candidate
+                        selected_package = map_ready_apps[0].get('package')
+                        app_resolution['mode'] = 'fallback_first_candidate'
+                        app_resolution['selected_package'] = selected_package
+                        app_resolution['reason'] = 'llm package invalid or out of candidates'
+                else:
+                    selected_package = map_ready_apps[0].get('package')
+                    app_resolution['mode'] = 'fallback_no_llm'
+                    app_resolution['selected_package'] = selected_package
+                    app_resolution['reason'] = 'llm planner disabled'
+
+            map_path = _pick_latest_map_file(base_dir, selected_package or None)
+            if not map_path:
+                return jsonify({'success': False, 'message': f'no map file found for package: {selected_package}'}), 404
+
+        # map path provided -> derive selected package from file path if possible
+        if map_path:
+            map_path = os.path.abspath(map_path)
+            if not map_path.startswith(base_dir):
+                return jsonify({'success': False, 'message': 'invalid map_filepath'}), 403
+            if not os.path.exists(map_path):
+                return jsonify({'success': False, 'message': 'map_filepath not found'}), 404
+
+        cfg = data.get('route_config') or {}
+        route_cfg = RouteConfig(
+            node_exists_retries=int(cfg.get('node_exists_retries', 3)),
+            node_exists_interval_sec=float(cfg.get('node_exists_interval_sec', 0.6)),
+            max_route_restarts=int(cfg.get('max_route_restarts', 0)),
+            use_vlm_takeover=False,
+            vlm_takeover_timeout_sec=float(cfg.get('vlm_takeover_timeout_sec', 15.0)),
+            route_recovery_enabled=bool(cfg.get('route_recovery_enabled', False)),
+            locator_score_threshold=float(cfg.get('locator_score_threshold', 45.0)),
+            locator_ambiguity_delta=float(cfg.get('locator_ambiguity_delta', 8.0)),
+            hint_distance_limit_px=float(cfg.get('hint_distance_limit_px', 520.0)),
+        )
+
+        planner = None
+        if llm_complete:
+            # Round-2: for selected app map, infer target_page
+            round2_page = _select_target_page_by_llm(llm_complete, user_task, map_path)
+            tp = (round2_page.get('target_page') or '').strip()
+            if tp:
+                selected_pkg = app_resolution.get('selected_package') or ''
+                planner = _FixedPlanPlanner(selected_pkg, tp)
+            else:
+                # Fallback: keep previous planner behavior if round-2 parse failed
+                planner = MapPromptPlanner(llm_complete)
+
+        logs = []
+
+        def log_callback(payload):
+            logs.append(payload)
+
+        engine = RouteThenActCortex(
+            client=client,
+            planner=planner,
+            config=route_cfg,
+            log_callback=log_callback,
+        )
+
+        result = engine.run(
+            user_task=user_task,
+            map_path=map_path,
+            start_page=(data.get('start_page') or None),
+        )
+
+        plan_event = next((x for x in logs if x.get('event') == 'plan_ready'), {})
+        route_steps = [
+            {
+                'index': x.get('step_index'),
+                'from_page': x.get('from_page'),
+                'to_page': x.get('to_page'),
+                'trigger_node': x.get('trigger_node'),
+            }
+            for x in logs
+            if x.get('event') == 'route_step' and x.get('result') == 'start'
+        ]
+
+        return jsonify({
+            'success': result.get('status') == 'success',
+            'map_path': map_path,
+            'app_resolution': app_resolution,
+            'llm_rounds': {
+                'round1_app': round1_app,
+                'round2_target_page': round2_page,
+            },
+            'planner_output': {
+                'package_name': plan_event.get('package_name'),
+                'target_page': plan_event.get('target_page'),
+                'llm_model': planner_cfg.get('model_name') if planner else None,
+            },
+            'route_steps': route_steps,
+            'result': result,
+            'logs': logs,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+def _pick_latest_map_file(base_dir: str, package_name: str = None) -> str:
+    """Pick latest nav_map_*.json, optionally constrained by package."""
+    import os
+    import glob
+
+    all_maps = []
+
+    if package_name:
+        pkg_dir = package_name.replace('.', '_')
+        pkg_path = os.path.join(base_dir, pkg_dir)
+        if os.path.isdir(pkg_path):
+            pattern = os.path.join(pkg_path, 'nav_map_*.json')
+            for filepath in glob.glob(pattern):
+                all_maps.append((os.path.getmtime(filepath), filepath))
+    else:
+        if os.path.isdir(base_dir):
+            for pkg_dir in os.listdir(base_dir):
+                pkg_path = os.path.join(base_dir, pkg_dir)
+                if not os.path.isdir(pkg_path):
+                    continue
+                pattern = os.path.join(pkg_path, 'nav_map_*.json')
+                for filepath in glob.glob(pattern):
+                    all_maps.append((os.path.getmtime(filepath), filepath))
+
+    if not all_maps:
+        return ""
+    all_maps.sort(key=lambda x: x[0], reverse=True)
+    return all_maps[0][1]
 
 
 @app.route('/api/explore/node/save', methods=['POST'])

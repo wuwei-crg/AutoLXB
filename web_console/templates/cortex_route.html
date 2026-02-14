@@ -1,0 +1,300 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex Route Console</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; }
+        .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .header a { color: #93c5fd; text-decoration: none; margin-left: 10px; }
+        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 12px; }
+        .card { background: #111827; border: 1px solid #334155; border-radius: 10px; padding: 12px; }
+        .card h3 { margin: 0 0 10px; font-size: 15px; color: #93c5fd; }
+        .group { margin-bottom: 10px; }
+        label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+        input, select, textarea { width: 100%; background: #0b1220; border: 1px solid #334155; color: #e2e8f0; border-radius: 8px; padding: 8px; }
+        textarea { min-height: 78px; resize: vertical; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+        button { border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+        .btn-primary { background: #2563eb; color: #fff; }
+        .btn-secondary { background: #334155; color: #e2e8f0; }
+        .btn-ok { background: #059669; color: #fff; }
+        .status { padding: 7px 8px; border-radius: 8px; background: #1e293b; font-size: 12px; margin-bottom: 10px; }
+        .mono { font-family: Consolas, monospace; white-space: pre-wrap; font-size: 12px; background: #020617; border: 1px solid #334155; border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; }
+        .log { max-height: 380px; overflow: auto; }
+        .log-item { font-family: Consolas, monospace; font-size: 12px; border-bottom: 1px solid #1e293b; padding: 4px 0; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="header">
+        <h2 style="margin:0;">Cortex Route 调试台</h2>
+        <div>
+            <a href="/">控制台</a>
+            <a href="/map_builder">Map Builder</a>
+            <a href="/map_viewer">Map Viewer</a>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div>
+            <div class="card">
+                <h3>设备连接</h3>
+                <div id="connStatus" class="status">未检查</div>
+                <div class="row">
+                    <div class="group">
+                        <label>Host</label>
+                        <input id="host" value="192.168.1.100">
+                    </div>
+                    <div class="group">
+                        <label>Port</label>
+                        <input id="port" type="number" value="12345">
+                    </div>
+                </div>
+                <div class="btns">
+                    <button class="btn-primary" onclick="connectDevice()">连接</button>
+                    <button class="btn-secondary" onclick="disconnectDevice()">断开</button>
+                    <button class="btn-secondary" onclick="refreshStatus()">刷新状态</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>LLM 配置（Planner）</h3>
+                <div class="group">
+                    <label>API Base URL</label>
+                    <input id="llmApiUrl" placeholder="https://api.xxx.com/v1">
+                </div>
+                <div class="group">
+                    <label>API Key</label>
+                    <input id="llmApiKey" type="password" placeholder="sk-...">
+                </div>
+                <div class="group">
+                    <label>Model</label>
+                    <input id="llmModel" value="qwen-plus">
+                </div>
+                <div class="row">
+                    <div class="group">
+                        <label>Temperature</label>
+                        <input id="llmTemp" type="number" step="0.1" value="0.1">
+                    </div>
+                    <div class="group">
+                        <label>Timeout(s)</label>
+                        <input id="llmTimeout" type="number" value="30">
+                    </div>
+                </div>
+                <div class="btns">
+                    <button class="btn-ok" onclick="saveLlmConfig()">保存配置</button>
+                    <button class="btn-secondary" onclick="testLlmConfig()">测试 LLM</button>
+                </div>
+                <div id="llmTestResult" class="mono" style="margin-top:8px; min-height:72px;"></div>
+            </div>
+        </div>
+
+        <div>
+            <div class="card">
+                <h3>路由执行</h3>
+                <div class="group">
+                    <label>用户意图</label>
+                    <textarea id="userTask" placeholder="例如：打开贴吧的消息页面"></textarea>
+                </div>
+                <div class="row">
+                    <div class="group">
+                        <label>Map 文件</label>
+                        <select id="mapSelect"></select>
+                    </div>
+                    <div class="group">
+                        <label>Package 过滤（可空）</label>
+                        <input id="pkgFilter" placeholder="com.baidu.tieba">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="group">
+                        <label>Node Exists Retries</label>
+                        <input id="nodeRetries" type="number" value="3">
+                    </div>
+                    <div class="group">
+                        <label>Node Exists Interval(s)</label>
+                        <input id="nodeInterval" type="number" step="0.1" value="0.6">
+                    </div>
+                </div>
+                <div class="btns">
+                    <button class="btn-secondary" onclick="loadMaps()">刷新 Map 列表</button>
+                    <button class="btn-primary" onclick="runRoute()">运行路由</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Planner 输出</h3>
+                <div id="plannerOut" class="mono">-</div>
+            </div>
+
+            <div class="card">
+                <h3>BFS 点击链</h3>
+                <div id="routeSteps" class="mono">-</div>
+            </div>
+
+            <div class="card">
+                <h3>执行日志</h3>
+                <div id="routeLogs" class="log"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function jfetch(url, method='GET', body=null) {
+    const opt = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== null) opt.body = JSON.stringify(body);
+    const r = await fetch(url, opt);
+    return await r.json();
+}
+
+function logLine(msg) {
+    const el = document.getElementById('routeLogs');
+    const item = document.createElement('div');
+    item.className = 'log-item';
+    item.textContent = msg;
+    el.appendChild(item);
+    el.scrollTop = el.scrollHeight;
+}
+
+async function refreshStatus() {
+    const data = await jfetch('/api/status');
+    const s = document.getElementById('connStatus');
+    s.textContent = data.connected ? `已连接 ${data.host}:${data.port}` : '未连接';
+}
+
+async function connectDevice() {
+    const host = document.getElementById('host').value.trim();
+    const port = Number(document.getElementById('port').value || '12345');
+    const data = await jfetch('/api/connect', 'POST', { host, port });
+    logLine(`[connect] ${data.message || (data.success ? 'ok' : 'failed')}`);
+    await refreshStatus();
+}
+
+async function disconnectDevice() {
+    const data = await jfetch('/api/disconnect', 'POST', {});
+    logLine(`[disconnect] ${data.message || (data.success ? 'ok' : 'failed')}`);
+    await refreshStatus();
+}
+
+async function loadLlmConfig() {
+    const data = await jfetch('/api/cortex/llm/config');
+    if (!data.success) return;
+    const c = data.data || {};
+    document.getElementById('llmApiUrl').value = c.api_base_url || '';
+    document.getElementById('llmApiKey').value = c.api_key || '';
+    document.getElementById('llmModel').value = c.model_name || 'qwen-plus';
+    document.getElementById('llmTemp').value = c.temperature ?? 0.1;
+    document.getElementById('llmTimeout').value = c.timeout ?? 30;
+}
+
+async function saveLlmConfig() {
+    const payload = {
+        api_base_url: document.getElementById('llmApiUrl').value.trim(),
+        api_key: document.getElementById('llmApiKey').value.trim(),
+        model_name: document.getElementById('llmModel').value.trim(),
+        temperature: Number(document.getElementById('llmTemp').value || '0.1'),
+        timeout: Number(document.getElementById('llmTimeout').value || '30')
+    };
+    const data = await jfetch('/api/cortex/llm/config', 'POST', payload);
+    logLine(`[llm/save] ${data.message || (data.success ? 'ok' : 'failed')}`);
+}
+
+async function testLlmConfig() {
+    const out = document.getElementById('llmTestResult');
+    out.textContent = 'Testing...';
+    const data = await jfetch('/api/cortex/llm/test', 'POST', {
+        prompt: '用户要打开贴吧消息页。只输出JSON: {"package_name":"...","target_page":"..."}'
+    });
+    out.textContent = data.success ? (data.response || '') : (data.message || 'failed');
+    logLine(`[llm/test] ${data.message || (data.success ? 'ok' : 'failed')}`);
+}
+
+async function loadMaps() {
+    const packageName = document.getElementById('pkgFilter').value.trim();
+    const data = await jfetch('/api/maps/list');
+    const sel = document.getElementById('mapSelect');
+    sel.innerHTML = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = '';
+    autoOpt.textContent = '自动按应用选择最新 map';
+    sel.appendChild(autoOpt);
+    if (!data.success) {
+        autoOpt.textContent = '加载失败（将走自动模式）';
+        return;
+    }
+    let maps = data.data || [];
+    if (packageName) {
+        maps = maps.filter(m => m.package === packageName);
+    }
+    if (!maps.length) {
+        autoOpt.textContent = '无可用 map（将走自动模式）';
+        return;
+    }
+    for (const m of maps) {
+        const opt = document.createElement('option');
+        opt.value = m.filepath;
+        opt.textContent = `${m.package} | ${m.filename}`;
+        sel.appendChild(opt);
+    }
+    sel.value = '';
+}
+
+async function runRoute() {
+    const task = document.getElementById('userTask').value.trim();
+    if (!task) {
+        alert('请先输入用户意图');
+        return;
+    }
+    document.getElementById('routeLogs').innerHTML = '';
+    document.getElementById('plannerOut').textContent = '-';
+    document.getElementById('routeSteps').textContent = '-';
+
+    const payload = {
+        user_task: task,
+        map_filepath: document.getElementById('mapSelect').value || '',
+        package_name: document.getElementById('pkgFilter').value.trim(),
+        use_llm_planner: true,
+        route_config: {
+            node_exists_retries: Number(document.getElementById('nodeRetries').value || '3'),
+            node_exists_interval_sec: Number(document.getElementById('nodeInterval').value || '0.6'),
+            route_recovery_enabled: false,
+            max_route_restarts: 0,
+            use_vlm_takeover: false
+        }
+    };
+
+    const data = await jfetch('/api/cortex/route/run', 'POST', payload);
+
+    if (!data.success) {
+        logLine(`[route] failed: ${data.message || 'unknown'}`);
+        if (data.traceback) logLine(data.traceback);
+        return;
+    }
+
+    document.getElementById('plannerOut').textContent = JSON.stringify({
+        app_resolution: data.app_resolution || {},
+        llm_rounds: data.llm_rounds || {},
+        planner_output: data.planner_output || {}
+    }, null, 2);
+    document.getElementById('routeSteps').textContent = JSON.stringify(data.route_steps || [], null, 2);
+
+    (data.logs || []).forEach(x => {
+        logLine(`${x.ts || ''} [${x.stage}/${x.event}] ${x.result || ''} ${JSON.stringify(x)}`);
+    });
+    logLine(`[route] done status=${(data.result || {}).status}`);
+}
+
+(async function init() {
+    await refreshStatus();
+    await loadLlmConfig();
+    await loadMaps();
+})();
+</script>
+</body>
+</html>

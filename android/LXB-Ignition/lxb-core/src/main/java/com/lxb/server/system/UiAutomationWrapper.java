@@ -5,6 +5,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
 
 /**
  * UiAutomation 系统层封装 (纯反射实现)
@@ -993,21 +994,26 @@ public class UiAutomationWrapper {
      * @return 应用列表，格式为 JSON 数组字符串
      */
     public String listApps(int filter) {
+        // Preferred: PackageManager reflection -> [{"package":"...","name":"..."}]
+        String rich = listAppsWithLabels(filter);
+        if (rich != null && rich.length() > 2) {
+            return rich;
+        }
+
+        // Fallback: pm list packages -> ["com.xxx", ...]
         StringBuilder result = new StringBuilder();
         result.append("[");
         boolean first = true;
-
         try {
-            // 使用 pm list packages 命令获取应用列表
             String cmd;
             switch (filter) {
-                case 1:  // user apps only
+                case 1:
                     cmd = "pm list packages -3";
                     break;
-                case 2:  // system apps only
+                case 2:
                     cmd = "pm list packages -s";
                     break;
-                default:  // all apps
+                default:
                     cmd = "pm list packages";
                     break;
             }
@@ -1018,31 +1024,82 @@ public class UiAutomationWrapper {
 
             String line;
             while ((line = reader.readLine()) != null) {
-                // 格式: "package:com.example.app"
-                if (line.startsWith("package:")) {
-                    String packageName = line.substring(8);
-                    if (!first) {
-                        result.append(",");
-                    }
-                    first = false;
-                    result.append("\"").append(packageName).append("\"");
-                }
+                if (!line.startsWith("package:")) continue;
+                String packageName = line.substring(8);
+                if (!first) result.append(",");
+                first = false;
+                result.append("\"").append(jsonEscape(packageName)).append("\"");
             }
             reader.close();
             process.waitFor();
-
-            System.out.println(TAG + " listApps: filter=" + filter);
-
         } catch (Exception e) {
-            System.err.println(TAG + " listApps failed: " + e.getMessage());
+            System.err.println(TAG + " listApps fallback failed: " + e.getMessage());
         }
-
         result.append("]");
         return result.toString();
     }
 
+    private String listAppsWithLabels(int filter) {
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method currentApplication = activityThreadClass.getMethod("currentApplication");
+            Object application = currentApplication.invoke(null);
+            if (application == null) return null;
+
+            Method getPackageManager = application.getClass().getMethod("getPackageManager");
+            Object pm = getPackageManager.invoke(application);
+            if (pm == null) return null;
+
+            Method getInstalledApplications = pm.getClass().getMethod("getInstalledApplications", int.class);
+            @SuppressWarnings("unchecked")
+            List<Object> appInfos = (List<Object>) getInstalledApplications.invoke(pm, 0);
+            if (appInfos == null) return null;
+
+            Class<?> appInfoClass = Class.forName("android.content.pm.ApplicationInfo");
+            Field packageNameField = appInfoClass.getField("packageName");
+            Field flagsField = appInfoClass.getField("flags");
+            int flagSystem = appInfoClass.getField("FLAG_SYSTEM").getInt(null);
+            Method loadLabel = appInfoClass.getMethod("loadLabel", Class.forName("android.content.pm.PackageManager"));
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+
+            for (Object appInfo : appInfos) {
+                String packageName = (String) packageNameField.get(appInfo);
+                int flags = flagsField.getInt(appInfo);
+                boolean isSystem = (flags & flagSystem) != 0;
+                if (filter == 1 && isSystem) continue;
+                if (filter == 2 && !isSystem) continue;
+
+                Object labelObj = loadLabel.invoke(appInfo, pm);
+                String appName = labelObj != null ? labelObj.toString() : "";
+
+                if (!first) sb.append(",");
+                first = false;
+                sb.append("{\"package\":\"")
+                        .append(jsonEscape(packageName))
+                        .append("\",\"name\":\"")
+                        .append(jsonEscape(appName))
+                        .append("\"}");
+            }
+
+            sb.append("]");
+            System.out.println(TAG + " listAppsWithLabels: filter=" + filter + " count=" + appInfos.size());
+            return sb.toString();
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithLabels failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String jsonEscape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     /**
-     * 滑动解锁
+     * ????
      */
     public boolean unlock() {
         try {
