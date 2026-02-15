@@ -82,17 +82,41 @@ class NodeLocator:
         return d
 
     def unique_key(self) -> str:
-        """生成唯一标识"""
+        """生成稳定唯一标识，降低低信息节点误合并。"""
+        parts: List[str] = []
+
+        rid = ""
         if self.resource_id:
             rid = self.resource_id.split("/")[-1] if "/" in self.resource_id else self.resource_id
-            return f"id:{rid}"
-        if self.text and len(self.text) <= 20:
-            return f"text:{self.text}"
-        if self.content_desc and len(self.content_desc) <= 20:
-            return f"desc:{self.content_desc}"
-        if self.bounds:
-            return f"bounds:{self.bounds}"
-        return f"unknown:{id(self)}"
+            rid = rid.strip().lower()
+        if self._is_informative_resource_id(rid):
+            parts.append(f"id:{rid}")
+
+        if self.text and len(self.text) <= 24:
+            parts.append(f"text:{self.text.strip().lower()}")
+        if self.content_desc and len(self.content_desc) <= 24:
+            parts.append(f"desc:{self.content_desc.strip().lower()}")
+        if self.class_name:
+            cls = self.class_name.split(".")[-1].strip().lower()
+            if cls:
+                parts.append(f"class:{cls}")
+        if self.parent_resource_id:
+            prid = self.parent_resource_id.split("/")[-1] if "/" in self.parent_resource_id else self.parent_resource_id
+            prid = prid.strip().lower()
+            if self._is_informative_resource_id(prid):
+                parts.append(f"pid:{prid}")
+        if self.bounds and len(self.bounds) >= 4:
+            x1, y1, x2, y2 = self.bounds
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
+            w = max(0, x2 - x1)
+            h = max(0, y2 - y1)
+            parts.append(f"grid:{cx//16}:{cy//16}")
+            parts.append(f"size:{w//16}:{h//16}")
+
+        if not parts:
+            return f"unknown:{id(self)}"
+        return "|".join(parts)
 
     def click_point(self) -> Optional[Tuple[int, int]]:
         """获取点击坐标（bounds 中心），仅作为 fallback"""
@@ -112,16 +136,30 @@ class NodeLocator:
               3=MATCH_RESOURCE_ID, 4=MATCH_CLASS, 5=MATCH_DESCRIPTION
         """
         queries = []
-        # 优先级1: resource_id（最稳定）
-        if self.resource_id:
-            queries.append((3, self.resource_id))  # MATCH_RESOURCE_ID
-        # 优先级2: text（精确匹配）
+        # 优先语义字段，避免泛化 resource_id 误匹配
         if self.text and len(self.text) <= 30:
             queries.append((0, self.text))  # MATCH_EXACT_TEXT
-        # 优先级3: content_desc
         if self.content_desc and len(self.content_desc) <= 30:
             queries.append((5, self.content_desc))  # MATCH_DESCRIPTION
+        if self.resource_id:
+            rid = self.resource_id.split("/")[-1] if "/" in self.resource_id else self.resource_id
+            if self._is_informative_resource_id((rid or "").strip().lower()):
+                queries.append((3, self.resource_id))  # MATCH_RESOURCE_ID
         return queries
+
+    @staticmethod
+    def _is_informative_resource_id(rid: str) -> bool:
+        if not rid:
+            return False
+        bad = {"container", "content", "layout", "root", "item", "view", "unknown"}
+        if rid in bad:
+            return False
+        if rid.isdigit() or len(rid) <= 3:
+            return False
+        hex_chars = set("0123456789abcdef")
+        if all(ch in hex_chars for ch in rid) and len(rid) >= 8:
+            return False
+        return True
 
     def compound_conditions(self, activity: str = None) -> List[Tuple[int, int, str]]:
         """
@@ -369,6 +407,7 @@ class ExploreTask:
     node_type: str = "jump"
     target_page: str = ""           # 预期目标页面
     from_page: str = ""             # 来源页面
+    from_activity: str = ""         # 来源 Activity（用于去重）
     depth: int = 0
 
 
@@ -381,6 +420,7 @@ class PendingVLMTask:
     path: List[NodeLocator]
     depth: int
     from_page: str = ""             # 来源页面
+    from_activity: str = ""         # 来源 Activity（用于去重）
     node_name: str = ""             # 节点名称
     node_type: str = ""             # 节点类型
     expected_target: str = ""       # 预期目标页面
@@ -590,6 +630,7 @@ NAV|540|80|搜索|jump|search
 
         self.nav_map = NavigationMap()
         self.pending_tasks: deque = deque()
+        self.pending_keys: Set[str] = set()
         self.explored_keys: Set[str] = set()
 
         # 并行模式相关
@@ -618,6 +659,7 @@ NAV|540|80|搜索|jump|search
             "last_action": None
         }
         self._realtime_lock = threading.Lock()
+        self._last_tap_point: Optional[Tuple[int, int]] = None
 
     @property
     def status(self) -> ExplorationStatus:
@@ -664,6 +706,22 @@ NAV|540|80|搜索|jump|search
         if self._status == ExplorationStatus.PAUSED:
             self._pause_event.wait()
         return self._status != ExplorationStatus.STOPPING
+
+    def _task_key(self, from_activity: str, locator: NodeLocator, from_page: str = "") -> str:
+        activity = (from_activity or "").strip()
+        scope = activity if activity else (from_page or "").strip()
+        return f"{scope}::{locator.unique_key()}"
+
+    def _enqueue_task(self, task: ExploreTask, front: bool = False) -> bool:
+        key = self._task_key(task.from_activity, task.locator, task.from_page)
+        if key in self.explored_keys or key in self.pending_keys:
+            return False
+        if front:
+            self.pending_tasks.appendleft(task)
+        else:
+            self.pending_tasks.append(task)
+        self.pending_keys.add(key)
+        return True
 
     def get_realtime_state(self) -> dict:
         with self._realtime_lock:
@@ -752,6 +810,15 @@ NAV|540|80|搜索|jump|search
         except Exception as e:
             self.log("error", f"获取屏幕尺寸异常: {e}")
 
+    def _safe_activity(self) -> str:
+        try:
+            ok, _, act = self.client.get_activity()
+            if ok and act:
+                return act
+        except Exception:
+            pass
+        return ""
+
     def _screenshot(self) -> Optional[bytes]:
         try:
             data = self.client.request_screenshot()
@@ -776,9 +843,46 @@ NAV|540|80|搜索|jump|search
             return []
 
     def _tap(self, x: int, y: int):
+        self._last_tap_point = (x, y)
+        self.log("info", f"    [tap] exec: ({x}, {y})")
         self.client.tap(x, y)
         self._stats["total_actions"] += 1
         time.sleep(self.config.action_delay_ms / 1000)
+
+    @staticmethod
+    def _normalize_bounds_candidates(raw_candidates) -> List[Tuple[int, int, int, int]]:
+        out: List[Tuple[int, int, int, int]] = []
+        if not raw_candidates:
+            return out
+        for b in raw_candidates:
+            try:
+                if isinstance(b, (list, tuple)) and len(b) >= 4:
+                    x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
+                    if x2 > x1 and y2 > y1:
+                        out.append((x1, y1, x2, y2))
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _bounds_center(bounds: Tuple[int, int, int, int]) -> Tuple[int, int]:
+        return ((bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2)
+
+    @staticmethod
+    def _bounds_area(bounds: Tuple[int, int, int, int]) -> int:
+        return max(0, bounds[2] - bounds[0]) * max(0, bounds[3] - bounds[1])
+
+    def _pick_best_bounds(self, locator: NodeLocator, candidates: List[Tuple[int, int, int, int]]) -> Optional[Tuple[int, int, int, int]]:
+        if not candidates:
+            return None
+        hint = locator.bounds if locator.bounds and len(locator.bounds) >= 4 else None
+        if not hint:
+            return min(candidates, key=self._bounds_area)
+        hx, hy = self._bounds_center(hint)
+        return min(
+            candidates,
+            key=lambda b: (((self._bounds_center(b)[0] - hx) ** 2 + (self._bounds_center(b)[1] - hy) ** 2) ** 0.5, self._bounds_area(b))
+        )
 
     def _tap_node(self, locator: NodeLocator, label: str = "", activity: str = None) -> bool:
         """
@@ -796,46 +900,63 @@ NAV|540|80|搜索|jump|search
             True 如果成功点击，False 如果失败
         """
         desc = label or locator.unique_key()
+        self.log("debug", f"    [find_node] start: {desc}")
 
         # 1. 尝试 find_node_compound（复合条件 >= 2 时使用）
         conditions = locator.compound_conditions(activity=activity)
         if len(conditions) >= 2:
+            self.log("debug", f"    [find_node] compound try: {len(conditions)} conditions")
             try:
-                status, coords = self.client.find_node_compound(
-                    conditions, return_mode=0, multi_match=False
+                status, bounds = self.client.find_node_compound(
+                    conditions, return_mode=1, multi_match=True
                 )
-                if status == 1 and coords:
-                    x, y = coords[0]
-                    self.log("debug", f"    find_node_compound 成功: {desc} → ({x}, {y}) [{len(conditions)} 条件]")
+                if status == 1 and bounds:
+                    candidates = self._normalize_bounds_candidates(bounds)
+                    best = self._pick_best_bounds(locator, candidates)
+                    if not best:
+                        raise RuntimeError("empty bounds candidates")
+                    x, y = self._bounds_center(best)
+                    self.log("info", f"    [find_node] compound hit: {desc} -> ({x}, {y}), candidates={len(candidates)}")
                     self._tap(x, y)
                     return True
+                self.log("debug", f"    [find_node] compound miss: status={status}, has_bounds={bool(bounds)}")
             except Exception as e:
-                self.log("debug", f"    find_node_compound 异常: {desc} → {e}")
+                self.log("debug", f"    [find_node] compound error: {e}")
 
         # 2. fallback: find_node 逐个尝试（单字段）
         queries = locator.find_queries()
-        for match_type, query in queries:
+        for idx, (match_type, query) in enumerate(queries, start=1):
+            self.log("debug", f"    [find_node] query#{idx}: type={match_type}, value={query}")
             try:
-                status, coords = self.client.find_node(
-                    query, match_type=match_type, return_mode=0, timeout_ms=3000
+                status, bounds = self.client.find_node(
+                    query, match_type=match_type, return_mode=1, multi_match=True, timeout_ms=3000
                 )
-                if status == 1 and coords:
-                    x, y = coords[0]
-                    self.log("debug", f"    find_node 成功: {desc} → ({x}, {y}) [query={query}]")
+                if status == 1 and bounds:
+                    candidates = self._normalize_bounds_candidates(bounds)
+                    best = self._pick_best_bounds(locator, candidates)
+                    if not best:
+                        self.log("debug", f"    [find_node] query#{idx} empty normalized candidates")
+                        continue
+                    x, y = self._bounds_center(best)
+                    self.log("info", f"    [find_node] query#{idx} hit: {desc} -> ({x}, {y}), candidates={len(candidates)}")
                     self._tap(x, y)
                     return True
+                self.log("debug", f"    [find_node] query#{idx} miss: status={status}, has_bounds={bool(bounds)}")
             except Exception as e:
-                self.log("debug", f"    find_node 异常: {query} → {e}")
+                self.log("debug", f"    [find_node] query#{idx} error: {e}")
                 continue
 
         # 3. fallback: 使用 bounds 坐标
         click_point = locator.click_point()
         if click_point:
-            self.log("warn", f"    find_node 失败，使用 bounds fallback: {desc} → {click_point}")
+            if locator.resource_id or locator.text or locator.content_desc:
+                self.log("warn", f"    [find_node] fail: semantic locator blocked bounds fallback: {desc}")
+                return False
+            self.log("warn", f"    [find_node] fallback bounds tap: {desc} -> {click_point}")
             self._tap(*click_point)
             return True
 
-        self.log("warn", f"    无法定位节点: {desc}")
+        self.log("warn", f"    [find_node] fail: cannot locate node: {desc}")
         return False
 
     def _back(self):
@@ -890,6 +1011,8 @@ NAV|540|80|搜索|jump|search
         bounds = xml_node.get("bounds", [0, 0, 0, 0])
         if len(bounds) < 4:
             return False
+        if self._is_large_container(xml_node):
+            return False
 
         y_center = (bounds[1] + bounds[3]) // 2
         h = self._screen_height
@@ -905,9 +1028,13 @@ NAV|540|80|搜索|jump|search
         # 列表项关键词（排除）
         list_keywords = ["item", "cell", "row", "entry", "holder"]
         is_list_item = any(kw in res_id or kw in class_name for kw in list_keywords)
+        text = (xml_node.get("text") or "").strip()
+        desc = (xml_node.get("content_desc") or "").strip()
+        rid = (xml_node.get("resource_id", "") or "").split("/")[-1].strip().lower()
+        has_semantic_signal = bool(text or desc or NodeLocator._is_informative_resource_id(rid))
 
         # 如果在导航区域，且不是列表项，就是锚点
-        if (is_top or is_bottom) and not is_list_item:
+        if (is_top or is_bottom) and not is_list_item and has_semantic_signal:
             return True
 
         # 如果有明确的导航关键词，也认为是锚点
@@ -916,6 +1043,23 @@ NAV|540|80|搜索|jump|search
         if is_nav and not is_list_item:
             return True
 
+        return False
+
+    def _is_large_container(self, xml_node: Dict) -> bool:
+        bounds = xml_node.get("bounds", [0, 0, 0, 0])
+        if len(bounds) < 4:
+            return False
+        x1, y1, x2, y2 = bounds
+        bw = max(0, x2 - x1)
+        bh = max(0, y2 - y1)
+        if self._screen_width <= 0 or self._screen_height <= 0:
+            return (bw >= 500 and bh >= 120) or bw >= 800
+        if bw > self._screen_width * 0.80:
+            return True
+        if bw > self._screen_width * 0.55 and bh > self._screen_height * 0.06:
+            return True
+        if bh > self._screen_height * 0.16:
+            return True
         return False
 
     def _is_input_field(self, xml_node: Dict) -> bool:
@@ -1128,21 +1272,19 @@ NAV|540|80|搜索|jump|search
 
     def _aggregate_nav_nodes(self, nodes: List[NavNode], threshold: int) -> List[NavNode]:
         """
-        聚合多次推理的导航节点
+        ???????????
 
-        按坐标分组，出现次数 >= threshold 的保留
+        ?????????? >= threshold ???
         """
         if not nodes:
             return []
 
-        # 按坐标分组（允许 50 像素误差）
         groups = []
         used = set()
 
         for i, node in enumerate(nodes):
             if i in used:
                 continue
-
             if not node.locator.bounds:
                 continue
 
@@ -1153,34 +1295,27 @@ NAV|540|80|搜索|jump|search
             for j, other in enumerate(nodes):
                 if j in used or not other.locator.bounds:
                     continue
-
                 x2, y2 = other.locator.bounds[0], other.locator.bounds[1]
-                # 距离小于 50 像素认为是同一个节点
                 if abs(x1 - x2) < 50 and abs(y1 - y2) < 50:
                     group.append(other)
                     used.add(j)
 
             groups.append(group)
 
-        # 过滤并聚合
         aggregated = []
         for group in groups:
             if len(group) < threshold:
-                continue  # 出现次数不足，认为是噪声
+                continue
 
-            # 取平均坐标
             avg_x = sum(n.locator.bounds[0] for n in group) // len(group)
             avg_y = sum(n.locator.bounds[1] for n in group) // len(group)
 
-            # 取最常见的名称
             names = [n.name for n in group]
             most_common_name = max(set(names), key=names.count)
 
-            # 取最常见的类型
             types = [n.node_type for n in group]
             most_common_type = max(set(types), key=types.count)
 
-            # 取最常见的目标页面
             targets = [n.target_page for n in group if n.target_page]
             most_common_target = max(set(targets), key=targets.count) if targets else ""
 
@@ -1194,7 +1329,7 @@ NAV|540|80|搜索|jump|search
         return aggregated
 
     def _parse_response(self, response: str) -> Tuple[Optional[PageInfo], List[NavNode], List[PopupInfo], Optional[BlockInfo]]:
-        """解析 VLM 响应，返回 (页面信息, 导航节点列表, 弹窗列表, 异常页面信息)"""
+        """?? VLM ?????(????, ??????, ????, ??????)"""
         page_info = None
         nav_nodes = []
         popups = []
@@ -1205,20 +1340,13 @@ NAV|540|80|搜索|jump|search
             if not line or line.startswith("```"):
                 continue
 
-            # BLOCK|类型|描述 (异常页面，最高优先级)
             if line.startswith("BLOCK|"):
                 parts = line.split("|")
                 if len(parts) >= 3:
                     block_type = parts[1].strip().lower()
                     description = parts[2].strip()
-                    block_info = BlockInfo(
-                        block_type=block_type,
-                        description=description
-                    )
-                    # 遇到 BLOCK 后，后续的 PAGE 和 NAV 应该被忽略
-                    # 但我们继续解析以防 VLM 输出了 POPUP（可能需要先关闭弹窗）
+                    block_info = BlockInfo(block_type=block_type, description=description)
 
-            # POPUP|x|y|类型|描述
             elif line.startswith("POPUP|"):
                 parts = line.split("|")
                 if len(parts) >= 4:
@@ -1227,22 +1355,17 @@ NAV|540|80|搜索|jump|search
                         y = int(parts[2].strip())
                         popup_type = parts[3].strip().lower()
                         description = parts[4].strip() if len(parts) >= 5 else popup_type
-
-                        # 创建 PopupInfo
                         close_locator = NodeLocator(bounds=(x, y, x, y))
-                        popup = PopupInfo(
+                        popups.append(PopupInfo(
                             popup_id=f"popup_{x}_{y}",
                             popup_type=popup_type,
                             description=description,
                             close_locator=close_locator
-                        )
-                        popups.append(popup)
+                        ))
                     except ValueError:
                         continue
 
-            # 新格式: PAGE|页面ID|页面名称|功能描述|功能列表
             elif line.startswith("PAGE|"):
-                # 如果已经检测到 BLOCK，忽略 PAGE
                 if block_info:
                     continue
                 parts = line.split("|")
@@ -1259,9 +1382,7 @@ NAV|540|80|搜索|jump|search
                         features=features
                     )
 
-            # NAV|x|y|节点名称|类型|目标页面ID
             elif line.startswith("NAV|"):
-                # 如果已经检测到 BLOCK，忽略 NAV
                 if block_info:
                     continue
                 parts = line.split("|")
@@ -1273,7 +1394,6 @@ NAV|540|80|搜索|jump|search
                         node_type = parts[4].strip().lower()
                         target_page = parts[5].strip().lower() if len(parts) >= 6 else ""
 
-                        # 创建 locator（暂时只有坐标，后面会匹配 XML）
                         locator = NodeLocator(bounds=(x, y, x, y))
                         nav_nodes.append(NavNode(
                             locator=locator,
@@ -1286,82 +1406,127 @@ NAV|540|80|搜索|jump|search
 
         return page_info, nav_nodes, popups, block_info
 
-    def _match_xml_node(self, vlm_x: int, vlm_y: int, vlm_desc: str, xml_nodes: List[Dict]) -> Optional[Dict]:
-        """
-        用 VLM 坐标和描述匹配 XML 节点
+    def _match_xml_node_with_reason(self, vlm_x: int, vlm_y: int, vlm_desc: str, xml_nodes: List[Dict]) -> Tuple[Optional[Dict], str]:
+        """? VLM ??????? XML ????? (matched_node, reason)?"""
+        def _norm(s: str) -> str:
+            return (s or "").strip().lower()
 
-        策略（优先级从高到低）：
-        1. 文本完全匹配 + 在同一行（y 坐标接近）
-        2. 文本包含匹配 + 在同一行
-        3. 坐标在 bounds 内
-        4. 距离最近
-        """
-        # 筛选候选节点：导航锚点 + 输入框
-        candidates_pool = []
+        def _center(b: List[int]) -> Tuple[int, int]:
+            return ((b[0] + b[2]) // 2, (b[1] + b[3]) // 2)
+
+        def _area(b: List[int]) -> int:
+            return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+        candidates_pool: List[Dict] = []
+        total_nodes = 0
+        large_filtered = 0
+        anchor_candidates = 0
+        input_candidates = 0
+
         for node in xml_nodes:
+            total_nodes += 1
             bounds = node.get("bounds", [0, 0, 0, 0])
             if len(bounds) < 4:
                 continue
-
-            # 导航锚点（需要 clickable）
+            if self._is_large_container(node):
+                large_filtered += 1
+                continue
             if node.get("clickable", False) and self._is_nav_anchor(node):
                 candidates_pool.append(node)
-            # 输入框
+                anchor_candidates += 1
             elif self._is_input_field(node):
                 candidates_pool.append(node)
+                input_candidates += 1
 
         if not candidates_pool:
-            return None
+            return None, (
+                f"no_candidates(total={total_nodes}, large_filtered={large_filtered}, "
+                f"anchor={anchor_candidates}, input={input_candidates})"
+            )
 
-        vlm_desc_lower = vlm_desc.lower().strip()
+        desc = _norm(vlm_desc)
+        if not desc:
+            self.log("debug", "      xml match hint: empty VLM desc, rely on geometry only")
 
-        # 策略1: 文本完全匹配 + y 坐标接近（同一行）
+        screen_area = max(1, self._screen_width * self._screen_height)
+        scored: List[Tuple[float, Dict, Dict[str, float]]] = []
+
         for node in candidates_pool:
-            text = (node.get("text") or node.get("content_desc") or "").lower().strip()
-            if text and text == vlm_desc_lower:
-                bounds = node.get("bounds")
-                center_y = (bounds[1] + bounds[3]) // 2
-                if abs(center_y - vlm_y) < 150:  # 同一行
-                    self.log("debug", f"      匹配策略1: 文本完全匹配「{text}」")
-                    return node
+            b = node.get("bounds", [0, 0, 0, 0])
+            x1, y1, x2, y2 = b
+            cx, cy = _center(b)
+            label = _norm(node.get("text") or node.get("content_desc") or "")
+            distance = ((vlm_x - cx) ** 2 + (vlm_y - cy) ** 2) ** 0.5
+            inside = 1.0 if (x1 <= vlm_x <= x2 and y1 <= vlm_y <= y2) else 0.0
+            area_ratio = _area(b) / float(screen_area)
 
-        # 策略2: 文本包含匹配 + y 坐标接近
-        for node in candidates_pool:
-            text = (node.get("text") or node.get("content_desc") or "").lower().strip()
-            if text and (vlm_desc_lower in text or text in vlm_desc_lower):
-                bounds = node.get("bounds")
-                center_y = (bounds[1] + bounds[3]) // 2
-                if abs(center_y - vlm_y) < 150:
-                    self.log("debug", f"      匹配策略2: 文本包含匹配「{text}」")
-                    return node
+            sem_exact = 0.0
+            sem_fuzzy = 0.0
+            if desc and label:
+                if label == desc:
+                    sem_exact = 120.0
+                elif desc in label or label in desc:
+                    sem_fuzzy = 70.0
 
-        # 策略3: 坐标在 bounds 内
-        for node in candidates_pool:
-            bounds = node.get("bounds")
-            x1, y1, x2, y2 = bounds
-            if x1 <= vlm_x <= x2 and y1 <= vlm_y <= y2:
-                text = node.get("text") or node.get("content_desc") or ""
-                self.log("debug", f"      匹配策略3: 坐标在bounds内「{text}」")
-                return node
+            pos_inside = 55.0 * inside
+            pos_dist = max(0.0, 45.0 - (distance / 12.0))
+            y_align = max(0.0, 18.0 - (abs(cy - vlm_y) / 10.0))
+            click_bonus = 8.0 if node.get("clickable", False) else 0.0
+            input_bonus = 6.0 if self._is_input_field(node) else 0.0
 
-        # 策略4: 距离最近（限制在 200 像素内）
-        candidates = []
-        for node in candidates_pool:
-            bounds = node.get("bounds")
-            center_x = (bounds[0] + bounds[2]) // 2
-            center_y = (bounds[1] + bounds[3]) // 2
-            dist = ((vlm_x - center_x) ** 2 + (vlm_y - center_y) ** 2) ** 0.5
-            if dist < 200:
-                candidates.append((dist, node))
+            area_penalty = 0.0
+            if area_ratio > 0.12:
+                area_penalty = 120.0
+            elif area_ratio > 0.06:
+                area_penalty = 60.0
 
-        if candidates:
-            candidates.sort(key=lambda x: x[0])
-            best_dist, best_node = candidates[0]
-            text = best_node.get("text") or best_node.get("content_desc") or ""
-            self.log("debug", f"      匹配策略4: 距离最近 {best_dist:.0f}px「{text}」")
-            return best_node
+            score = sem_exact + sem_fuzzy + pos_inside + pos_dist + y_align + click_bonus + input_bonus - area_penalty
+            scored.append((
+                score,
+                node,
+                {
+                    "sem": sem_exact + sem_fuzzy,
+                    "inside": pos_inside,
+                    "distance": distance,
+                    "area_penalty": area_penalty,
+                }
+            ))
 
-        return None
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for idx, (score, node, info) in enumerate(scored[:3], start=1):
+            label = node.get("text") or node.get("content_desc") or node.get("resource_id") or ""
+            self.log(
+                "debug",
+                f"      match#{idx} '{vlm_desc}' -> '{label[:28]}' score={score:.1f} "
+                f"(sem={info['sem']:.1f}, inside={info['inside']:.1f}, dist={info['distance']:.0f}px, area_penalty={info['area_penalty']:.1f})"
+            )
+
+        if not scored:
+            return None, "empty_scored_candidates"
+
+        best_score, best_node, best_info = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else -9999.0
+        strong_semantic = best_info["sem"] >= 70.0
+        if (best_score - second_score) < 10.0 and not strong_semantic:
+            reason = (
+                f"ambiguous(best={best_score:.1f}, second={second_score:.1f}, "
+                f"sem={best_info['sem']:.1f}, dist={best_info['distance']:.0f}px)"
+            )
+            return None, reason
+
+        if best_score < 20.0:
+            reason = (
+                f"low_confidence(best={best_score:.1f}, sem={best_info['sem']:.1f}, "
+                f"inside={best_info['inside']:.1f}, dist={best_info['distance']:.0f}px, "
+                f"area_penalty={best_info['area_penalty']:.1f})"
+            )
+            return None, reason
+
+        return best_node, f"ok(score={best_score:.1f}, sem={best_info['sem']:.1f})"
+
+    def _match_xml_node(self, vlm_x: int, vlm_y: int, vlm_desc: str, xml_nodes: List[Dict]) -> Optional[Dict]:
+        node, _ = self._match_xml_node_with_reason(vlm_x, vlm_y, vlm_desc, xml_nodes)
+        return node
 
     def _create_locator_from_xml(self, xml_node: Dict, xml_nodes: List[Dict] = None) -> NodeLocator:
         """从 XML 节点创建 Locator，可选从 xml_nodes 中查找父节点 resource_id"""
@@ -1466,18 +1631,19 @@ NAV|540|80|搜索|jump|search
             else:
                 continue
 
-            # 匹配 XML 节点（优先文本匹配，其次坐标匹配）
-            xml_node = self._match_xml_node(vlm_x, vlm_y, nav.name, xml_nodes)
+            # 匹配 XML 节点（返回失败原因，便于调试）
+            xml_node, match_reason = self._match_xml_node_with_reason(vlm_x, vlm_y, nav.name, xml_nodes)
             if xml_node:
                 xml_text = xml_node.get("text") or xml_node.get("content_desc") or ""
                 # 用 XML 信息更新 locator
                 nav.locator = self._create_locator_from_xml(xml_node, xml_nodes)
                 new_center = nav.locator.click_point()
-                self.log("info", f"    ✓ VLM「{nav.name}」({vlm_x},{vlm_y}) → XML「{xml_text}」{new_center}")
+                self.log("info", f"    ✓ VLM「{nav.name}」({vlm_x},{vlm_y}) → XML「{xml_text}」{new_center} [{match_reason}]")
                 enriched.append(nav)
             else:
-                # 没匹配到，打印原因
-                self.log("debug", f"    ✗ {nav.name}: VLM({vlm_x},{vlm_y}) 未匹配到导航锚点")
+                weak_locator = not (nav.locator.resource_id or nav.locator.text or nav.locator.content_desc)
+                weak_hint = " | weak_locator(identity sparse)" if weak_locator else ""
+                self.log("warn", f"    ✗ {nav.name}: VLM({vlm_x},{vlm_y}) bind_failed reason={match_reason}{weak_hint}")
 
         self.log("info", f"  匹配结果: {len(enriched)}/{len(nav_nodes)} 个节点")
         return enriched
@@ -1724,7 +1890,7 @@ NAV|540|80|搜索|jump|search
 
     def _submit_vlm_task(self, node_key: str, screenshot: bytes, xml_nodes: List[Dict],
                          path: List[NodeLocator], depth: int,
-                         from_page: str = "", node_name: str = "",
+                         from_page: str = "", from_activity: str = "", node_name: str = "",
                          node_type: str = "", expected_target: str = "",
                          locator: NodeLocator = None):
         """提交 VLM 推理任务到后台"""
@@ -1754,6 +1920,7 @@ NAV|540|80|搜索|jump|search
             path=path,
             depth=depth,
             from_page=from_page,
+            from_activity=from_activity,
             node_name=node_name,
             node_type=node_type,
             expected_target=expected_target,
@@ -1815,18 +1982,17 @@ NAV|540|80|搜索|jump|search
 
                 # 新节点加入队列
                 for nav in new_nav_nodes:
-                    new_key = nav.locator.unique_key()
-                    if new_key not in self.explored_keys:
-                        new_task = ExploreTask(
-                            locator=nav.locator,
-                            path=task.path,
-                            name=nav.name,
-                            node_type=nav.node_type,
-                            target_page=nav.target_page,
-                            from_page=target_page_id,
-                            depth=task.depth + 1
-                        )
-                        self.pending_tasks.append(new_task)
+                    new_task = ExploreTask(
+                        locator=nav.locator,
+                        path=task.path,
+                        name=nav.name,
+                        node_type=nav.node_type,
+                        target_page=nav.target_page,
+                        from_page=target_page_id,
+                        from_activity=task.from_activity,
+                        depth=task.depth + 1
+                    )
+                    self._enqueue_task(new_task)
 
                 # 更新实时状态
                 with self._realtime_lock:
@@ -1908,6 +2074,7 @@ NAV|540|80|搜索|jump|search
         self.nav_map = NavigationMap()
         self.nav_map.package = package_name
         self.pending_tasks = deque()
+        self.pending_keys = set()
         self.explored_keys = set()
 
         # 并行模式：初始化线程池
@@ -1990,6 +2157,7 @@ NAV|540|80|搜索|jump|search
                 self.log("info", f"  - {nav.name} [{nav.node_type}] → {nav.target_page}")
 
             # 首页节点加入队列
+            home_activity = self._safe_activity()
             for nav in home_nav_nodes:
                 task = ExploreTask(
                     locator=nav.locator,
@@ -1998,9 +2166,10 @@ NAV|540|80|搜索|jump|search
                     node_type=nav.node_type,
                     target_page=nav.target_page,
                     from_page=home_page.page_id,
+                    from_activity=home_activity,
                     depth=0
                 )
-                self.pending_tasks.append(task)
+                self._enqueue_task(task)
 
             # 主循环：探索每个节点
             task_count = 0
@@ -2047,7 +2216,8 @@ NAV|540|80|搜索|jump|search
                     continue
 
                 task = self.pending_tasks.popleft()
-                node_key = task.locator.unique_key()
+                node_key = self._task_key(task.from_activity, task.locator, task.from_page)
+                self.pending_keys.discard(node_key)
 
                 # 检查是否已探索
                 if node_key in self.explored_keys:
@@ -2100,19 +2270,20 @@ NAV|540|80|搜索|jump|search
                 except:
                     pass
 
-                # 截图并标记（点击前）
+                # 截图（点击前），点击后用实际点击点位标记
                 screenshot = self._screenshot()
-                click_point = task.locator.click_point()  # 仅用于截图标记
-                if screenshot and click_point:
-                    marked = self._mark_point(screenshot, click_point[0], click_point[1], task.name)
-                    with self._realtime_lock:
-                        self._realtime["current_screenshot"] = base64.b64encode(marked).decode()
-                        self._realtime["current_node"] = task.name
 
                 # 执行点击（compound 优先，find_node fallback，bounds fallback）
                 if not self._tap_node(task.locator, label=task.name, activity=current_activity):
                     self.log("warn", f"  无法定位目标节点，跳过")
                     continue
+
+                if screenshot and self._last_tap_point:
+                    tx, ty = self._last_tap_point
+                    marked = self._mark_point(screenshot, tx, ty, task.name)
+                    with self._realtime_lock:
+                        self._realtime["current_screenshot"] = base64.b64encode(marked).decode()
+                        self._realtime["current_node"] = task.name
 
                 # 等待页面响应（使用配置的延迟时间）
                 time.sleep(self._click_delay)
@@ -2121,6 +2292,7 @@ NAV|540|80|搜索|jump|search
                 # 点击后先用 XML 检查：1. 已知弹窗 2. 已知 Block 页面
                 # ============================================================
                 new_xml = self._dump_actions()
+                post_click_activity = self._safe_activity()
 
                 # 检查已知 Block 页面
                 known_block = self._check_for_known_blocks(new_xml)
@@ -2134,7 +2306,7 @@ NAV|540|80|搜索|jump|search
                     self.explored_keys.discard(node_key)
                     task.depth += 1
                     if task.depth < self.config.max_depth + 2:
-                        self.pending_tasks.appendleft(task)
+                        self._enqueue_task(task, front=True)
                     continue
 
                 # 检查已知弹窗并关闭
@@ -2164,7 +2336,7 @@ NAV|540|80|搜索|jump|search
                     # 并行模式：提交到后台，不等待
                     self._submit_vlm_task(
                         node_key, new_screenshot, new_xml, new_path, task.depth,
-                        from_page=task.from_page, node_name=task.name,
+                        from_page=task.from_page, from_activity=post_click_activity, node_name=task.name,
                         node_type=task.node_type, expected_target=task.target_page,
                         locator=task.locator
                     )
@@ -2208,7 +2380,7 @@ NAV|540|80|搜索|jump|search
                         self.explored_keys.discard(node_key)
                         task.depth += 1
                         if task.depth < self.config.max_depth + 2:
-                            self.pending_tasks.appendleft(task)
+                            self._enqueue_task(task, front=True)
                         continue
 
                     # ============================================================
@@ -2227,7 +2399,7 @@ NAV|540|80|搜索|jump|search
                         self.explored_keys.discard(node_key)
                         task.depth += 1
                         if task.depth < self.config.max_depth + 2:
-                            self.pending_tasks.appendleft(task)
+                            self._enqueue_task(task, front=True)
                         continue
 
                     # ============================================================
@@ -2258,18 +2430,17 @@ NAV|540|80|搜索|jump|search
 
                     # 新节点加入队列
                     for nav in new_nav_nodes:
-                        new_key = nav.locator.unique_key()
-                        if new_key not in self.explored_keys:
-                            new_task = ExploreTask(
-                                locator=nav.locator,
-                                path=new_path,
-                                name=nav.name,
-                                node_type=nav.node_type,
-                                target_page=nav.target_page,
-                                from_page=target_page_id,
-                                depth=task.depth + 1
-                            )
-                            self.pending_tasks.append(new_task)
+                        new_task = ExploreTask(
+                            locator=nav.locator,
+                            path=new_path,
+                            name=nav.name,
+                            node_type=nav.node_type,
+                            target_page=nav.target_page,
+                            from_page=target_page_id,
+                            from_activity=post_click_activity,
+                            depth=task.depth + 1
+                        )
+                        self._enqueue_task(new_task)
 
                     with self._realtime_lock:
                         self._realtime["current_screenshot"] = base64.b64encode(new_screenshot).decode()
