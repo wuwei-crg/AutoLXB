@@ -1,67 +1,65 @@
-# LXB Web Console
+﻿# Web Console
 
-基于 Flask 的可视化调试控制台，用于测试和调试 LXB-Link 协议。
+Flask-based control console for LXB-Framework.
 
-## 功能特性
+## Entry
 
-- ✅ 可视化指令发送（TAP, SWIPE, GET_ACTIVITY 等）
-- ✅ 实时日志显示
-- ✅ 设备连接管理
-- ✅ 命令历史记录
-- ✅ 响应数据可视化
+- Main shell: `http://localhost:5000/`
+- The shell hosts internal pages via in-page content switching.
 
-## 快速开始
+## Internal Pages
 
-### 1. 安装依赖
+- `Command Studio` (`/command_studio`)
+  - Protocol command debugging UI.
+  - Sends low-level commands via existing `main.js` command handlers.
+- `Map Builder` (`/map_builder`)
+  - Node-driven map exploration UI.
+  - Live logs, screenshot panel, node queue/status.
+- `Map Viewer` (`/map_viewer`)
+  - Navigation graph visualization and map inspection.
+- `Cortex Route` (`/cortex_route`)
+  - Route planning and execution (planner -> target_page -> BFS route chain).
 
-```bash
-pip install flask flask-cors
-```
+## Shared Navigation + Connection
 
-### 2. 启动服务
+The shell (`index.html`) owns:
+
+- Shared top navigation between all four pages.
+- Global device connection bar (`host`, `port`, connect/disconnect, status).
+
+Sub-pages no longer provide their own top navigation. Connection UI inside sub-pages is hidden/removed in favor of the global bar.
+
+## Start
 
 ```bash
 cd web_console
 python app.py
 ```
 
-### 3. 访问界面
+## Key Backend Routes
 
-打开浏览器访问: `http://localhost:5000`
+Page routes:
 
-## 目录结构
+- `/`
+- `/command_studio`
+- `/map_builder`
+- `/map_viewer`
+- `/cortex_route`
 
-```
-web_console/
-├── app.py              # Flask 后端
-├── static/
-│   ├── css/
-│   │   └── style.css   # 样式表
-│   └── js/
-│       └── main.js     # 前端逻辑
-├── templates/
-│   └── index.html      # 主界面
-└── README.md
-```
+Core API groups:
 
-## 使用说明
+- `/api/connect`, `/api/disconnect`, `/api/status`
+- `/api/command/*` (tap/swipe/find_node/dump_actions/...)
+- `/api/explore/*` (map exploration)
+- `/api/maps/*` (map list/load/save)
+- `/api/cortex/llm/*`
+- `/api/cortex/route/run` and `/api/cortex/route_then_act/run`
 
-1. **连接设备**: 在顶部输入设备 IP 和端口，点击"连接"
-2. **发送命令**: 点击各种指令按钮即可发送
-3. **查看日志**: 右侧实时显示命令和响应日志
-4. **历史记录**: 自动保存最近 50 条命令历史
+## Frontend Files
 
-## 支持的命令
-
-- **Link Layer**: HANDSHAKE, HEARTBEAT
-- **Input Layer**: TAP, SWIPE, LONG_PRESS
-- **Sense Layer**: GET_ACTIVITY, FIND_NODE
-- **Input Extension**: INPUT_TEXT, KEY_EVENT
-
-## 后续扩展
-
-- [ ] 截图显示与标注
-- [ ] UI 树可视化
-- [ ] 脚本录制与回放
-- [ ] 性能监控图表
-- [ ] 多设备管理
+- `templates/index.html`: shell container + shared nav + global connection.
+- `templates/command_studio.html`: command debugger UI.
+- `templates/map_builder.html`: map building UI.
+- `templates/map_viewer.html`: map visualization UI.
+- `templates/cortex_route.html`: route-stage debug UI.
+- `static/js/main.js`: command studio runtime handlers (ID-based bindings).
