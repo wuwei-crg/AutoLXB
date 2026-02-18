@@ -98,6 +98,20 @@ public class PerceptionEngine {
         this.uiAutomation = wrapper;
     }
 
+    private boolean validateImgFinPayload(byte[] payload, int expectedImgId) {
+        if (payload == null || payload.length == 0) {
+            // Legacy compatibility: old clients may send empty FIN payload.
+            return true;
+        }
+        if (payload.length != 4) {
+            return false;
+        }
+        ByteBuffer buf = ByteBuffer.wrap(payload);
+        buf.order(ByteOrder.BIG_ENDIAN);
+        int actualImgId = buf.getInt();
+        return actualImgId == expectedImgId;
+    }
+
     /**
      * 初始化感知引擎
      */
@@ -2029,7 +2043,7 @@ public class PerceptionEngine {
                     ", size=" + imageData.length + ", chunks=" + numChunks);
 
             // Step 4: 等待 META ACK (超时 2 秒)
-            if (!waitForAck(server, reqSeq, 2000)) {
+            if (!waitForAck(server, clientAddr, clientPort, reqSeq, 2000)) {
                 System.err.println(TAG + " Timeout waiting for META ACK");
                 return false;
             }
@@ -2056,16 +2070,20 @@ public class PerceptionEngine {
             // Step 6: 等待 IMG_MISSING 或 IMG_FIN (最多重试 3 次)
             int maxRetries = 3;
             for (int retry = 0; retry < maxRetries; retry++) {
-                UdpServer.ReceivedFrame frame = waitForFrame(server, 1000);
-                if (frame == null) {
+                FrameCodec.DecodedFrame decoded = waitForControlFrame(
+                        server, clientAddr, clientPort, 1000
+                );
+                if (decoded == null) {
                     System.out.println(TAG + " Timeout waiting for client response, retry " + (retry + 1));
                     continue;
                 }
-
-                FrameCodec.DecodedFrame decoded = FrameCodec.decode(frame.data);
                 int cmd = decoded.cmd & 0xFF;
 
                 if (cmd == CMD_IMG_FIN) {
+                    if (!validateImgFinPayload(decoded.payload, imgId)) {
+                        System.out.println(TAG + " Ignored IMG_FIN with mismatched imgId");
+                        continue;
+                    }
                     // 传输完成，发送 ACK
                     byte[] ackFrame = FrameCodec.encode(decoded.seq, (byte) CMD_ACK, new byte[0]);
                     server.send(clientAddr, clientPort, ackFrame);
@@ -2073,7 +2091,13 @@ public class PerceptionEngine {
                     return true;
                 } else if (cmd == CMD_IMG_MISSING) {
                     // 解析缺失块列表并重传
-                    List<Integer> missingIndices = unpackImgMissing(decoded.payload);
+                    ImgMissingRequest missingRequest = unpackImgMissing(decoded.payload);
+                    if (missingRequest.hasImgId && missingRequest.imgId != imgId) {
+                        System.out.println(TAG + " Ignored IMG_MISSING with mismatched imgId: " +
+                                missingRequest.imgId + " != " + imgId);
+                        continue;
+                    }
+                    List<Integer> missingIndices = missingRequest.indices;
                     System.out.println(TAG + " Received IMG_MISSING: " + missingIndices.size() + " chunks");
 
                     for (int idx : missingIndices) {
@@ -2128,24 +2152,51 @@ public class PerceptionEngine {
      * 解包 IMG_MISSING 负载
      * 格式: count[uint16] + indices[uint16 array]
      */
-    private List<Integer> unpackImgMissing(byte[] payload) {
-        List<Integer> indices = new ArrayList<>();
-        if (payload.length < 2) return indices;
+    private ImgMissingRequest unpackImgMissing(byte[] payload) {
+        ImgMissingRequest request = new ImgMissingRequest();
+        if (payload == null || payload.length < 2) {
+            return request;
+        }
 
         ByteBuffer buf = ByteBuffer.wrap(payload);
         buf.order(ByteOrder.BIG_ENDIAN);
 
+        // Backward compatible decode:
+        // 1) legacy: count[2] + indices[count*2]
+        // 2) extended: img_id[4] + count[2] + indices[count*2]
+        if (payload.length >= 6) {
+            int maybeImgId = buf.getInt();
+            int maybeCount = buf.getShort() & 0xFFFF;
+            int expectedSize = 6 + maybeCount * 2;
+            if (expectedSize == payload.length) {
+                request.hasImgId = true;
+                request.imgId = maybeImgId;
+                for (int i = 0; i < maybeCount && buf.remaining() >= 2; i++) {
+                    request.indices.add(buf.getShort() & 0xFFFF);
+                }
+                return request;
+            }
+            // Fallback to legacy format
+            buf.position(0);
+        }
+
         int count = buf.getShort() & 0xFFFF;
         for (int i = 0; i < count && buf.remaining() >= 2; i++) {
-            indices.add(buf.getShort() & 0xFFFF);
+            request.indices.add(buf.getShort() & 0xFFFF);
         }
-        return indices;
+        return request;
     }
 
     /**
      * 等待指定序列号的 ACK
      */
-    private boolean waitForAck(UdpServer server, int expectedSeq, int timeout) {
+    private boolean waitForAck(
+            UdpServer server,
+            InetAddress expectedAddr,
+            int expectedPort,
+            int expectedSeq,
+            int timeout
+    ) {
         long deadline = System.currentTimeMillis() + timeout;
 
         while (System.currentTimeMillis() < deadline) {
@@ -2153,6 +2204,9 @@ public class PerceptionEngine {
                 UdpServer.ReceivedFrame frame = server.receive(
                         (int) (deadline - System.currentTimeMillis())
                 );
+                if (!isExpectedClient(frame, expectedAddr, expectedPort)) {
+                    continue;
+                }
 
                 FrameCodec.DecodedFrame decoded = FrameCodec.decode(frame.data);
                 if ((decoded.cmd & 0xFF) == CMD_ACK && decoded.seq == expectedSeq) {
@@ -2170,14 +2224,46 @@ public class PerceptionEngine {
     /**
      * 等待帧（带超时）
      */
-    private UdpServer.ReceivedFrame waitForFrame(UdpServer server, int timeout) {
+    private FrameCodec.DecodedFrame waitForControlFrame(
+            UdpServer server,
+            InetAddress expectedAddr,
+            int expectedPort,
+            int timeout
+    ) {
+        long deadline = System.currentTimeMillis() + timeout;
         try {
-            return server.receive(timeout);
+            while (System.currentTimeMillis() < deadline) {
+                UdpServer.ReceivedFrame frame = server.receive(
+                        (int) (deadline - System.currentTimeMillis())
+                );
+                if (!isExpectedClient(frame, expectedAddr, expectedPort)) {
+                    continue;
+                }
+                try {
+                    return FrameCodec.decode(frame.data);
+                } catch (Exception e) {
+                    System.err.println(TAG + " Error decoding control frame: " + e.getMessage());
+                }
+            }
+            return null;
         } catch (SocketTimeoutException e) {
             return null;
         } catch (Exception e) {
             System.err.println(TAG + " Error receiving frame: " + e.getMessage());
             return null;
         }
+    }
+
+    private boolean isExpectedClient(UdpServer.ReceivedFrame frame, InetAddress expectedAddr, int expectedPort) {
+        if (frame == null || frame.address == null) {
+            return false;
+        }
+        return frame.port == expectedPort && frame.address.equals(expectedAddr);
+    }
+
+    private static class ImgMissingRequest {
+        int imgId;
+        boolean hasImgId;
+        List<Integer> indices = new ArrayList<>();
     }
 }

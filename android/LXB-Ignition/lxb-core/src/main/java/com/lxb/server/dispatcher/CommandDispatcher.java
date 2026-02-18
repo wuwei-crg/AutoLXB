@@ -4,24 +4,17 @@ import com.lxb.server.daemon.CircuitBreaker;
 import com.lxb.server.daemon.SequenceTracker;
 import com.lxb.server.execution.ExecutionEngine;
 import com.lxb.server.perception.PerceptionEngine;
-// import com.lxb.server.popup.PopupDetector;  // 暂时禁用，改用 Python 端 VLM 检测
 import com.lxb.server.protocol.FrameCodec;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 指令分派器
+ * Command dispatcher.
  *
- * 职责: 根据 cmd 字段路由到不同引擎，集成序列号去重和熔断保护
- *
- * 命令 ID 分配 (Layered ISA):
- * - 0x00-0x0F: Link Layer (handshake, ACK, heartbeat)
- * - 0x10-0x1F: Input Layer (tap, swipe, long_press, unlock)
- * - 0x20-0x2F: Input Extension (text input, key events)
- * - 0x30-0x3F: Sense Layer (activity, UI tree, screen state)
- *   - 0x34-0x35, 0x38: 弹窗检测命令 (暂时禁用，改用 Python 端 VLM 检测)
- * - 0x40-0x4F: Lifecycle Layer (launch/stop app)
+ * Design note:
+ * - No session/connection state is kept here.
+ * - UDP duplicate handling is done with a short-lived frame fingerprint window.
  */
 public class CommandDispatcher {
 
@@ -29,63 +22,58 @@ public class CommandDispatcher {
 
     private final PerceptionEngine perceptionEngine;
     private final ExecutionEngine executionEngine;
-    // private final PopupDetector popupDetector;  // 暂时禁用
     private final SequenceTracker sequenceTracker;
     private final CircuitBreaker circuitBreaker;
 
-    // ACK 缓存（LRU，最多 50 条）
-    private final Map<Integer, byte[]> ackCache = new LinkedHashMap<Integer, byte[]>(50, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Integer, byte[]> eldest) {
-            return size() > 50;
-        }
-    };
+    // ACK cache keyed by frame fingerprint (for UDP retry dedup only).
+    private final Map<SequenceTracker.FrameKey, byte[]> ackCache =
+            new LinkedHashMap<SequenceTracker.FrameKey, byte[]>(128, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<SequenceTracker.FrameKey, byte[]> eldest) {
+                    return size() > 128;
+                }
+            };
 
     public CommandDispatcher(
             PerceptionEngine perceptionEngine,
             ExecutionEngine executionEngine,
-            // PopupDetector popupDetector,  // 暂时禁用
             SequenceTracker sequenceTracker,
-            CircuitBreaker circuitBreaker) {
+            CircuitBreaker circuitBreaker
+    ) {
         this.perceptionEngine = perceptionEngine;
         this.executionEngine = executionEngine;
-        // this.popupDetector = popupDetector;  // 暂时禁用
         this.sequenceTracker = sequenceTracker;
         this.circuitBreaker = circuitBreaker;
     }
 
     /**
-     * 分派处理命令
-     *
-     * @param frame 帧信息
-     * @param payload 负载数据
-     * @return ACK 响应帧
+     * Dispatch command and return ACK frame.
      */
     public byte[] dispatch(FrameCodec.FrameInfo frame, byte[] payload) {
-        // 1. 序列号去重
-        if (sequenceTracker.isDuplicate(frame.seq)) {
-            System.out.println(TAG + " Duplicate seq=" + frame.seq + ", returning cached ACK");
-            byte[] cached = ackCache.get(frame.seq);
+        SequenceTracker.FrameKey frameKey = new SequenceTracker.FrameKey(frame.seq, frame.cmd, payload);
+
+        // 1) Short-lived duplicate detection (same seq+cmd+payload fingerprint)
+        if (sequenceTracker.isDuplicate(frame.seq, frame.cmd, payload)) {
+            System.out.println(TAG + " Duplicate frame detected, returning cached ACK");
+            byte[] cached = ackCache.get(frameKey);
             if (cached != null) {
                 return cached;
             }
-            // 缓存未命中，重新构建空 ACK
+            // Defensive fallback for duplicate-without-cache:
             return buildAck(frame.seq, (byte) 0x02, new byte[0]);
         }
 
-        // 2. 熔断检查
+        // 2) Circuit breaker
         if (circuitBreaker.shouldReject()) {
             System.out.println(TAG + " Circuit breaker triggered, rejecting");
             return buildErrorAck(frame.seq, (byte) 0xFF);
         }
 
-        // 3. 指令路由
+        // 3) Route command
         byte[] response;
         try {
             switch (frame.cmd) {
-                // =================================================================
-                // Link Layer (0x00-0x0F)
-                // =================================================================
+                // Link Layer
                 case 0x01:  // CMD_HANDSHAKE
                     response = handleHandshake();
                     break;
@@ -93,9 +81,7 @@ public class CommandDispatcher {
                     response = new byte[]{0x01};
                     break;
 
-                // =================================================================
-                // Input Layer (0x10-0x1F)
-                // =================================================================
+                // Input Layer
                 case 0x10:  // CMD_TAP
                     response = executionEngine.handleTap(payload);
                     break;
@@ -105,13 +91,11 @@ public class CommandDispatcher {
                 case 0x12:  // CMD_LONG_PRESS
                     response = executionEngine.handleLongPress(payload);
                     break;
-                case 0x1B:  // CMD_UNLOCK ⭐ NEW
+                case 0x1B:  // CMD_UNLOCK
                     response = executionEngine.handleUnlock(payload);
                     break;
 
-                // =================================================================
-                // Input Extension (0x20-0x2F)
-                // =================================================================
+                // Input Extension
                 case 0x20:  // CMD_INPUT_TEXT
                     response = executionEngine.handleInputText(payload);
                     break;
@@ -119,9 +103,7 @@ public class CommandDispatcher {
                     response = executionEngine.handleKeyEvent(payload);
                     break;
 
-                // =================================================================
-                // Sense Layer (0x30-0x3F)
-                // =================================================================
+                // Sense Layer
                 case 0x30:  // CMD_GET_ACTIVITY
                     response = perceptionEngine.handleGetActivity();
                     break;
@@ -131,61 +113,44 @@ public class CommandDispatcher {
                 case 0x32:  // CMD_FIND_NODE
                     response = perceptionEngine.handleFindNode(payload);
                     break;
-                case 0x33:  // CMD_DUMP_ACTIONS ⭐ NEW
+                case 0x33:  // CMD_DUMP_ACTIONS
                     response = perceptionEngine.handleDumpActions(payload);
                     break;
-                // 弹窗检测命令暂时禁用，改用 Python 端 VLM 检测
-                // case 0x34:  // CMD_DISMISS_POPUP
-                //     response = popupDetector.handleDismissPopup(payload);
-                //     break;
-                // case 0x35:  // CMD_DETECT_POPUP
-                //     response = popupDetector.handleDetectPopup(payload);
-                //     break;
-                case 0x36:  // CMD_GET_SCREEN_STATE ⭐ NEW
+                case 0x36:  // CMD_GET_SCREEN_STATE
                     response = perceptionEngine.handleGetScreenState();
                     break;
-                case 0x37:  // CMD_GET_SCREEN_SIZE ⭐ NEW
+                case 0x37:  // CMD_GET_SCREEN_SIZE
                     response = perceptionEngine.handleGetScreenSize();
                     break;
-                case 0x39:  // CMD_FIND_NODE_COMPOUND ⭐ NEW
+                case 0x39:  // CMD_FIND_NODE_COMPOUND
                     response = perceptionEngine.handleFindNodeCompound(payload);
                     break;
-                // case 0x38:  // CMD_POPUP_WATCHDOG_CTRL (暂时禁用)
-                //     response = popupDetector.handleWatchdogCtrl(payload);
-                //     break;
 
-                // =================================================================
-                // Lifecycle Layer (0x40-0x4F)
-                // =================================================================
-                case 0x43:  // CMD_LAUNCH_APP ⭐ NEW
+                // Lifecycle Layer
+                case 0x43:  // CMD_LAUNCH_APP
                     response = executionEngine.handleLaunchApp(payload);
                     break;
-                case 0x44:  // CMD_STOP_APP ⭐ NEW
+                case 0x44:  // CMD_STOP_APP
                     response = executionEngine.handleStopApp(payload);
                     break;
-                case 0x48:  // CMD_LIST_APPS ⭐ NEW
+                case 0x48:  // CMD_LIST_APPS
                     response = executionEngine.handleListApps(payload);
                     break;
 
-                // =================================================================
-                // Media Layer (0x60-0x6F)
-                // =================================================================
-                case 0x60:  // CMD_SCREENSHOT ⭐
+                // Media Layer
+                case 0x60:  // CMD_SCREENSHOT
                     response = perceptionEngine.handleScreenshot();
                     break;
 
-                // =================================================================
-                // Default: Unimplemented
-                // =================================================================
                 default:
                     System.out.println(TAG + " Unimplemented command: 0x" +
                             String.format("%02X", frame.cmd));
-                    response = new byte[]{0x00};  // 未实现
+                    response = new byte[]{0x00};
             }
 
-            // 4. 封装 ACK
+            // 4) Build ACK and cache by frame fingerprint
             byte[] ack = buildAck(frame.seq, (byte) 0x02, response);
-            ackCache.put(frame.seq, ack);
+            ackCache.put(frameKey, ack);
             return ack;
 
         } catch (Exception e) {
@@ -197,25 +162,16 @@ public class CommandDispatcher {
         }
     }
 
-    /**
-     * 构建 ACK 帧
-     */
     private byte[] buildAck(int seq, byte cmd, byte[] payload) {
         return FrameCodec.encode(seq, cmd, payload);
     }
 
-    /**
-     * 构建错误 ACK 帧
-     */
     private byte[] buildErrorAck(int seq, byte status) {
         return FrameCodec.encode(seq, (byte) 0x02, new byte[]{status});
     }
 
-    /**
-     * 处理握手
-     */
     private byte[] handleHandshake() {
         System.out.println(TAG + " Handshake received");
-        return new byte[0];  // 空响应
+        return new byte[0];
     }
 }

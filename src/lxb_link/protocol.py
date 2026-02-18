@@ -551,15 +551,18 @@ class ProtocolFrame:
         return chunk_index, chunk_data
 
     @staticmethod
-    def pack_img_missing(seq: int, missing_indices: list) -> bytes:
+    def pack_img_missing(seq: int, missing_indices: list, img_id: int | None = None) -> bytes:
         """
         Pack IMG_MISSING frame with list of missing chunk indices.
 
-        Payload format: count[uint16] + indices[uint16 array]
+        Payload format:
+          - legacy: count[uint16] + indices[uint16 array]
+          - extended: img_id[uint32] + count[uint16] + indices[uint16 array]
 
         Args:
             seq: Sequence number
             missing_indices: List of missing chunk indices
+            img_id: Optional image session id for strict server-side session check
 
         Returns:
             Complete binary frame for IMG_MISSING command
@@ -567,8 +570,11 @@ class ProtocolFrame:
         from .constants import CMD_IMG_MISSING
 
         count = len(missing_indices)
-        # Pack: count + array of indices
-        payload = struct.pack('>H', count) + struct.pack(f'>{count}H', *missing_indices)
+        base_payload = struct.pack('>H', count) + struct.pack(f'>{count}H', *missing_indices)
+        if img_id is None:
+            payload = base_payload
+        else:
+            payload = struct.pack('>I', img_id & 0xFFFFFFFF) + base_payload
         return ProtocolFrame.pack(seq, CMD_IMG_MISSING, payload)
 
     @staticmethod
@@ -587,6 +593,18 @@ class ProtocolFrame:
                 f"Invalid IMG_MISSING payload size: {len(payload)} (minimum 2)",
                 ERR_INVALID_PAYLOAD_SIZE
             )
+
+        # Backward compatible decode:
+        # - legacy: count + indices
+        # - extended: img_id + count + indices
+        if len(payload) >= 6:
+            count_ext = struct.unpack('>H', payload[4:6])[0]
+            expected_ext = 6 + count_ext * 2
+            if len(payload) == expected_ext:
+                if count_ext == 0:
+                    return []
+                indices = struct.unpack(f'>{count_ext}H', payload[6:])
+                return list(indices)
 
         count = struct.unpack('>H', payload[:2])[0]
         if len(payload) != 2 + count * 2:
@@ -1342,5 +1360,4 @@ class ProtocolFrame:
             payload += struct.pack('>BBH', field, op, len(val_bytes)) + val_bytes
 
         return ProtocolFrame.pack(seq, CMD_FIND_NODE_COMPOUND, payload)
-
 

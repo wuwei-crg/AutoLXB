@@ -14,6 +14,7 @@ Features:
 import socket
 import logging
 import time
+import struct
 from typing import Tuple, Optional
 
 from .constants import (
@@ -407,10 +408,10 @@ class Transport:
         )
 
         # Step 3: Receive all chunks with selective repeat
-        chunks = self._receive_chunks_with_retries(num_chunks)
+        chunks = self._receive_chunks_with_retries(img_id, num_chunks)
 
         # Step 4: Send IMG_FIN to acknowledge completion and wait for ACK
-        self._send_img_fin_with_ack()
+        self._send_img_fin_with_ack(img_id)
 
         # Step 5: Assemble and return complete image
         complete_image = b''.join(chunks)
@@ -474,6 +475,7 @@ class Transport:
 
     def _receive_chunks_with_retries(
         self,
+        img_id: int,
         num_chunks: int,
         chunk_timeout: float = CHUNK_RECV_TIMEOUT,
         max_retries: int = MAX_MISSING_RETRIES
@@ -530,7 +532,7 @@ class Transport:
                 )
 
             # Request missing chunks
-            self._request_missing_chunks(missing_indices)
+            self._request_missing_chunks(img_id, missing_indices)
             retry_count += 1
 
         # Should not reach here
@@ -609,7 +611,7 @@ class Transport:
 
         return received_in_burst
 
-    def _request_missing_chunks(self, missing_indices: list) -> None:
+    def _request_missing_chunks(self, img_id: int, missing_indices: list) -> None:
         """
         Send IMG_MISSING request for missing chunks.
 
@@ -617,7 +619,7 @@ class Transport:
             missing_indices: List of missing chunk indices
         """
         seq_missing = self._next_seq()
-        missing_frame = ProtocolFrame.pack_img_missing(seq_missing, missing_indices)
+        missing_frame = ProtocolFrame.pack_img_missing(seq_missing, missing_indices, img_id=img_id)
         self._send_frame(missing_frame)
 
         logger.info(
@@ -626,6 +628,7 @@ class Transport:
 
     def _send_img_fin_with_ack(
         self,
+        img_id: int,
         timeout: float = 2.0,
         max_retries: int = 3
     ) -> None:
@@ -648,7 +651,8 @@ class Transport:
         while retry_count <= max_retries:
             # Send IMG_FIN
             seq_fin = self._next_seq()
-            fin_frame = ProtocolFrame.pack(seq_fin, CMD_IMG_FIN, b'')
+            fin_payload = struct.pack('>I', img_id & 0xFFFFFFFF)
+            fin_frame = ProtocolFrame.pack(seq_fin, CMD_IMG_FIN, fin_payload)
             self._send_frame(fin_frame)
             logger.info(f"Sent IMG_FIN (seq={seq_fin}, retry={retry_count})")
 

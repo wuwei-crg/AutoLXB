@@ -1,47 +1,91 @@
 package com.lxb.server.daemon;
 
-import java.util.LinkedHashSet;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * 序列号去重追踪器
- * 维护接收窗口，防止重复命令执行
+ * Short-lived duplicate tracker for UDP retries.
+ *
+ * It intentionally keeps no connection/session state; it only deduplicates
+ * identical frames in a brief TTL window.
  */
 public class SequenceTracker {
 
-    private final LinkedHashSet<Integer> receiveWindow;
-    private static final int WINDOW_SIZE = 100;
+    private static final int WINDOW_SIZE = 256;
+    private static final long WINDOW_TTL_MS = 3000L;
+
+    private final LinkedHashMap<FrameKey, Long> receiveWindow;
 
     public SequenceTracker() {
-        this.receiveWindow = new LinkedHashSet<>(WINDOW_SIZE);
+        this.receiveWindow = new LinkedHashMap<>(WINDOW_SIZE, 0.75f, true);
     }
 
     /**
-     * 检查序列号是否重复
-     * @param seq 序列号
-     * @return true=重复, false=新序列
+     * Returns true iff the exact same frame fingerprint was seen recently.
      */
-    public synchronized boolean isDuplicate(int seq) {
-        if (receiveWindow.contains(seq)) {
-            System.out.println("[Daemon] Duplicate seq detected: " + seq);
+    public synchronized boolean isDuplicate(int seq, byte cmd, byte[] payload) {
+        pruneExpired();
+        FrameKey key = new FrameKey(seq, cmd, payload);
+        if (receiveWindow.containsKey(key)) {
+            System.out.println("[Daemon] Duplicate frame detected: seq=" + seq +
+                    ", cmd=0x" + String.format("%02X", cmd & 0xFF));
             return true;
         }
 
-        // 添加到接收窗口
-        receiveWindow.add(seq);
-
-        // 超过窗口大小时移除最老的
-        if (receiveWindow.size() > WINDOW_SIZE) {
-            Integer oldest = receiveWindow.iterator().next();
-            receiveWindow.remove(oldest);
-        }
-
+        receiveWindow.put(key, System.currentTimeMillis());
+        pruneOverflow();
         return false;
     }
 
-    /**
-     * 清空接收窗口
-     */
     public synchronized void clear() {
         receiveWindow.clear();
+    }
+
+    private void pruneExpired() {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<FrameKey, Long>> it = receiveWindow.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<FrameKey, Long> e = it.next();
+            if (now - e.getValue() > WINDOW_TTL_MS) {
+                it.remove();
+            }
+        }
+    }
+
+    private void pruneOverflow() {
+        while (receiveWindow.size() > WINDOW_SIZE) {
+            FrameKey first = receiveWindow.keySet().iterator().next();
+            receiveWindow.remove(first);
+        }
+    }
+
+    public static final class FrameKey {
+        public final int seq;
+        public final byte cmd;
+        public final int payloadHash;
+
+        public FrameKey(int seq, byte cmd, byte[] payload) {
+            this.seq = seq;
+            this.cmd = cmd;
+            this.payloadHash = Arrays.hashCode(payload == null ? new byte[0] : payload);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof FrameKey)) return false;
+            FrameKey other = (FrameKey) o;
+            return seq == other.seq && cmd == other.cmd && payloadHash == other.payloadHash;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Integer.hashCode(seq);
+            result = 31 * result + Byte.hashCode(cmd);
+            result = 31 * result + Integer.hashCode(payloadHash);
+            return result;
+        }
     }
 }

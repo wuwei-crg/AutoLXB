@@ -1,4 +1,5 @@
 import json
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -27,6 +28,13 @@ class FSMConfig:
     max_vision_turns: int = 20
     action_interval_sec: float = 0.8
     screenshot_settle_sec: float = 0.6
+    tap_bind_clickable: bool = False
+    tap_jitter_sigma_px: float = 0.0
+    swipe_jitter_sigma_px: float = 0.0
+    swipe_duration_jitter_ratio: float = 0.0
+    xml_stable_interval_sec: float = 0.3
+    xml_stable_samples: int = 4
+    xml_stable_timeout_sec: float = 4.0
 
 
 @dataclass
@@ -395,8 +403,8 @@ class CortexFSMEngine:
             return CortexState.FAIL
         context.vision_turns += 1
 
-        # Give UI time to settle before each screenshot-analysis step.
-        if self.fsm_config.screenshot_settle_sec > 0:
+        # Optional one-time settle on first vision turn only.
+        if context.vision_turns == 1 and self.fsm_config.screenshot_settle_sec > 0:
             time.sleep(self.fsm_config.screenshot_settle_sec)
 
         screenshot = self._screenshot()
@@ -473,27 +481,55 @@ class CortexFSMEngine:
                 if not self._in_screen_bounds(context, x, y):
                     context.error = f"tap_out_of_bounds:{x},{y}"
                     return False
-                tx, ty, bound = self._resolve_tap_clickable(x, y)
-                if bound:
-                    self._log(context, "exec", "tap_bind_clickable", src_x=x, src_y=y, tap_x=tx, tap_y=ty, bound=bound)
+                if self.fsm_config.tap_bind_clickable:
+                    tx, ty, bound = self._resolve_tap_clickable(context, x, y)
+                    if bound:
+                        self._log(context, "exec", "tap_bind_clickable", src_x=x, src_y=y, tap_x=tx, tap_y=ty, bound=bound)
+                    else:
+                        self._log(context, "exec", "tap_bind_clickable_miss", src_x=x, src_y=y, tap_x=tx, tap_y=ty)
                 else:
-                    self._log(context, "exec", "tap_bind_clickable_miss", src_x=x, src_y=y, tap_x=tx, tap_y=ty)
+                    tx, ty = x, y
+                    self._log(context, "exec", "tap_bind_clickable_disabled", src_x=x, src_y=y, tap_x=tx, tap_y=ty)
+                jx, jy = self._apply_point_jitter(context, tx, ty, self.fsm_config.tap_jitter_sigma_px)
+                if (jx, jy) != (tx, ty):
+                    self._log(context, "exec", "tap_jitter_applied", base_x=tx, base_y=ty, tap_x=jx, tap_y=jy, sigma=self.fsm_config.tap_jitter_sigma_px)
+                tx, ty = jx, jy
                 self._log(context, "exec", "tap_start", x=tx, y=ty)
                 self.client.tap(tx, ty)
-                if self.fsm_config.action_interval_sec > 0:
-                    time.sleep(self.fsm_config.action_interval_sec)
                 self._log(context, "exec", "tap_done", x=tx, y=ty)
+                self._wait_for_xml_stable(context, reason="tap")
                 return True
             if cmd.op == "SWIPE":
                 x1, y1, x2, y2, dur = [int(v) for v in cmd.args]
                 if not self._in_screen_bounds(context, x1, y1) or not self._in_screen_bounds(context, x2, y2):
                     context.error = f"swipe_out_of_bounds:{x1},{y1}->{x2},{y2}"
                     return False
+                jx1, jy1 = self._apply_point_jitter(context, x1, y1, self.fsm_config.swipe_jitter_sigma_px)
+                jx2, jy2 = self._apply_point_jitter(context, x2, y2, self.fsm_config.swipe_jitter_sigma_px)
+                jdur = self._apply_duration_jitter(dur, self.fsm_config.swipe_duration_jitter_ratio)
+                if (jx1, jy1, jx2, jy2, jdur) != (x1, y1, x2, y2, dur):
+                    self._log(
+                        context,
+                        "exec",
+                        "swipe_jitter_applied",
+                        base_x1=x1,
+                        base_y1=y1,
+                        base_x2=x2,
+                        base_y2=y2,
+                        base_duration=dur,
+                        x1=jx1,
+                        y1=jy1,
+                        x2=jx2,
+                        y2=jy2,
+                        duration=jdur,
+                        sigma=self.fsm_config.swipe_jitter_sigma_px,
+                        duration_ratio=self.fsm_config.swipe_duration_jitter_ratio,
+                    )
+                x1, y1, x2, y2, dur = jx1, jy1, jx2, jy2, jdur
                 self._log(context, "exec", "swipe_start", x1=x1, y1=y1, x2=x2, y2=y2, duration=dur)
                 self.client.swipe(x1, y1, x2, y2, duration=dur)
-                if self.fsm_config.action_interval_sec > 0:
-                    time.sleep(self.fsm_config.action_interval_sec)
                 self._log(context, "exec", "swipe_done", x1=x1, y1=y1, x2=x2, y2=y2, duration=dur)
+                self._wait_for_xml_stable(context, reason="swipe")
                 return True
             if cmd.op == "INPUT":
                 self._log(context, "exec", "input_start", text=cmd.args[0])
@@ -532,6 +568,100 @@ class CortexFSMEngine:
             return True
         return 0 <= x < w and 0 <= y < h
 
+    def _apply_point_jitter(self, context: CortexContext, x: int, y: int, sigma: float) -> tuple[int, int]:
+        if sigma <= 0:
+            return x, y
+        jx = int(round(random.gauss(x, sigma)))
+        jy = int(round(random.gauss(y, sigma)))
+        w = int(context.device_info.get("width") or 0)
+        h = int(context.device_info.get("height") or 0)
+        if w > 0:
+            jx = max(0, min(w - 1, jx))
+        if h > 0:
+            jy = max(0, min(h - 1, jy))
+        return jx, jy
+
+    def _apply_duration_jitter(self, duration_ms: int, ratio: float) -> int:
+        if duration_ms <= 0 or ratio <= 0:
+            return max(1, duration_ms)
+        sigma = max(1.0, duration_ms * ratio)
+        jittered = int(round(random.gauss(duration_ms, sigma)))
+        return max(80, jittered)
+
+    def _wait_for_xml_stable(self, context: CortexContext, reason: str) -> None:
+        interval = max(0.05, float(self.fsm_config.xml_stable_interval_sec))
+        stable_needed = max(2, int(self.fsm_config.xml_stable_samples))
+        timeout = max(interval, float(self.fsm_config.xml_stable_timeout_sec))
+        deadline = time.time() + timeout
+
+        stable_count = 0
+        last_sig = ""
+        samples = 0
+        self._log(
+            context,
+            "exec",
+            "xml_wait_start",
+            reason=reason,
+            interval_sec=interval,
+            stable_samples=stable_needed,
+            timeout_sec=timeout,
+        )
+
+        while time.time() < deadline:
+            sig = self._dump_actions_signature()
+            samples += 1
+            if not sig:
+                self._log(context, "exec", "xml_wait_skip", reason=reason, samples=samples, why="dump_actions_unavailable")
+                return
+            if sig and sig == last_sig:
+                stable_count += 1
+            else:
+                stable_count = 1
+                last_sig = sig
+
+            if stable_count >= stable_needed:
+                self._log(
+                    context,
+                    "exec",
+                    "xml_wait_stable",
+                    reason=reason,
+                    samples=samples,
+                    stable_count=stable_count,
+                )
+                return
+            time.sleep(interval)
+
+        self._log(
+            context,
+            "exec",
+            "xml_wait_timeout",
+            reason=reason,
+            samples=samples,
+            stable_count=stable_count,
+        )
+
+    def _dump_actions_signature(self) -> str:
+        try:
+            raw = self.client.dump_actions() or {}
+            nodes = raw.get("nodes") or []
+        except Exception:
+            return ""
+
+        tokens: List[str] = []
+        # Keep order to preserve structural changes, but limit size for speed.
+        for n in nodes[:400]:
+            b = n.get("bounds") or [0, 0, 0, 0]
+            if not isinstance(b, (list, tuple)) or len(b) < 4:
+                b = [0, 0, 0, 0]
+            text = str(n.get("text") or "")[:24]
+            res = str(n.get("resource_id") or "")[:32]
+            cls = str(n.get("class") or "")[:24]
+            clickable = "1" if n.get("clickable") else "0"
+            tokens.append(
+                f"{int(b[0])},{int(b[1])},{int(b[2])},{int(b[3])}|{clickable}|{text}|{res}|{cls}"
+            )
+        return "|".join(tokens)
+
     def _refresh_activity(self, context: CortexContext) -> None:
         try:
             ok, pkg, activity = self.client.get_activity()
@@ -550,7 +680,7 @@ class CortexFSMEngine:
         except Exception as e:
             self._log(context, "fsm", "activity_refresh_failed", error=str(e))
 
-    def _resolve_tap_clickable(self, x: int, y: int) -> tuple[int, int, Optional[List[int]]]:
+    def _resolve_tap_clickable(self, context: CortexContext, x: int, y: int) -> tuple[int, int, Optional[List[int]]]:
         """
         Map a TAP point to the center of the smallest clickable bounds that contains it.
         If no clickable container contains the point, keep original coordinates.
@@ -580,11 +710,36 @@ class CortexFSMEngine:
         if not candidates:
             return x, y, None
 
-        # Prefer the tightest clickable container around the point.
-        candidates.sort(key=lambda k: (k[2] - k[0]) * (k[3] - k[1]))
+        width = int(context.device_info.get("width") or 0)
+        height = int(context.device_info.get("height") or 0)
+        screen_area = max(1, width * height)
+
+        def _area(bb: List[int]) -> int:
+            return max(0, bb[2] - bb[0]) * max(0, bb[3] - bb[1])
+
+        def _center(bb: List[int]) -> tuple[int, int]:
+            return ((bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2)
+
+        # Primary strategy: smallest area + nearest center.
+        candidates.sort(
+            key=lambda bb: (
+                _area(bb),
+                abs(_center(bb)[0] - x) + abs(_center(bb)[1] - y),
+            )
+        )
         pick = candidates[0]
         tx = (pick[0] + pick[2]) // 2
         ty = (pick[1] + pick[3]) // 2
+
+        # Safety gate:
+        # If only a very large clickable container matches and rebinding would move
+        # the tap too far away, keep the original model coordinate.
+        picked_area = _area(pick)
+        picked_ratio = picked_area / float(screen_area)
+        move_dist = abs(tx - x) + abs(ty - y)
+        if picked_ratio >= 0.10 and move_dist >= 120:
+            return x, y, None
+
         return tx, ty, pick
 
     def _normalize_model_output(self, raw: str, state: CortexState, context: CortexContext) -> str:

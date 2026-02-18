@@ -7,9 +7,10 @@
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; font-family: "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; }
-        .layout { display: grid; grid-template-columns: 380px 1fr; gap: 12px; height: 100vh; padding: 12px; }
+        .layout { display: grid; grid-template-columns: 380px 1fr 420px; gap: 12px; height: 100vh; padding: 12px; }
         .left { background: #111827; border: 1px solid #334155; border-radius: 10px; padding: 12px; overflow: auto; }
-        .right { background: #0b1220; border: 1px solid #334155; border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+        .center { background: #0b1220; border: 1px solid #334155; border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+        .right { background: #0b1220; border: 1px solid #334155; border-radius: 10px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
         h3 { margin: 0 0 10px; font-size: 14px; color: #93c5fd; }
         .group { margin-bottom: 10px; }
         label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
@@ -30,6 +31,17 @@
         .meta { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
         .content { white-space: pre-wrap; font-family: Consolas, monospace; font-size: 12px; line-height: 1.45; }
         .status { font-size: 12px; color: #94a3b8; }
+        .preview-head { padding: 10px 12px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+        .preview-body { flex: 1; min-height: 0; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+        .screen-wrap { position: relative; flex: 1; min-height: 0; border: 1px solid #334155; border-radius: 8px; background: #020617; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .screen-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+        .tap-marker { position: absolute; width: 18px; height: 18px; margin-left: -9px; margin-top: -9px; border: 2px solid #ef4444; border-radius: 50%; background: rgba(239, 68, 68, 0.2); pointer-events: none; display: none; }
+        .tap-marker::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin-left: -2px; margin-top: -2px; border-radius: 50%; background: #ef4444; }
+        .preview-meta { font-size: 12px; color: #94a3b8; font-family: Consolas, monospace; }
+        @media (max-width: 1400px) {
+            .layout { grid-template-columns: 340px 1fr; grid-template-rows: 1fr 320px; }
+            .right { grid-column: 1 / span 2; }
+        }
     </style>
 </head>
 <body>
@@ -38,7 +50,7 @@
         <h3>Cortex FSM</h3>
         <div class="group">
             <label>用户意图</label>
-            <textarea id="userTask" placeholder="例如：打开贴吧消息页，查看最新互动"></textarea>
+            <textarea id="userTask" placeholder="例如：打开贴吧，给我常逛的贴吧签到"></textarea>
         </div>
         <div class="group">
             <label>Map 文件</label>
@@ -58,6 +70,10 @@
                 <input id="nodeInterval" type="number" step="0.1" value="0.6">
             </div>
         </div>
+        <div class="group">
+            <label><input id="tapBindClickable" type="checkbox" style="width:auto; margin-right:6px;">TAP 绑定到 clickable 容器中心</label>
+        </div>
+
         <h3 style="margin-top:14px;">LLM 配置</h3>
         <div class="group">
             <label>API Base URL</label>
@@ -81,111 +97,246 @@
             <button class="btn-secondary" onclick="loadMaps()">刷新 Map</button>
             <button class="btn-secondary" onclick="saveLlmConfig()">保存 LLM</button>
             <button class="btn-primary" onclick="runFsm()">运行 FSM</button>
+            <button class="btn-secondary" onclick="cancelTask()">终止任务</button>
             <button class="btn-ok" onclick="clearFeed()">清空交互</button>
         </div>
     </div>
-    <div class="right">
+
+    <div class="center">
         <div class="feed-head">
             <div style="font-weight:600;">交互信息流</div>
             <div id="runStatus" class="status">空闲</div>
         </div>
         <div id="feed" class="feed-body"></div>
     </div>
+
+    <div class="right">
+        <div class="preview-head">
+            <div style="font-weight:600;">实时截图</div>
+            <button class="btn-secondary" onclick="refreshTaskScreenshot()">刷新</button>
+        </div>
+        <div class="preview-body">
+            <div class="screen-wrap" id="screenWrap">
+                <img id="taskShot" alt="task screenshot">
+                <div id="tapMarker" class="tap-marker"></div>
+            </div>
+            <div id="shotMeta" class="preview-meta">暂无截图</div>
+        </div>
+    </div>
 </div>
+
 <script>
-async function jfetch(url, method='GET', body=null) {
-    const opt = { method, headers: { 'Content-Type': 'application/json' } };
+let currentTaskId = "";
+let screenInfo = { width: 0, height: 0 };
+let lastTap = null;
+
+async function jfetch(url, method = "GET", body = null) {
+    const opt = { method, headers: { "Content-Type": "application/json" } };
     if (body !== null) opt.body = JSON.stringify(body);
     const r = await fetch(url, opt);
     return await r.json();
 }
+
 function feedPush(kind, title, content) {
-    const feed = document.getElementById('feed');
-    const item = document.createElement('div');
+    const feed = document.getElementById("feed");
+    const item = document.createElement("div");
     item.className = `msg ${kind}`;
     const ts = new Date().toLocaleTimeString();
     item.innerHTML = `<div class="meta">${ts} | ${title}</div><div class="content"></div>`;
-    item.querySelector('.content').textContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    item.querySelector(".content").textContent = typeof content === "string" ? content : JSON.stringify(content, null, 2);
     feed.appendChild(item);
     feed.scrollTop = feed.scrollHeight;
 }
-function clearFeed() { document.getElementById('feed').innerHTML = ''; }
+
+function clearFeed() {
+    document.getElementById("feed").innerHTML = "";
+}
+
+function clearPreview() {
+    const img = document.getElementById("taskShot");
+    const marker = document.getElementById("tapMarker");
+    document.getElementById("shotMeta").textContent = "暂无截图";
+    img.removeAttribute("src");
+    marker.style.display = "none";
+    lastTap = null;
+}
+
+async function loadScreenSize() {
+    const data = await jfetch("/api/command/get_screen_size", "POST", {});
+    if (data && data.success && data.response) {
+        screenInfo.width = Number(data.response.width || 0);
+        screenInfo.height = Number(data.response.height || 0);
+    }
+}
+
+function renderTapMarker() {
+    const img = document.getElementById("taskShot");
+    const marker = document.getElementById("tapMarker");
+    if (!lastTap || !screenInfo.width || !screenInfo.height || !img.complete || !img.naturalWidth || !img.naturalHeight) {
+        marker.style.display = "none";
+        return;
+    }
+
+    const wrap = document.getElementById("screenWrap");
+    const wrapW = wrap.clientWidth;
+    const wrapH = wrap.clientHeight;
+    const scale = Math.min(wrapW / screenInfo.width, wrapH / screenInfo.height);
+    const drawW = Math.round(screenInfo.width * scale);
+    const drawH = Math.round(screenInfo.height * scale);
+    const offsetX = Math.floor((wrapW - drawW) / 2);
+    const offsetY = Math.floor((wrapH - drawH) / 2);
+
+    const px = offsetX + (lastTap.x / screenInfo.width) * drawW;
+    const py = offsetY + (lastTap.y / screenInfo.height) * drawH;
+    marker.style.left = `${px}px`;
+    marker.style.top = `${py}px`;
+    marker.style.display = "block";
+}
+
+async function refreshTaskScreenshot() {
+    if (!currentTaskId) return;
+    const img = document.getElementById("taskShot");
+    img.onload = () => {
+        renderTapMarker();
+        const ts = new Date().toLocaleTimeString();
+        const tapText = lastTap ? ` | tap=(${lastTap.x}, ${lastTap.y})` : "";
+        document.getElementById("shotMeta").textContent = `${ts}${tapText}`;
+    };
+    img.src = `/api/command/screenshot/raw?t=${Date.now()}`;
+}
+
 async function loadLlmConfig() {
-    const data = await jfetch('/api/cortex/llm/config');
+    const data = await jfetch("/api/cortex/llm/config");
     if (!data.success) return;
     const c = data.data || {};
-    document.getElementById('llmApiUrl').value = c.api_base_url || '';
-    document.getElementById('llmApiKey').value = c.api_key || '';
-    document.getElementById('llmModel').value = c.model_name || 'qwen-plus';
-    document.getElementById('llmTimeout').value = c.timeout ?? 60;
+    document.getElementById("llmApiUrl").value = c.api_base_url || "";
+    document.getElementById("llmApiKey").value = c.api_key || "";
+    document.getElementById("llmModel").value = c.model_name || "qwen-plus";
+    document.getElementById("llmTimeout").value = c.timeout ?? 60;
+    document.getElementById("nodeRetries").value = c.node_exists_retries ?? 3;
+    document.getElementById("nodeInterval").value = c.node_exists_interval_sec ?? 0.6;
 }
+
 async function saveLlmConfig() {
     const payload = {
-        api_base_url: document.getElementById('llmApiUrl').value.trim(),
-        api_key: document.getElementById('llmApiKey').value.trim(),
-        model_name: document.getElementById('llmModel').value.trim(),
+        api_base_url: document.getElementById("llmApiUrl").value.trim(),
+        api_key: document.getElementById("llmApiKey").value.trim(),
+        model_name: document.getElementById("llmModel").value.trim(),
         temperature: 0.1,
-        timeout: Number(document.getElementById('llmTimeout').value || '60')
+        timeout: Number(document.getElementById("llmTimeout").value || "60"),
+        node_exists_retries: Number(document.getElementById("nodeRetries").value || "3"),
+        node_exists_interval_sec: Number(document.getElementById("nodeInterval").value || "0.6")
     };
-    const data = await jfetch('/api/cortex/llm/config', 'POST', payload);
-    feedPush('sys', 'llm/config', data.message || (data.success ? 'ok' : 'failed'));
+    const data = await jfetch("/api/cortex/llm/config", "POST", payload);
+    feedPush("sys", "llm/config", data.message || (data.success ? "ok" : "failed"));
 }
+
 async function loadMaps() {
-    const packageName = document.getElementById('pkgFilter').value.trim();
-    const data = await jfetch('/api/maps/list');
-    const sel = document.getElementById('mapSelect');
-    sel.innerHTML = '';
-    const autoOpt = document.createElement('option');
-    autoOpt.value = '';
-    autoOpt.textContent = '自动按应用选择最新 map';
+    const packageName = document.getElementById("pkgFilter").value.trim();
+    const data = await jfetch("/api/maps/list");
+    const sel = document.getElementById("mapSelect");
+    sel.innerHTML = "";
+
+    const autoOpt = document.createElement("option");
+    autoOpt.value = "";
+    autoOpt.textContent = "自动按应用选择最新 map";
     sel.appendChild(autoOpt);
+
     if (!data.success) return;
+
     let maps = data.data || [];
     if (packageName) maps = maps.filter(m => m.package === packageName);
+
     for (const m of maps) {
-        const opt = document.createElement('option');
+        const opt = document.createElement("option");
         opt.value = m.filepath;
         opt.textContent = `${m.package} | ${m.filename}`;
         sel.appendChild(opt);
     }
-    sel.value = '';
+    sel.value = "";
 }
+
 async function pollTask(taskId) {
     let cursor = 0;
+    currentTaskId = taskId;
+
     while (true) {
         const p = await jfetch(`/api/cortex/task/${taskId}/poll?cursor=${cursor}`);
-        if (!p.success) { feedPush('sys', 'task/poll', p.message || 'poll_failed'); return; }
-        cursor = p.next_cursor || cursor;
-        for (const ev of (p.events || [])) {
-            const stage = ev.stage || 'fsm';
-            const event = ev.event || 'event';
-            if (stage === 'llm' && event === 'prompt') { feedPush('user', `LLM Prompt (${ev.state || ''})`, ev.prompt || ''); continue; }
-            if (stage === 'llm' && event === 'response') { feedPush('llm', `LLM Response (${ev.state || ''})`, ev.response || ''); continue; }
-            feedPush('sys', `${stage}/${event}`, ev);
-        }
-        if (p.done) {
-            const r = p.result || {};
-            feedPush(p.task_success ? 'sys' : 'llm', 'FSM Result', r);
-            document.getElementById('runStatus').textContent = p.task_success ? '完成' : `失败: ${p.message || 'unknown'}`;
+        if (!p.success) {
+            feedPush("sys", "task/poll", p.message || "poll_failed");
             return;
         }
+
+        cursor = p.next_cursor || cursor;
+        for (const ev of (p.events || [])) {
+            const stage = ev.stage || "fsm";
+            const event = ev.event || "event";
+
+            if (stage === "llm" && event === "prompt") {
+                feedPush("user", `LLM Prompt (${ev.state || ""})`, ev.prompt || "");
+                continue;
+            }
+            if (stage === "llm" && event === "response") {
+                feedPush("llm", `LLM Response (${ev.state || ""})`, ev.response || "");
+                continue;
+            }
+
+            if (stage === "exec" && event === "tap_start") {
+                lastTap = { x: Number(ev.x || 0), y: Number(ev.y || 0) };
+                renderTapMarker();
+            }
+            if (stage === "fsm" && event === "vision_screenshot_ready") {
+                await refreshTaskScreenshot();
+            }
+
+            feedPush("sys", `${stage}/${event}`, ev);
+        }
+
+        if (p.done) {
+            const r = p.result || {};
+            feedPush(p.task_success ? "sys" : "llm", "FSM Result", r);
+            document.getElementById("runStatus").textContent = p.task_success ? "完成" : `失败: ${p.message || "unknown"}`;
+            if (p.message === "task_cancelled") {
+                document.getElementById("runStatus").textContent = "已终止";
+            }
+            currentTaskId = "";
+            return;
+        }
+
         await new Promise(res => setTimeout(res, 400));
     }
 }
+
+async function cancelTask() {
+    if (!currentTaskId) {
+        feedPush("sys", "Task Cancel", "当前没有运行中的任务");
+        return;
+    }
+    const r = await jfetch(`/api/cortex/task/${currentTaskId}/cancel`, "POST", {});
+    feedPush(r.success ? "sys" : "llm", "Task Cancel", r.message || "cancel_failed");
+}
+
 async function runFsm() {
-    const task = document.getElementById('userTask').value.trim();
-    if (!task) { alert('请先输入用户意图'); return; }
-    document.getElementById('runStatus').textContent = '运行中...';
-    feedPush('user', 'User Intent', task);
+    const task = document.getElementById("userTask").value.trim();
+    if (!task) {
+        alert("请先输入用户意图");
+        return;
+    }
+
+    document.getElementById("runStatus").textContent = "运行中...";
+    feedPush("user", "User Intent", task);
+    clearPreview();
+    await loadScreenSize();
+
     const payload = {
         user_task: task,
-        map_filepath: document.getElementById('mapSelect').value || '',
-        package_name: document.getElementById('pkgFilter').value.trim(),
+        map_filepath: document.getElementById("mapSelect").value || "",
+        package_name: document.getElementById("pkgFilter").value.trim(),
         reconnect_before_run: true,
         use_llm_planner: true,
         route_config: {
-            node_exists_retries: Number(document.getElementById('nodeRetries').value || '3'),
-            node_exists_interval_sec: Number(document.getElementById('nodeInterval').value || '0.6'),
+            node_exists_retries: Number(document.getElementById("nodeRetries").value || "3"),
+            node_exists_interval_sec: Number(document.getElementById("nodeInterval").value || "0.6"),
             route_recovery_enabled: false,
             max_route_restarts: 0,
             use_vlm_takeover: false
@@ -195,15 +346,33 @@ async function runFsm() {
             max_commands_per_turn: 1,
             max_vision_turns: 20,
             action_interval_sec: 0.8,
-            screenshot_settle_sec: 0.6
+            screenshot_settle_sec: 0.6,
+            tap_bind_clickable: document.getElementById("tapBindClickable").checked,
+            tap_jitter_sigma_px: 2.0,
+            swipe_jitter_sigma_px: 4.0,
+            swipe_duration_jitter_ratio: 0.12,
+            xml_stable_interval_sec: 0.3,
+            xml_stable_samples: 4,
+            xml_stable_timeout_sec: 4.0
         }
     };
-    const start = await jfetch('/api/cortex/fsm/start', 'POST', payload);
-    if (!start.success) { feedPush('sys', 'FSM Start Failed', start.message || 'unknown'); return; }
-    feedPush('sys', 'FSM Task', `task_id=${start.task_id}`);
+
+    const start = await jfetch("/api/cortex/fsm/start", "POST", payload);
+    if (!start.success) {
+        feedPush("sys", "FSM Start Failed", start.message || "unknown");
+        return;
+    }
+
+    feedPush("sys", "FSM Task", `task_id=${start.task_id}`);
     await pollTask(start.task_id);
 }
-(async function init(){ await loadLlmConfig(); await loadMaps(); })();
+
+window.addEventListener("resize", renderTapMarker);
+(async function init() {
+    await loadLlmConfig();
+    await loadMaps();
+    await loadScreenSize();
+})();
 </script>
 </body>
 </html>

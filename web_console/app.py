@@ -66,6 +66,8 @@ def _default_cortex_llm_config() -> dict:
         'model_name': os.getenv('CORTEX_LLM_MODEL_NAME', 'qwen-plus'),
         'temperature': float(os.getenv('CORTEX_LLM_TEMPERATURE', '0.1')),
         'timeout': int(os.getenv('CORTEX_LLM_TIMEOUT', '30')),
+        'node_exists_retries': int(os.getenv('CORTEX_NODE_EXISTS_RETRIES', '3')),
+        'node_exists_interval_sec': float(os.getenv('CORTEX_NODE_EXISTS_INTERVAL_SEC', '0.6')),
     }
 
 
@@ -103,6 +105,7 @@ def _task_create(task_type: str) -> str:
             'success': False,
             'result': None,
             'message': '',
+            'cancel_requested': False,
         }
     return task_id
 
@@ -123,6 +126,14 @@ def _task_finish(task_id: str, success: bool, result: dict = None, message: str 
         t['success'] = bool(success)
         t['result'] = result or {}
         t['message'] = message or ''
+
+
+def _task_is_cancel_requested(task_id: str) -> bool:
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if not t:
+            return False
+        return bool(t.get('cancel_requested'))
 
 
 def _prepare_link_for_task(reconnect: bool = True) -> None:
@@ -2072,6 +2083,8 @@ def cortex_llm_config_get():
                 'model_name': cfg.get('model_name', ''),
                 'temperature': cfg.get('temperature', 0.1),
                 'timeout': cfg.get('timeout', 30),
+                'node_exists_retries': cfg.get('node_exists_retries', 3),
+                'node_exists_interval_sec': cfg.get('node_exists_interval_sec', 0.6),
             }
         })
     except Exception as e:
@@ -2096,6 +2109,8 @@ def cortex_llm_config_set():
             'model_name': (data.get('model_name', current.get('model_name')) or '').strip(),
             'temperature': float(data.get('temperature', current.get('temperature', 0.1))),
             'timeout': int(data.get('timeout', current.get('timeout', 30))),
+            'node_exists_retries': int(data.get('node_exists_retries', current.get('node_exists_retries', 3))),
+            'node_exists_interval_sec': float(data.get('node_exists_interval_sec', current.get('node_exists_interval_sec', 0.6))),
         }
         raw_key = data.get('api_key')
         if raw_key and raw_key != '***':
@@ -2409,6 +2424,13 @@ def _run_cortex_fsm_logic(data: dict, log_callback):
         max_vision_turns=int(fsm_cfg_data.get('max_vision_turns', 20)),
         action_interval_sec=float(fsm_cfg_data.get('action_interval_sec', 0.8)),
         screenshot_settle_sec=float(fsm_cfg_data.get('screenshot_settle_sec', 0.6)),
+        tap_bind_clickable=bool(fsm_cfg_data.get('tap_bind_clickable', False)),
+        tap_jitter_sigma_px=float(fsm_cfg_data.get('tap_jitter_sigma_px', 2.0)),
+        swipe_jitter_sigma_px=float(fsm_cfg_data.get('swipe_jitter_sigma_px', 4.0)),
+        swipe_duration_jitter_ratio=float(fsm_cfg_data.get('swipe_duration_jitter_ratio', 0.12)),
+        xml_stable_interval_sec=float(fsm_cfg_data.get('xml_stable_interval_sec', 0.3)),
+        xml_stable_samples=int(fsm_cfg_data.get('xml_stable_samples', 4)),
+        xml_stable_timeout_sec=float(fsm_cfg_data.get('xml_stable_timeout_sec', 4.0)),
     )
 
     llm_planner = LLMPlanner(llm_complete_fsm, llm_complete_with_image) if llm_complete_fsm else None
@@ -2472,7 +2494,15 @@ def cortex_fsm_start():
 
     def _runner():
         try:
-            payload = _run_cortex_fsm_logic(data, log_callback=lambda e: _task_append(task_id, e))
+            def _log_with_cancel(e):
+                if _task_is_cancel_requested(task_id):
+                    raise RuntimeError('task_cancelled')
+                _task_append(task_id, e)
+
+            payload = _run_cortex_fsm_logic(data, log_callback=_log_with_cancel)
+            if _task_is_cancel_requested(task_id):
+                _task_finish(task_id, False, payload, 'task_cancelled')
+                return
             _task_finish(task_id, bool(payload.get('success')), payload, payload.get('message') or '')
         except Exception as e:
             _task_finish(task_id, False, {'success': False, 'message': str(e)}, str(e))
@@ -2497,9 +2527,22 @@ def cortex_task_poll(task_id):
             'next_cursor': next_cursor,
             'done': bool(t['done']),
             'task_success': bool(t['success']),
+            'cancel_requested': bool(t.get('cancel_requested')),
             'result': t['result'] if t['done'] else None,
             'message': t['message'] if t['done'] else '',
         })
+
+
+@app.route('/api/cortex/task/<task_id>/cancel', methods=['POST'])
+def cortex_task_cancel(task_id):
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if not t:
+            return jsonify({'success': False, 'message': 'task_not_found'}), 404
+        if t.get('done'):
+            return jsonify({'success': True, 'message': 'task_already_done'})
+        t['cancel_requested'] = True
+    return jsonify({'success': True, 'message': 'cancel_requested', 'task_id': task_id})
 
 
 def _pick_latest_map_file(base_dir: str, package_name: str = None) -> str:
