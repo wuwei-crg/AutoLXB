@@ -64,6 +64,7 @@ class CortexContext:
     same_activity_streak: int = 0
     coord_probe: Dict[str, Any] = field(default_factory=dict)
     llm_history: List[Dict[str, Any]] = field(default_factory=list)
+    lessons: List[str] = field(default_factory=list)
 
 
 class CommandPlanner(Protocol):
@@ -92,15 +93,15 @@ class PromptBuilder:
     _STATE_FORMATS: Dict[CortexState, Dict[str, Any]] = {
         CortexState.APP_RESOLVE: {
             "root": "app_analysis",
-            "fields": ["user_intent", "candidates", "decision", "reflection"],
+            "fields": ["user_intent", "candidates", "decision", "reflection", "lesson"],
         },
         CortexState.ROUTE_PLAN: {
             "root": "route_plan_analysis",
-            "fields": ["selected_app", "target_page_candidates", "decision", "reflection"],
+            "fields": ["selected_app", "target_page_candidates", "decision", "reflection", "lesson"],
         },
         CortexState.VISION_ACT: {
             "root": "vision_analysis",
-            "fields": ["page_state", "step_review", "reflection", "next_step_reasoning", "completion_gate", "done_confirm"],
+            "fields": ["page_state", "step_review", "reflection", "next_step_reasoning", "completion_gate", "done_confirm", "lesson"],
         },
     }
 
@@ -147,26 +148,10 @@ class PromptBuilder:
         rows = context.llm_history[-max(1, int(limit)) :]
         return json.dumps(rows, ensure_ascii=False)
 
-    def _lesson_snippet(self, context: CortexContext, limit: int = 5) -> str:
-        if not context.llm_history:
+    def _lessons_snippet(self, context: CortexContext) -> str:
+        if not context.lessons:
             return "[]"
-        out = []
-        for item in reversed(context.llm_history):
-            st = item.get("structured") or {}
-            reflection = str(st.get("reflection") or "").strip()
-            if not reflection:
-                continue
-            out.append(
-                {
-                    "state": item.get("state"),
-                    "reflection": reflection,
-                    "command": item.get("command"),
-                }
-            )
-            if len(out) >= max(1, int(limit)):
-                break
-        out.reverse()
-        return json.dumps(out, ensure_ascii=False)
+        return json.dumps(context.lessons, ensure_ascii=False)
 
     def build(self, state: CortexState, context: CortexContext, allowed_ops: Set[str]) -> str:
         fmt = self._STATE_FORMATS.get(state)
@@ -197,7 +182,7 @@ class PromptBuilder:
                     f"CurrentActivity(JSON): {json.dumps(context.current_activity, ensure_ascii=False)}\n",
                     f"AppCandidates(JSON): {json.dumps(app_rows, ensure_ascii=False)}\n",
                     f"RecentLLMHistory(JSON): {self._history_snippet(context, limit=5)}\n",
-                    f"RecentLessons(JSON): {self._lesson_snippet(context, limit=5)}\n",
+                    f"Lessons(JSON): {self._lessons_snippet(context)}\n",
                     "State Goal:\n",
                     "Select the best target app for this task from AppCandidates.\n",
                     "Write concise analysis in tags, then output one command in <command>.\n",
@@ -222,7 +207,7 @@ class PromptBuilder:
                     f"DeviceInfo(JSON): {json.dumps(context.device_info, ensure_ascii=False)}\n",
                     f"PageCandidates(JSON): {json.dumps(page_rows, ensure_ascii=False)}\n",
                     f"RecentLLMHistory(JSON): {self._history_snippet(context, limit=5)}\n",
-                    f"RecentLessons(JSON): {self._lesson_snippet(context, limit=5)}\n",
+                    f"Lessons(JSON): {self._lessons_snippet(context)}\n",
                     "State Goal:\n",
                     "Pick the best target_page from PageCandidates for the task.\n",
                     "Write concise analysis in tags, then output one command in <command>.\n",
@@ -249,7 +234,7 @@ class PromptBuilder:
                     f"SameCommandStreak: {context.same_command_streak}\n",
                     f"RecentRouteTrace(JSON): {json.dumps(context.route_trace[-8:], ensure_ascii=False)}\n",
                     f"RecentLLMHistory(JSON): {self._history_snippet(context, limit=5)}\n",
-                    f"RecentLessons(JSON): {self._lesson_snippet(context, limit=5)}\n",
+                    f"Lessons(JSON): {self._lessons_snippet(context)}\n",
                     "Screenshot: attached in this request.\n",
                     "State Goal:\n",
                     "Choose ONLY the next best single action.\n",
@@ -264,6 +249,8 @@ class PromptBuilder:
                     "   Step-2: command=..., page_change=..., result=...\n",
                     "3) In <reflection>, summarize what the agent is actually doing across steps,\n",
                     "   identify repeated ineffective intents, and state what intent to avoid next.\n",
+                    "3.5) <lesson> is OPTIONAL. Only output it when there is a reusable cross-step rule.\n",
+                    "     Keep lesson concise (<= 1 sentence). If no stable lesson, omit it.\n",
                     "4) <command> must be consistent with <reflection> (cannot repeat the avoided intent).\n",
                     "5) If recent steps show repeated no-progress, prioritize changing action type.\n",
                     "   Example: TAP -> small SWIPE near center / BACK / WAIT.\n",
@@ -325,15 +312,15 @@ class CortexFSMEngine:
     _STATE_OUTPUT_TAGS: Dict[CortexState, Dict[str, Any]] = {
         CortexState.APP_RESOLVE: {
             "root": "app_analysis",
-            "fields": ["user_intent", "candidates", "decision", "reflection"],
+            "fields": ["user_intent", "candidates", "decision", "reflection", "lesson"],
         },
         CortexState.ROUTE_PLAN: {
             "root": "route_plan_analysis",
-            "fields": ["selected_app", "target_page_candidates", "decision", "reflection"],
+            "fields": ["selected_app", "target_page_candidates", "decision", "reflection", "lesson"],
         },
         CortexState.VISION_ACT: {
             "root": "vision_analysis",
-            "fields": ["page_state", "step_review", "reflection", "next_step_reasoning", "completion_gate", "done_confirm"],
+            "fields": ["page_state", "step_review", "reflection", "next_step_reasoning", "completion_gate", "done_confirm", "lesson"],
         },
     }
 
@@ -399,6 +386,7 @@ class CortexFSMEngine:
             "route_result": context.route_result,
             "command_log": context.command_log,
             "llm_history": context.llm_history,
+            "lessons": context.lessons,
         }
         if context.error:
             result["reason"] = context.error
@@ -422,6 +410,7 @@ class CortexFSMEngine:
             context.llm_history.append(
                 {"state": state.value, "structured": structured, "command": command_text}
             )
+            self._collect_lesson(context, structured)
             self._log(context, "llm", "structured", state=state.value, data=structured, command=command_text)
         raw = self._normalize_model_output(command_text or raw, state, context)
         try:
@@ -568,6 +557,7 @@ class CortexFSMEngine:
             context.llm_history.append(
                 {"state": CortexState.VISION_ACT.value, "structured": structured, "command": command_text}
             )
+            self._collect_lesson(context, structured)
             self._log(context, "llm", "structured", state=CortexState.VISION_ACT.value, data=structured, command=command_text)
         raw = self._normalize_model_output(command_text or raw, CortexState.VISION_ACT, context)
 
@@ -940,6 +930,18 @@ class CortexFSMEngine:
         if not m:
             return ""
         return m.group(1).strip()
+
+    def _collect_lesson(self, context: CortexContext, structured: Dict[str, Any]) -> None:
+        raw = str((structured or {}).get("lesson") or "").strip()
+        if not raw:
+            return
+        if raw.lower() in {"none", "n/a", "na", "null", "no lesson"}:
+            return
+        # Keep lesson concise to avoid prompt bloat.
+        lesson = raw if len(raw) <= 180 else (raw[:180].rstrip() + "...")
+        if lesson in context.lessons:
+            return
+        context.lessons.append(lesson)
 
     def _probe_coordinate_space(self, context: CortexContext) -> Dict[str, Any]:
         if not bool(self.fsm_config.init_coord_probe_enabled):
