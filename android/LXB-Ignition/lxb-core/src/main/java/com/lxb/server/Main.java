@@ -139,7 +139,7 @@ public class Main {
                     // =========================================================
                     // 特殊处理: CMD_IMG_REQ (0x61) 需要分片传输
                     // =========================================================
-                    if ((decoded.cmd & 0xFF) == 0x61) {
+                    if ((decoded.cmd & 0xFF) == (com.lxb.server.protocol.CommandIds.CMD_IMG_REQ & 0xFF)) {
                         System.out.println(TAG + " [Special] Handling fragmented screenshot...");
                         boolean success = perceptionEngine.handleFragmentedScreenshot(
                                 server,
