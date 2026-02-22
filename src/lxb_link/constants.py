@@ -150,6 +150,43 @@ CMD_HIERARCHY_FIN = 0x6C   # UI tree transfer complete (reuses CMD_IMG_MISSING f
 # 0x6D-0x6F: Reserved for streaming
 
 # =============================================================================
+
+# Implemented command IDs (client + android server end-to-end as of v1).
+# Keep this list in sync with:
+# - src/lxb_link/client.py
+# - android/LXB-Ignition/lxb-core/.../dispatcher/CommandDispatcher.java
+IMPLEMENTED_COMMANDS_V1 = {
+    CMD_HANDSHAKE,
+    CMD_ACK,
+    CMD_HEARTBEAT,
+    CMD_TAP,
+    CMD_SWIPE,
+    CMD_LONG_PRESS,
+    CMD_WAKE,
+    CMD_UNLOCK,
+    CMD_SET_TOUCH_MODE,
+    CMD_SET_SCREENSHOT_QUALITY,
+    CMD_INPUT_TEXT,
+    CMD_KEY_EVENT,
+    CMD_GET_ACTIVITY,
+    CMD_DUMP_HIERARCHY,
+    CMD_FIND_NODE,
+    CMD_DUMP_ACTIONS,
+    CMD_GET_SCREEN_STATE,
+    CMD_GET_SCREEN_SIZE,
+    CMD_FIND_NODE_COMPOUND,
+    CMD_LAUNCH_APP,
+    CMD_STOP_APP,
+    CMD_LIST_APPS,
+    CMD_SCREENSHOT,
+    CMD_IMG_REQ,
+    CMD_IMG_META,
+    CMD_IMG_CHUNK,
+    CMD_IMG_MISSING,
+    CMD_IMG_FIN,
+}
+
+# =============================================================================
 # Legacy Command Aliases (for backward compatibility during migration)
 # =============================================================================
 # These will be deprecated in v2.0

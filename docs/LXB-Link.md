@@ -1233,3 +1233,33 @@ class LXBChecksumError(LXBLinkError):
 ---
 
 **维护说明**: 本协议遵循 **Binary First** 原则。添加新功能时，严禁使用 JSON 传输核心数据，必须使用紧凑的二进制结构。所有多字节整数必须使用大端序 (Big Endian / Network Byte Order)。
+
+## Implementation Matrix (v1 runtime truth)
+
+This section is the runtime source of truth for what is currently wired end-to-end.
+
+| Command | ID | Python client API | Android server path | Status |
+|:--|:--|:--|:--|:--|
+| `CMD_HANDSHAKE` | `0x01` | `client.handshake()` | `CommandDispatcher -> handleHandshake` | Implemented |
+| `CMD_HEARTBEAT` | `0x03` | `client.heartbeat()` | `CommandDispatcher` | Implemented |
+| `CMD_TAP` | `0x10` | `client.tap()` | `ExecutionEngine.handleTap` | Implemented |
+| `CMD_SWIPE` | `0x11` | `client.swipe()` | `ExecutionEngine.handleSwipe` | Implemented |
+| `CMD_LONG_PRESS` | `0x12` | `client.long_press()` | `ExecutionEngine.handleLongPress` | Implemented |
+| `CMD_INPUT_TEXT` | `0x20` | `client.input_text()` | `ExecutionEngine.handleInputText` | Implemented |
+| `CMD_KEY_EVENT` | `0x21` | `client.key_event()` | `ExecutionEngine.handleKeyEvent` | Implemented |
+| `CMD_GET_ACTIVITY` | `0x30` | `client.get_activity()` | `PerceptionEngine.handleGetActivity` | Implemented |
+| `CMD_DUMP_HIERARCHY` | `0x31` | `client.dump_hierarchy()` | `PerceptionEngine.handleDumpHierarchy` | Implemented |
+| `CMD_FIND_NODE` | `0x32` | `client.find_node()` | `PerceptionEngine.handleFindNode` | Implemented |
+| `CMD_DUMP_ACTIONS` (`CMD_GET_FOCUSED` alias) | `0x33` | `client.dump_actions()` | `PerceptionEngine.handleDumpActions` | Implemented |
+| `CMD_GET_SCREEN_STATE` | `0x36` | `client.get_screen_state()` | `PerceptionEngine.handleGetScreenState` | Implemented |
+| `CMD_GET_SCREEN_SIZE` | `0x37` | `client.get_screen_size()` | `PerceptionEngine.handleGetScreenSize` | Implemented |
+| `CMD_FIND_NODE_COMPOUND` | `0x39` | `client.find_node_compound()` | `PerceptionEngine.handleFindNodeCompound` | Implemented |
+| `CMD_LAUNCH_APP` | `0x43` | `client.launch_app()` | `ExecutionEngine.handleLaunchApp` | Implemented |
+| `CMD_STOP_APP` | `0x44` | `client.stop_app()` | `ExecutionEngine.handleStopApp` | Implemented |
+| `CMD_LIST_APPS` | `0x48` | `client.list_apps()` | `ExecutionEngine.handleListApps` | Implemented |
+| `CMD_SCREENSHOT` | `0x60` | `client.screenshot()` | `PerceptionEngine.handleScreenshot` | Implemented |
+| `CMD_IMG_REQ` | `0x61` | `client.request_screenshot()` | `Main -> PerceptionEngine.handleFragmentedScreenshot` | Implemented |
+
+Notes:
+- This matrix is intentionally conservative: only mark commands as Implemented when both Python client and Android runtime are wired.
+- Keep this section synchronized when adding/removing command handlers.
