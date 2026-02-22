@@ -715,6 +715,36 @@ NAV|540|80|搜索|jump|search
         self.pending_keys.add(key)
         return True
 
+    def _node_target_suffix(self, from_page: str, node_name: str, locator: Optional[NodeLocator]) -> str:
+        """
+        Build a stable per-node suffix to avoid aggressive page merge.
+        """
+        locator_key = locator.unique_key() if locator else "unknown"
+        seed = f"{from_page}|{node_name}|{locator_key}"
+        return hashlib.md5(seed.encode("utf-8")).hexdigest()[:8]
+
+    def _unique_target_page_id(
+        self,
+        base_page_id: str,
+        from_page: str,
+        node_name: str,
+        locator: Optional[NodeLocator],
+    ) -> str:
+        """
+        Default strategy: each node click maps to a unique target page ID.
+        """
+        base = (base_page_id or "unknown").strip().lower() or "unknown"
+        suffix = self._node_target_suffix(from_page or "unknown", node_name or "node", locator)
+        return f"{base}__n_{suffix}"
+
+    def _clone_page_with_id(self, page: PageInfo, page_id: str) -> PageInfo:
+        return PageInfo(
+            page_id=page_id,
+            name=page.name,
+            description=page.description,
+            features=list(page.features or []),
+        )
+
     def get_realtime_state(self) -> dict:
         with self._realtime_lock:
             state = self._realtime.copy()
@@ -1953,12 +1983,23 @@ NAV|540|80|搜索|jump|search
 
                 # 确定目标页面ID
                 if new_page:
-                    target_page_id = new_page.page_id
-                    self.nav_map.add_page(new_page)
-                    self.log("info", f"  [VLM完成] {task.node_name} → {new_page.name} ({target_page_id})")
+                    target_page_id = self._unique_target_page_id(
+                        new_page.page_id,
+                        task.from_page,
+                        task.node_name,
+                        task.locator,
+                    )
+                    self.nav_map.add_page(self._clone_page_with_id(new_page, target_page_id))
+                    self.log("info", f"  [VLM???] {task.node_name} ??{new_page.name} ({target_page_id})")
                 else:
-                    target_page_id = task.expected_target or "unknown"
-                    self.log("info", f"  [VLM完成] {task.node_name} → {target_page_id}")
+                    fallback_page = task.expected_target or "unknown"
+                    target_page_id = self._unique_target_page_id(
+                        fallback_page,
+                        task.from_page,
+                        task.node_name,
+                        task.locator,
+                    )
+                    self.log("info", f"  [VLM???] {task.node_name} ??{target_page_id}")
 
                 self.log("info", f"    发现 {len(new_nav_nodes)} 个导航节点, {len(new_popups)} 个弹窗")
 
@@ -2401,12 +2442,23 @@ NAV|540|80|搜索|jump|search
 
                     # 确定目标页面ID
                     if new_page:
-                        target_page_id = new_page.page_id
-                        self.nav_map.add_page(new_page)
-                        self.log("info", f"  → {new_page.name} ({new_page.page_id})")
+                        target_page_id = self._unique_target_page_id(
+                            new_page.page_id,
+                            task.from_page,
+                            task.name,
+                            task.locator,
+                        )
+                        self.nav_map.add_page(self._clone_page_with_id(new_page, target_page_id))
+                        self.log("info", f"  ??{new_page.name} ({target_page_id})")
                     else:
-                        target_page_id = task.target_page or "unknown"
-                        self.log("info", f"  → {target_page_id}")
+                        fallback_page = task.target_page or "unknown"
+                        target_page_id = self._unique_target_page_id(
+                            fallback_page,
+                            task.from_page,
+                            task.name,
+                            task.locator,
+                        )
+                        self.log("info", f"  ??{target_page_id}")
 
                     self.log("info", f"    发现 {len(new_nav_nodes)} 个导航节点")
 
