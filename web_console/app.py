@@ -170,6 +170,14 @@ def _get_connection(connection_id: Optional[str] = None, require: bool = True) -
     return None
 
 
+def _require_client_response():
+    """Return a Flask error response when no active client is available."""
+    _sync_connection_info()
+    if client:
+        return None
+    return jsonify({'success': False, 'message': 'device not connected'}), 400
+
+
 def _disconnect_connection(connection_id: Optional[str] = None) -> None:
     global CURRENT_CONNECTION_ID
     with CONNECTIONS_LOCK:
@@ -973,8 +981,9 @@ def connections_disconnect(connection_id):
 @app.route('/api/command/handshake', methods=['POST'])
 def cmd_handshake():
     """发送握手命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         response = client.handshake()
@@ -992,8 +1001,9 @@ def cmd_handshake():
 @app.route('/api/command/heartbeat', methods=['POST'])
 def cmd_heartbeat():
     """发送 HEARTBEAT 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         response = client.heartbeat()
@@ -1016,8 +1026,9 @@ def cmd_heartbeat():
 @app.route('/api/command/tap', methods=['POST'])
 def cmd_tap():
     """发送 TAP 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     x = data.get('x', 500)
@@ -1040,8 +1051,9 @@ def cmd_tap():
 @app.route('/api/command/swipe', methods=['POST'])
 def cmd_swipe():
     """发送 SWIPE 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     x1 = data.get('x1', 500)
@@ -1067,8 +1079,9 @@ def cmd_swipe():
 @app.route('/api/command/long_press', methods=['POST'])
 def cmd_long_press():
     """发送 LONG_PRESS 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     x = data.get('x', 500)
@@ -1092,8 +1105,9 @@ def cmd_long_press():
 @app.route('/api/command/unlock', methods=['POST'])
 def cmd_unlock():
     """发送 UNLOCK 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         success = client.unlock()
@@ -1112,8 +1126,9 @@ def cmd_unlock():
 @app.route('/api/command/input_text', methods=['POST'])
 def cmd_input_text():
     """发送 INPUT_TEXT 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     text = data.get('text', 'Hello LXB')
@@ -1141,8 +1156,9 @@ def cmd_input_text():
 @app.route('/api/command/key_event', methods=['POST'])
 def cmd_key_event():
     """发送 KEY_EVENT 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     keycode = data.get('keycode', KEY_BACK)
@@ -1179,8 +1195,9 @@ def cmd_key_event():
 @app.route('/api/command/get_activity', methods=['POST'])
 def cmd_get_activity():
     """发送 GET_ACTIVITY 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         success, package_name, activity_name = client.get_activity()
@@ -1199,8 +1216,9 @@ def cmd_get_activity():
 @app.route('/api/command/get_screen_state', methods=['POST'])
 def cmd_get_screen_state():
     """发送 GET_SCREEN_STATE 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         success, state = client.get_screen_state()
@@ -1220,8 +1238,9 @@ def cmd_get_screen_state():
 @app.route('/api/command/get_screen_size', methods=['POST'])
 def cmd_get_screen_size():
     """发送 GET_SCREEN_SIZE 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         success, width, height, density = client.get_screen_size()
@@ -1241,8 +1260,9 @@ def cmd_get_screen_size():
 @app.route('/api/command/touch_mode', methods=['POST'])
 def cmd_touch_mode():
     """Set touch execution mode on Android side."""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
     try:
         data = request.json or {}
         mode = str(data.get('mode') or 'shell_first').strip()
@@ -1260,8 +1280,9 @@ def cmd_touch_mode():
 @app.route('/api/command/find_node', methods=['POST'])
 def cmd_find_node():
     """发送 FIND_NODE 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     query = data.get('query', '')
@@ -1290,8 +1311,9 @@ def cmd_find_node():
 @app.route('/api/command/dump_hierarchy', methods=['POST'])
 def cmd_dump_hierarchy():
     """发送 DUMP_HIERARCHY 命令，获取完整 UI 层级结构"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     max_depth = data.get('max_depth', 0)  # 0 = 无限制
@@ -1325,8 +1347,9 @@ def cmd_dump_hierarchy():
 @app.route('/api/command/dump_actions', methods=['POST'])
 def cmd_dump_actions():
     """发送 DUMP_ACTIONS 命令，获取可交互节点 (用于路径规划)"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         actions = client.dump_actions()
@@ -1363,8 +1386,9 @@ def cmd_dump_actions():
 @app.route('/api/command/launch_app', methods=['POST'])
 def cmd_launch_app():
     """发送 LAUNCH_APP 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     package_name = data.get('package', '')
@@ -1386,8 +1410,9 @@ def cmd_launch_app():
 @app.route('/api/command/stop_app', methods=['POST'])
 def cmd_stop_app():
     """发送 STOP_APP 命令"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json
     package_name = data.get('package', '')
@@ -1408,8 +1433,9 @@ def cmd_stop_app():
 @app.route('/api/command/list_apps', methods=['POST'])
 def cmd_list_apps():
     """?????????"""
-    if not client:
-        return jsonify({'success': False, 'message': '???'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     data = request.json or {}
     filter_type = data.get('filter', 'user')  # user / system / all
@@ -1438,8 +1464,9 @@ def cmd_list_apps():
 @app.route('/api/command/screenshot', methods=['POST'])
 def cmd_screenshot():
     """发送 SCREENSHOT 命令 (使用分片传输)"""
-    if not client:
-        return jsonify({'success': False, 'message': '未连接'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     try:
         # 使用分片传输方式获取截图
@@ -1525,8 +1552,9 @@ def explore_start():
     """启动应用探索 (v2 VLM+XML 融合)"""
     global client, explorer_instance, exploration_result, exploration_status
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if exploration_status['running']:
         return jsonify({'success': False, 'message': '探索正在进行中'}), 400
@@ -1754,8 +1782,9 @@ def explore_v3_start():
     """启动 v3 语义探索"""
     global client, explorer_instance, exploration_result, exploration_status
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if exploration_status['running']:
         return jsonify({'success': False, 'message': '探索正在进行中'}), 400
@@ -2048,8 +2077,9 @@ def explore_som_start():
     """启动 SoM 探索（推荐）"""
     global client, explorer_instance, exploration_result, exploration_status
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if exploration_status['running']:
         return jsonify({'success': False, 'message': '探索正在进行中'}), 400
@@ -2144,8 +2174,9 @@ def explore_coord_start():
     """启动坐标驱动探索 (v4 推荐)"""
     global client, explorer_instance, exploration_result, exploration_status
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if exploration_status['running']:
         return jsonify({'success': False, 'message': '探索正在进行中'}), 400
@@ -2230,8 +2261,9 @@ def explore_node_start():
     """启动 Node 驱动探索 (v5 推荐)"""
     global client, explorer_instance, exploration_result, exploration_status
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if exploration_status['running']:
         return jsonify({'success': False, 'message': '探索正在进行中'}), 400
@@ -3180,8 +3212,9 @@ def debug_som_annotate():
     """调试：获取 SoM 标注截图"""
     global client
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if not VLM_AVAILABLE:
         return jsonify({'success': False, 'message': 'VLM 模块不可用'}), 400
@@ -3549,8 +3582,9 @@ def debug_vlm_test():
     """测试 VLM 推理"""
     global client
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if not VLM_AVAILABLE:
         return jsonify({'success': False, 'message': 'VLM 模块不可用'}), 400
@@ -3602,8 +3636,9 @@ def debug_analyze_page():
     """分析当前页面 (VLM + XML 融合)"""
     global client
 
-    if not client:
-        return jsonify({'success': False, 'message': '未连接设备'}), 400
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
 
     if not VLM_AVAILABLE:
         return jsonify({'success': False, 'message': 'VLM 模块不可用'}), 400
