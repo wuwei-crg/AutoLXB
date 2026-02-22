@@ -144,6 +144,7 @@ cython_debug/
 docs_dev/
 
 # Test output files
+tests/
 tests/screenshot_test.jpg
 tests/screenshot_*.jpg
 tests/screenshot_*.png
