@@ -5,6 +5,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayDeque;
 import java.util.List;
 
 /**
@@ -1152,7 +1153,7 @@ public class UiAutomationWrapper {
     /**
      * 设置剪贴板内容
      */
-    public void setClipboard(String text) {
+    public boolean setClipboard(String text) {
         try {
             Class<?> serviceManager = Class.forName("android.os.ServiceManager");
             Method getService = serviceManager.getMethod("getService", String.class);
@@ -1206,15 +1207,16 @@ public class UiAutomationWrapper {
 
             if (success) {
                 System.out.println(TAG + " setClipboard: " + text.length() + " chars");
+                return true;
             } else {
                 // 后备方案：使用 am broadcast
-                setClipboardViaShell(text);
+                return setClipboardViaShell(text);
             }
 
         } catch (Exception e) {
             System.err.println(TAG + " setClipboard failed: " + e.getMessage());
             // 后备方案
-            setClipboardViaShell(text);
+            return setClipboardViaShell(text);
         }
     }
 
@@ -1266,10 +1268,10 @@ public class UiAutomationWrapper {
     /**
      * 执行粘贴 (Ctrl+V)
      */
-    public void paste() {
+    public boolean paste() {
         // 优先尝试 UiAutomation 方式 (Ctrl+V)
         if (injectKeyEvent(KEYCODE_V, 2, META_CTRL_ON)) {
-            return;
+            return true;
         }
 
         // 后备方案：使用 KEYCODE_PASTE (279)
@@ -1278,7 +1280,7 @@ public class UiAutomationWrapper {
             int exitCode = process.waitFor();
             if (exitCode == 0) {
                 System.out.println(TAG + " Paste: OK (KEYCODE_PASTE)");
-                return;
+                return true;
             }
         } catch (Exception e) {
             System.err.println(TAG + " KEYCODE_PASTE failed: " + e.getMessage());
@@ -1286,6 +1288,135 @@ public class UiAutomationWrapper {
 
         // 最后备方案：使用 input text 直接输入（需要从剪贴板获取）
         System.err.println(TAG + " Paste failed - all methods exhausted");
+        return false;
+    }
+
+    /**
+     * 使用系统剪贴板 + 粘贴进行输入，适用于中文/emoji 等复杂字符。
+     */
+    public boolean inputTextByClipboard(String text) {
+        if (text == null) {
+            text = "";
+        }
+        boolean clipOk = setClipboard(text);
+        if (!clipOk) {
+            System.err.println(TAG + " inputTextByClipboard: setClipboard failed");
+            return false;
+        }
+        return paste();
+    }
+
+    /**
+     * 使用 Accessibility ACTION_SET_TEXT 直接设置焦点输入框文本。
+     * 该方式对中文/emoji 等复杂字符通常更稳定。
+     */
+    public boolean setFocusedText(String text) {
+        if (text == null) {
+            text = "";
+        }
+        try {
+            Object root = getRootNode();
+            if (root == null) {
+                System.err.println(TAG + " setFocusedText: root is null");
+                return false;
+            }
+
+            Class<?> nodeClass = Class.forName("android.view.accessibility.AccessibilityNodeInfo");
+            Class<?> bundleClass = Class.forName("android.os.Bundle");
+
+            Method findFocus = null;
+            Method performAction = nodeClass.getMethod("performAction", int.class, bundleClass);
+            Method getChildCount = nodeClass.getMethod("getChildCount");
+            Method getChild = nodeClass.getMethod("getChild", int.class);
+            Method isFocused = nodeClass.getMethod("isFocused");
+            Method isEditable = null;
+
+            try {
+                findFocus = nodeClass.getMethod("findFocus", int.class);
+            } catch (Exception ignored) {}
+            try {
+                isEditable = nodeClass.getMethod("isEditable");
+            } catch (Exception ignored) {}
+
+            int actionSetText = nodeClass.getField("ACTION_SET_TEXT").getInt(null);
+            String argSetText = (String) nodeClass
+                    .getField("ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE")
+                    .get(null);
+
+            // First try explicit input focus.
+            if (findFocus != null) {
+                try {
+                    int focusInput = nodeClass.getField("FOCUS_INPUT").getInt(null);
+                    Object focused = findFocus.invoke(root, focusInput);
+                    if (_performSetText(focused, text, actionSetText, argSetText, bundleClass, performAction)) {
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // Fallback BFS: focused/editable node.
+            ArrayDeque<Object> queue = new ArrayDeque<>();
+            queue.add(root);
+            while (!queue.isEmpty()) {
+                Object node = queue.poll();
+                if (node == null) continue;
+
+                boolean focused = false;
+                boolean editable = false;
+                try {
+                    focused = (Boolean) isFocused.invoke(node);
+                } catch (Exception ignored) {}
+                if (isEditable != null) {
+                    try {
+                        editable = (Boolean) isEditable.invoke(node);
+                    } catch (Exception ignored) {}
+                }
+                if (focused || editable) {
+                    if (_performSetText(node, text, actionSetText, argSetText, bundleClass, performAction)) {
+                        return true;
+                    }
+                }
+
+                int childCount = 0;
+                try {
+                    childCount = (Integer) getChildCount.invoke(node);
+                } catch (Exception ignored) {}
+                for (int i = 0; i < childCount; i++) {
+                    try {
+                        Object child = getChild.invoke(node, i);
+                        if (child != null) queue.add(child);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            System.err.println(TAG + " setFocusedText: no editable/focused node accepted set-text");
+            return false;
+        } catch (Exception e) {
+            System.err.println(TAG + " setFocusedText failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean _performSetText(
+            Object node,
+            String text,
+            int actionSetText,
+            String argSetText,
+            Class<?> bundleClass,
+            Method performAction
+    ) {
+        if (node == null) return false;
+        try {
+            Object bundle = bundleClass.getConstructor().newInstance();
+            Method putCharSequence = bundleClass.getMethod("putCharSequence", String.class, CharSequence.class);
+            putCharSequence.invoke(bundle, argSetText, text);
+            boolean ok = (Boolean) performAction.invoke(node, actionSetText, bundle);
+            if (ok) {
+                System.out.println(TAG + " setFocusedText: OK (" + text.length() + " chars)");
+                return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     /**

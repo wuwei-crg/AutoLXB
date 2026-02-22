@@ -93,6 +93,11 @@ dependencies {
 
 // 显式声明 assets 合并任务依赖 lxb-core:jar，避免 Gradle 任务顺序不确定
 afterEvaluate {
+    // Generate lxb-core-dex.jar before app build/install.
+    tasks.matching { it.name == "preBuild" || it.name == "installDebug" }
+        .configureEach { dependsOn(":lxb-core:buildDex") }
+
+    // Asset merge must wait for dex jar generation as well.
     tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-        .configureEach { dependsOn(":lxb-core:jar") }
+        .configureEach { dependsOn(":lxb-core:buildDex") }
 }

@@ -458,6 +458,7 @@ COMPOUND_OP_ENDS_WITH = 3           # Ends with suffix
 INPUT_METHOD_ADB = 0        # ADB input method (most reliable)
 INPUT_METHOD_CLIPBOARD = 1  # Clipboard paste (fastest)
 INPUT_METHOD_ACCESSIBILITY = 2  # Accessibility service (best compatibility)
+INPUT_METHOD_AUTO = 255     # Client-side auto strategy (not sent to device)
 
 # INPUT_TEXT Flags (bit field)
 INPUT_FLAG_CLEAR_FIRST = 0x01       # Clear existing text before input

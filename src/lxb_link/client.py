@@ -60,6 +60,7 @@ from .constants import (
     INPUT_METHOD_ADB,
     INPUT_METHOD_CLIPBOARD,
     INPUT_METHOD_ACCESSIBILITY,
+    INPUT_METHOD_AUTO,
     # Hierarchy formats
     HIERARCHY_FORMAT_XML,
     HIERARCHY_FORMAT_JSON,
@@ -714,7 +715,7 @@ class LXBLinkClient:
     def input_text(
         self,
         text: str,
-        method: int = INPUT_METHOD_CLIPBOARD,
+        method: int = INPUT_METHOD_AUTO,
         clear_first: bool = False,
         press_enter: bool = False,
         hide_keyboard: bool = False,
@@ -761,41 +762,70 @@ class LXBLinkClient:
         """
         self._ensure_connected()
 
-        logger.info(f"Sending INPUT_TEXT command: text='{text[:20]}...', method={method}")
+        def _send_once(use_method: int) -> tuple[int, int]:
+            # 构建 payload: method[1B] + flags[1B] + target_x[2B] + target_y[2B] + delay[2B] + text_len[2B] + text
+            import struct
+            flags = 0
+            if clear_first:
+                flags |= 0x01
+            if press_enter:
+                flags |= 0x02
+            if hide_keyboard:
+                flags |= 0x04
 
-        # 构建 payload: method[1B] + flags[1B] + target_x[2B] + target_y[2B] + delay[2B] + text_len[2B] + text
-        import struct
-        flags = 0
-        if clear_first:
-            flags |= 0x01
-        if press_enter:
-            flags |= 0x02
-        if hide_keyboard:
-            flags |= 0x04
+            text_bytes = text.encode('utf-8')
+            payload = struct.pack(
+                '>BBHHHH',
+                use_method,
+                flags,
+                target_x,
+                target_y,
+                delay_ms,
+                len(text_bytes),
+            ) + text_bytes
 
-        text_bytes = text.encode('utf-8')
-        payload = struct.pack('>BBHHHH',
-            method,
-            flags,
-            target_x,
-            target_y,
-            delay_ms,
-            len(text_bytes)
-        ) + text_bytes
+            response = self._transport.send_reliable(CMD_INPUT_TEXT, payload)
+            if len(response) >= 2:
+                return int(response[0]), int(response[1])
+            return 0, int(use_method)
 
-        # 使用 send_reliable 发送
-        response = self._transport.send_reliable(CMD_INPUT_TEXT, payload)
+        def _contains_non_ascii(s: str) -> bool:
+            return any(ord(ch) > 127 for ch in (s or ""))
 
-        # 解析响应: status[1B] + actual_method[1B]
-        if len(response) >= 2:
-            status = response[0]
-            actual_method = response[1]
+        if method == INPUT_METHOD_AUTO:
+            if _contains_non_ascii(text):
+                candidates = [INPUT_METHOD_CLIPBOARD, INPUT_METHOD_ADB]
+            else:
+                candidates = [INPUT_METHOD_ADB, INPUT_METHOD_CLIPBOARD]
         else:
-            status = 0
-            actual_method = method
+            candidates = [int(method)]
+            # Keep one fallback to improve robustness.
+            if int(method) != INPUT_METHOD_ADB:
+                candidates.append(INPUT_METHOD_ADB)
 
-        logger.info(f"INPUT_TEXT successful: status={status}, actual_method={actual_method}")
-        return status, actual_method
+        seen = set()
+        ordered_methods = []
+        for m in candidates:
+            if m in seen:
+                continue
+            seen.add(m)
+            ordered_methods.append(m)
+
+        logger.info(
+            f"Sending INPUT_TEXT command: text='{text[:20]}...', method={method}, tries={ordered_methods}"
+        )
+
+        last_status, last_actual = 0, ordered_methods[0] if ordered_methods else INPUT_METHOD_ADB
+        for idx, m in enumerate(ordered_methods):
+            status, actual = _send_once(m)
+            last_status, last_actual = status, actual
+            if status == 1:
+                logger.info(f"INPUT_TEXT successful: status={status}, actual_method={actual}, try={idx + 1}")
+                return status, actual
+            logger.warning(f"INPUT_TEXT failed: status={status}, method={m}, actual={actual}, try={idx + 1}")
+
+        logger.info(f"INPUT_TEXT final failure: status={last_status}, actual_method={last_actual}")
+        return last_status, last_actual
 
     def key_event(
         self,

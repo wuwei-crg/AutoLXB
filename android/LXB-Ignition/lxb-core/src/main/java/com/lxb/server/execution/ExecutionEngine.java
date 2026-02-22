@@ -26,6 +26,9 @@ public class ExecutionEngine {
 
     // 系统层依赖
     private UiAutomationWrapper uiAutomation;
+    private static final int INPUT_METHOD_ADB = 0;
+    private static final int INPUT_METHOD_CLIPBOARD = 1;
+    private static final int INPUT_METHOD_ACCESSIBILITY = 2;
 
     /**
      * 设置 UiAutomation 依赖
@@ -213,12 +216,54 @@ public class ExecutionEngine {
             } catch (InterruptedException ignored) {}
         }
 
-        // 输入文本：直接使用 input text 命令（最可靠）
-        // 剪贴板方式在 Android 高版本上有权限问题，暂时跳过
-        int actualMethod = 0;  // 始终使用 ADB input text 方式
-        boolean success = uiAutomation.inputTextDirect(text);
+        int actualMethod = method;
+        boolean success = false;
 
-        System.out.println(TAG + " INPUT_TEXT via inputTextDirect: " + (success ? "OK" : "FAIL"));
+        // 优先按客户端指定 method 执行；失败后自动回退。
+        if (method == INPUT_METHOD_CLIPBOARD) {
+            // Prefer ACTION_SET_TEXT first for complex text (Chinese/emoji), then fallback.
+            success = uiAutomation.setFocusedText(text);
+            actualMethod = INPUT_METHOD_ACCESSIBILITY;
+            if (!success) {
+                success = uiAutomation.inputTextByClipboard(text);
+                actualMethod = INPUT_METHOD_CLIPBOARD;
+            }
+            if (!success) {
+                success = uiAutomation.inputTextDirect(text);
+                actualMethod = INPUT_METHOD_ADB;
+            }
+        } else if (method == INPUT_METHOD_ADB) {
+            success = uiAutomation.inputTextDirect(text);
+            actualMethod = INPUT_METHOD_ADB;
+            if (!success) {
+                success = uiAutomation.setFocusedText(text);
+                actualMethod = INPUT_METHOD_ACCESSIBILITY;
+            }
+        } else if (method == INPUT_METHOD_ACCESSIBILITY) {
+            success = uiAutomation.setFocusedText(text);
+            actualMethod = INPUT_METHOD_ACCESSIBILITY;
+            if (!success) {
+                success = uiAutomation.inputTextByClipboard(text);
+                actualMethod = INPUT_METHOD_CLIPBOARD;
+            }
+            if (!success) {
+                success = uiAutomation.inputTextDirect(text);
+                actualMethod = INPUT_METHOD_ADB;
+            }
+        } else {
+            success = uiAutomation.setFocusedText(text);
+            actualMethod = INPUT_METHOD_ACCESSIBILITY;
+            if (!success) {
+                success = uiAutomation.inputTextByClipboard(text);
+                actualMethod = INPUT_METHOD_CLIPBOARD;
+            }
+            if (!success) {
+                success = uiAutomation.inputTextDirect(text);
+                actualMethod = INPUT_METHOD_ADB;
+            }
+        }
+
+        System.out.println(TAG + " INPUT_TEXT result: " + (success ? "OK" : "FAIL") + " method=" + actualMethod);
 
         // 按回车
         if (pressEnter) {

@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LXBIgnitionApp(viewModel: MainViewModel = viewModel()) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("🚀 控制", "⚙️ 配置")
+    val tabs = listOf("🚀 控制", "⚙️ 配置", "📜 日志")
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("LXB Ignition") }) },
@@ -83,6 +83,7 @@ fun LXBIgnitionApp(viewModel: MainViewModel = viewModel()) {
         when (selectedTab) {
             0 -> ControlTab(viewModel, Modifier.padding(innerPadding))
             1 -> ConfigTab(viewModel, Modifier.padding(innerPadding))
+            2 -> LogsTab(viewModel, Modifier.padding(innerPadding))
         }
     }
 }
@@ -93,7 +94,6 @@ fun LXBIgnitionApp(viewModel: MainViewModel = viewModel()) {
 fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
-    val logLines by viewModel.logLines.collectAsState()
     val requirement by viewModel.requirement.collectAsState()
     val sendResult by viewModel.sendResult.collectAsState()
 
@@ -148,8 +148,6 @@ fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        // 日志面板
-        LogPanel(logLines = logLines, modifier = Modifier.weight(1f))
     }
 }
 
@@ -315,5 +313,18 @@ fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         ) {
             Text("保存配置")
         }
+    }
+}
+
+@Composable
+fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val logLines by viewModel.logLines.collectAsState()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        LogPanel(logLines = logLines, modifier = Modifier.fillMaxSize())
     }
 }

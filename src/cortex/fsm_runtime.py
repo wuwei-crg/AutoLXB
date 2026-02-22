@@ -656,7 +656,12 @@ class CortexFSMEngine:
                 return True
             if cmd.op == "INPUT":
                 self._log(context, "exec", "input_start", text=cmd.args[0])
-                self.client.input_text(cmd.args[0])
+                status, actual_method = self.client.input_text(cmd.args[0])
+                self._log(context, "exec", "input_result", status=int(status), method=int(actual_method))
+                if int(status) <= 0:
+                    context.error = f"action_exec_error:INPUT:status={status}"
+                    self._log(context, "fsm", "action_error", op=cmd.op, error=f"input_failed_status_{status}")
+                    return False
                 if self.fsm_config.action_interval_sec > 0:
                     time.sleep(self.fsm_config.action_interval_sec)
                 self._log(context, "exec", "input_done")
