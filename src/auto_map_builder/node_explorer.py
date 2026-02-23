@@ -18,6 +18,7 @@ import time
 import base64
 import hashlib
 import threading
+import re
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from dataclasses import dataclass, field
@@ -511,16 +512,22 @@ class NodeExplorer:
 
     _PROMPT_ANALYZE = '''分析这个 Android App 页面截图。
 
-**屏幕分辨率: {width} x {height} 像素**
-
 ## 任务
-1. **首先判断**：当前页面是否是异常页面（人机验证、风控拦截等）
-2. **其次判断**：当前页面是否有**遮挡型弹窗**需要关闭
-3. 识别当前页面类型，给出页面ID
-4. 描述页面功能
-5. 找出**页面跳转入口**和**输入框**
+1. **异常检测**：判断当前页面是否为异常页面（人机验证、风控拦截、强制登录）。
+2. **弹窗处理**：判断是否有**遮挡型弹窗**（POPUP）需要关闭。
+3. **页面识别**：识别当前页面类型，给出页面ID。
+4. **导航提取**：找出页面中的**功能性跳转入口**。
+   - **核心要求**：严格区分“功能结构”与“内容实例”，**只保留前者，剔除后者**。
 
-## 输出格式
+## 思考与输出流程（必须严格按这三个部分输出）
+1. `<候选UI>`：列出视线范围内所有看起来可点击的区域（包含后续可能被剔除的内容项）。
+2. `<反思>`：**这是最关键的一步。** 对候选UI逐一进行“功能 vs 内容”的拷问：
+   - *这个入口是固定的功能入口（如搜索、购物车、消息），还是动态加载的内容（如某条具体的帖子、某件具体的商品）？*
+   - *如果是动态内容/列表项实例 -> **剔除**。*
+   - *如果是悬浮窗/小广告 -> **剔除**。*
+3. `<最终输出>`：输出清洗后的结果（供程序解析）。
+
+## 输出格式（仅 `<最终输出>` 会被程序解析）
 ```
 BLOCK|类型|描述
 POPUP|x|y|类型|描述
@@ -528,83 +535,97 @@ PAGE|页面ID|页面名称|功能描述|页面内功能列表
 NAV|x|y|节点名称|类型|目标页面ID
 ```
 
-## BLOCK 类型（异常/拦截页面，必须最先输出）
+---
+
+## 1. BLOCK 类型（优先级最高）
 如果检测到以下情况，输出 BLOCK 行，**不要输出 PAGE 和 NAV**：
-- `captcha`: 人机验证（滑块验证、图片验证、点选验证、拼图验证）
-- `risk_control`: 风控拦截（账号异常、操作频繁、安全验证）
-- `login_required`: 强制登录（必须登录才能继续）
-- `network_error`: 网络错误页面
-- `crash`: 应用崩溃/ANR 页面
+- `captcha`: 人机验证（滑块、拼图、点选、输入验证码）
+- `risk_control`: 风控拦截（账号异常、操作频繁）
+- `login_required`: 强制登录页面（全屏只有登录注册，无“跳过/随便看看”）
+- `network_error`: 网络错误/服务器崩溃
+- `crash`: 应用崩溃/ANR
 
-**识别特征**：
-- 滑块验证：有滑块、"向右滑动"、"拖动滑块"
-- 图片验证：有多张图片、"点击包含XX的图片"
-- 风控拦截：有"操作频繁"、"账号异常"、"安全验证"
-- 强制登录：整个页面只有登录入口，无法跳过
+## 2. POPUP 类型（遮挡型弹窗）
+**只识别**屏幕中央、遮挡主要内容、必须处理的弹窗。
+- **包括**：开屏广告(`splash_ad`)、版本更新(`update`)、青少年模式(`teen_mode`)、中央广告(`dialog`)、权限申请(`permission`)。
+- **忽略**：不影响操作的顶部/底部小横幅广告、悬浮球、小红点。
+- **坐标**：必须是**关闭/跳过/取消按钮**的位置。
 
-## POPUP 类型（只识别遮挡型弹窗！）
+## 3. NAV 类型（严格筛选逻辑）
+仅保留**APP骨架结构**，严格剔除**内容血肉**。
 
-**只识别以下弹窗**：
-- 在屏幕**中央**弹出的对话框/弹窗
-- **遮挡了主要内容**，必须关闭才能继续操作
-- 有明显的关闭按钮（×、关闭、跳过、取消等）
+**保留 (KEEP) - 输出为 NAV**：
+- `tab`: 底部/顶部导航栏（首页、逛逛、消息、我的）。
+- `jump`: 固定的功能入口（搜索框、扫一扫、设置、金刚区图标如“我的订单”“卡包”）。
+- `back`: 返回按钮。
+- `input`: 明确的功能性输入框（搜索框、登录框）。
 
-**严格忽略以下内容（不要输出 POPUP）**：
-- 屏幕边缘的小广告横幅（顶部/底部的条状广告）
-- 悬浮的小图标、小按钮
-- 不影响正常操作的角标、红点
-- 页面内嵌的广告卡片
+**剔除 (DROP) - 绝不输出**：
+- **Feed流内容**：具体的**帖子**、具体的**新闻**、具体的**视频**。
+  - *例如：贴吧的具体帖子标题、知乎的具体回答、抖音的具体视频画面。*
+- **列表项实例**：具体的**商品卡片**、具体的**商家**、具体的**歌曲**。
+  - *例如：淘宝推荐流里的“连衣裙”、外卖列表里的“麦当劳”。*
+- **具体用户**：除“我的”以外的其他用户头像/主页入口。
+- **操作按钮**：点赞、收藏、评论、转发、分享、排序、筛选。
 
-**弹窗类型**：
-- `splash_ad`: 开屏广告（全屏，有"跳过"倒计时）
-- `update`: 更新提示弹窗（中央弹出，有"暂不更新"）
-- `teen_mode`: 青少年模式弹窗（中央弹出，有"我知道了"）
-- `permission`: 权限请求弹窗（系统弹窗，有"拒绝"）
-- `rating`: 评价提示弹窗（中央弹出，有"以后再说"）
-- `dialog`: 其他中央弹出的对话框
+---
 
-**POPUP 坐标必须是关闭/跳过按钮的位置！**
-
-## 页面ID规则
-用小写英文，如：home, search, profile, settings, detail, list, login, chat, cart
-
-## NAV 类型
-- `tab`: 底部/顶部导航Tab
-- `jump`: 跳转入口（搜索、设置等）
-- `back`: 返回按钮
-- `input`: 输入框
-
-## 严格排除（不要输出为 NAV）
-- 页面内操作（排序、筛选、收藏、分享）
-- 列表项、卡片、商品
-
-## 示例1：人机验证页面
+## 示例1：社区应用（如贴吧/Reddit）
 ```
-BLOCK|captcha|滑块验证-向右滑动完成验证
+<候选UI>
+候选: 左上角返回, 顶部标题"弱智吧", 帖子"今天吃了顿好的", 帖子"求助这个怎么过", 底部Tab(首页,进吧,消息)
+</候选UI>
+<反思>
+- "弱智吧": 只是当前页面标题，非跳转入口 -> 剔除。
+- 帖子"今天吃了顿好的": 这是具体内容实例(Instance)，随着刷新会变 -> 剔除。
+- 帖子"求助...": 同上，内容实例 -> 剔除。
+- 返回键: 结构性导航 -> 保留。
+- 底部Tab: 全局导航 -> 保留。
+</反思>
+<最终输出>
+PAGE|forum_list|贴吧列表|帖子浏览|下拉刷新
+NAV|50|100|返回|back|prev
+NAV|100|2200|首页|tab|home
+NAV|500|2200|进吧|tab|forums
+NAV|900|2200|消息|tab|message
 ```
 
-## 示例2：有开屏广告（全屏遮挡）
+## 示例2：电商首页（如淘宝/京东）
 ```
-POPUP|980|120|splash_ad|开屏广告-跳过按钮
+<候选UI>
+候选: 搜索框, 扫一扫, 金刚区"充值中心", 推荐流"iPhone15", 推荐流"耐克运动鞋", 底部Tab
+</候选UI>
+<反思>
+- "iPhone15": 具体商品，属于内容 -> 剔除。
+- "耐克运动鞋": 具体商品，属于内容 -> 剔除。
+- "充值中心": 固定功能入口 -> 保留。
+- 搜索框: 通用功能 -> 保留。
+</反思>
+<最终输出>
+PAGE|home|首页|电商聚合页|搜索,功能入口
+NAV|540|100|搜索|input|search
+NAV|900|100|扫一扫|jump|scan
+NAV|150|400|充值中心|jump|recharge
+NAV|100|2200|首页|tab|home
+NAV|500|2200|购物车|tab|cart
+NAV|900|2200|我的|tab|profile
 ```
 
-## 示例3：有更新弹窗（中央弹出）
+## 示例3：有遮挡弹窗
 ```
-POPUP|540|1200|update|更新提示-以后再说按钮
-PAGE|home|首页|浏览推荐内容|下拉刷新,内容卡片
-NAV|{ex1_x}|{ex1_y}|首页|tab|home
-```
-
-## 示例4：正常页面（边缘有小广告但不输出 POPUP）
-```
-PAGE|home|首页|浏览推荐内容|下拉刷新,内容卡片,排序筛选
-NAV|{ex1_x}|{ex1_y}|首页|tab|home
-NAV|{ex2_x}|{ex2_y}|消息|tab|message
-NAV|{ex3_x}|{ex3_y}|我的|tab|profile
-NAV|540|80|搜索|jump|search
+<候选UI>
+候选: 更新弹窗-以后再说, 底部Tab
+</候选UI>
+<反思>
+检测到中央弹窗遮挡，优先输出POPUP，保留主要Tab作为备选。
+</反思>
+<最终输出>
+POPUP|540|1500|update|更新弹窗-以后再说
+PAGE|home|首页|首页内容|无
+NAV|100|2200|首页|tab|home
 ```
 
-现在分析：'''
+现在开始分析。'''
 
     def __init__(
         self,
@@ -999,28 +1020,32 @@ NAV|540|80|搜索|jump|search
         """
         回到首页
 
-        策略：先尝试 Back 键，如果退出了 App 再 launch
-        """
-        # 检查当前是否在目标 App
-        try:
-            ok, current_pkg, _ = self.client.get_activity()
-            if ok and current_pkg == package:
-                # 在目标 App 内，尝试用 Back 键回首页
-                for _ in range(5):
-                    self._back()
-                    ok, pkg, _ = self.client.get_activity()
-                    if not ok or pkg != package:
-                        # 退出了 App，重新 launch
-                        break
-                else:
-                    # Back 了 5 次还在 App 内，可能已经在首页了
-                    return
-        except:
-            pass
+        策略：固定三步重启流
+        1) HOME 回到系统桌面
+        2) stop 目标包
+        3) start 目标包
 
-        # launch App
-        self.client.launch_app(package, clear_task=True)
-        time.sleep(2)
+        每步之间固定间隔 1.5s，避免设备状态未稳定导致失败。
+        """
+        step_delay = 1.5
+        try:
+            self.log("debug", f"go_home: HOME -> STOP -> START ({package})")
+
+            # 1) HOME
+            self.client.key_event(3)  # KEY_HOME
+            time.sleep(step_delay)
+
+            # 2) STOP package
+            stopped = self.client.stop_app(package)
+            self.log("debug", f"go_home: stop_app({package})={stopped}")
+            time.sleep(step_delay)
+
+            # 3) START package
+            started = self.client.launch_app(package, clear_task=True)
+            self.log("debug", f"go_home: launch_app({package})={started}")
+            time.sleep(step_delay)
+        except Exception as e:
+            self.log("error", f"go_home 异常: {e}")
 
     def _is_nav_anchor(self, xml_node: Dict) -> bool:
         """
@@ -1357,7 +1382,13 @@ NAV|540|80|搜索|jump|search
         popups = []
         block_info = None
 
-        for line in response.strip().split("\n"):
+        # 仅解析 <最终输出> 块；若不存在则回退解析全量文本
+        content = response or ""
+        m = re.search(r"<最终输出>([\s\S]*?)</最终输出>", content, flags=re.IGNORECASE)
+        if m:
+            content = m.group(1)
+
+        for line in content.strip().split("\n"):
             line = line.strip()
             if not line or line.startswith("```"):
                 continue
