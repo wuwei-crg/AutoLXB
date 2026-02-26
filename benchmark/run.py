@@ -1,4 +1,4 @@
-"""
+﻿"""
 Benchmark main entry point.
 
 Usage:
@@ -6,9 +6,6 @@ Usage:
     python -m benchmark.run --methods lxb vlm_react
     python -m benchmark.run --tasks taobao_s1 taobao_s2
     python -m benchmark.run --trials 5
-
-Results are appended to RESULTS_FILE (JSONL) after each trial so that
-partial runs are preserved on interruption.
 """
 
 from __future__ import annotations
@@ -19,6 +16,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 
 # Ensure src/ is importable when running without pip install -e .
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -26,20 +24,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from lxb_link import LXBLinkClient
 
 from benchmark.config import (
-    DEVICE_IP, DEVICE_PORT, TRIALS_PER_TASK, RESULTS_FILE,
+    DEVICE_IP,
+    DEVICE_PORT,
+    TRIALS_PER_TASK,
+    RESULTS_DIR,
+    TEXT_LLM_MODEL,
+    VLM_MODEL,
 )
-from benchmark.tasks import TASKS, BenchmarkTask
+from benchmark.coord_calibration import calibrate_once
+from benchmark.tasks import TASKS
 from benchmark.runners.lxb_runner import LXBRunner
 from benchmark.runners.vlm_react import VLMReActRunner
 from benchmark.runners.text_react import TextReActRunner
 from benchmark.runners.vlm_semantic_map import VLMSemanticMapRunner
 
-# Registry of available runners
+
 RUNNERS = {
-    "lxb":               LXBRunner(),
-    "vlm_react":         VLMReActRunner(),
-    "text_react":        TextReActRunner(),
-    "vlm_semantic_map":  VLMSemanticMapRunner(),
+    "lxb": LXBRunner(),
+    "vlm_react": VLMReActRunner(),
+    "text_react": TextReActRunner(),
+    "vlm_semantic_map": VLMSemanticMapRunner(),
+}
+
+_METHOD_MODEL = {
+    "lxb": TEXT_LLM_MODEL,
+    "text_react": TEXT_LLM_MODEL,
+    "vlm_react": VLM_MODEL,
+    "vlm_semantic_map": VLM_MODEL,
 }
 
 
@@ -60,6 +71,8 @@ def run_benchmark(
     methods: list[str],
     task_ids: list[str] | None,
     trials: int,
+    run_id: str,
+    out_dir: str,
 ) -> None:
     selected_tasks = [t for t in TASKS if task_ids is None or t.task_id in task_ids]
     if not selected_tasks:
@@ -73,15 +86,29 @@ def run_benchmark(
 
     total = len(selected_tasks) * len(selected_runners) * trials
     done = 0
+    results_file = os.path.join(out_dir, f"{run_id}.jsonl")
 
-    print(f"\n{'='*60}")
-    print(f"  Benchmark: {len(selected_tasks)} tasks × {len(selected_runners)} methods × {trials} trials")
+    print(f"\n{'=' * 60}")
+    print(
+        f"  Benchmark: {len(selected_tasks)} tasks x "
+        f"{len(selected_runners)} methods x {trials} trials"
+    )
     print(f"  Device:    {DEVICE_IP}:{DEVICE_PORT}")
-    print(f"  Output:    {RESULTS_FILE}")
-    print(f"{'='*60}\n")
+    print(f"  Run ID:    {run_id}")
+    print(f"  Output:    {results_file}")
+    print(f"{'=' * 60}\n")
 
     client = _connect()
-    print(f"Connected to device.\n")
+    print("Connected to device.\n")
+
+    calib = calibrate_once(verbose=True)
+    if calib:
+        print(
+            f"[coord] calibration mode={calib.get('mode')} "
+            f"range=({calib.get('max_x')},{calib.get('max_y')})"
+        )
+    else:
+        print("[coord] calibration unavailable, fallback to passthrough mapping")
 
     try:
         for task in selected_tasks:
@@ -100,8 +127,10 @@ def run_benchmark(
                         result = runner.run(client, task, trial)
                     except Exception as exc:
                         from benchmark.runners.base import RunResult
+
                         result = RunResult(
                             method=method_name,
+                            model=_METHOD_MODEL.get(method_name, ""),
                             task_id=task.task_id,
                             trial=trial,
                             success=False,
@@ -109,7 +138,7 @@ def run_benchmark(
                         )
 
                     elapsed = time.perf_counter() - t_start
-                    status  = "✓" if result.success else "✗"
+                    status = "OK" if result.success else "FAIL"
                     print(
                         f"{status}  "
                         f"llm={result.llm_calls} vlm={result.vlm_calls} "
@@ -118,15 +147,14 @@ def run_benchmark(
                         f"cost=${result.estimated_cost:.5f}"
                     )
 
-                    _append_result(result, RESULTS_FILE)
+                    _append_result(result, results_file)
 
-                    # Brief pause between trials to let device settle
                     if trial < trials:
                         time.sleep(2.0)
 
     finally:
         client.disconnect()
-        print("\nDisconnected. Results saved to:", RESULTS_FILE)
+        print("\nDisconnected. Results saved to:", results_file)
 
 
 def main() -> None:
@@ -151,12 +179,26 @@ def main() -> None:
         default=TRIALS_PER_TASK,
         help=f"Trials per task (default: {TRIALS_PER_TASK})",
     )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Identifier for this run (default: timestamp)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=RESULTS_DIR,
+        help=f"Result output directory (default: {RESULTS_DIR})",
+    )
+
     args = parser.parse_args()
+    run_id = args.run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     run_benchmark(
         methods=args.methods,
         task_ids=args.tasks,
         trials=args.trials,
+        run_id=run_id,
+        out_dir=args.out_dir,
     )
 
 

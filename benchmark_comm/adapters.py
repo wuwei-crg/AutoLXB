@@ -83,8 +83,8 @@ class ADBTcpAdapter(BaseAdapter):
         self._adb_serial = adb_serial
 
     def connect(self) -> None:
-        # Quick health check: device online
-        self._run(["get-state"], timeout_sec=6.0)
+        # User may pre-connect adb manually; skip preflight to avoid extra check/connect step.
+        return
 
     def close(self) -> None:
         return
@@ -156,9 +156,15 @@ class TCPAdapter(BaseAdapter):
             self._sock.close()
             self._sock = None
 
+    def _reset_conn(self) -> None:
+        self.close()
+
     def execute(self, command: str, timeout_sec: float) -> CommandOutput:
         if not self._sock or not self._reader:
-            return CommandOutput(ok=False, payload_size=0, error="tcp_not_connected")
+            try:
+                self.connect()
+            except Exception as exc:
+                return CommandOutput(ok=False, payload_size=0, error=f"tcp_connect_failed:{exc}")
 
         req = {"cmd": command}
         try:
@@ -174,14 +180,29 @@ class TCPAdapter(BaseAdapter):
             err = str(resp.get("error", "")) if not ok else ""
             return CommandOutput(ok=ok, payload_size=payload_size, error=err)
         except Exception as exc:
+            # makefile() + socket timeout can poison subsequent readline() calls;
+            # reset and allow next retry to reconnect.
+            self._reset_conn()
             return CommandOutput(ok=False, payload_size=0, error=str(exc))
 
 
-def build_adapter(method: str, cfg: Any) -> BaseAdapter:
+def build_adapter(method: str, cfg: Any, endpoint: str = "lan") -> BaseAdapter:
+    endpoint = str(endpoint or "lan").lower()
+    if endpoint not in {"lan", "tailscale"}:
+        raise ValueError(f"unknown_endpoint:{endpoint}")
+
+    udp_ip = getattr(cfg, "UDP_DEVICE_IP", "127.0.0.1")
+    tcp_ip = getattr(cfg, "TCP_DEVICE_IP", "127.0.0.1")
+    adb_serial = getattr(cfg, "ADB_SERIAL", "")
+    if endpoint == "tailscale":
+        udp_ip = getattr(cfg, "UDP_TAILSCALE_HOST", udp_ip)
+        tcp_ip = getattr(cfg, "TCP_TAILSCALE_HOST", tcp_ip)
+        adb_serial = getattr(cfg, "ADB_TAILSCALE_SERIAL", adb_serial)
+
     if method == "udp":
-        return UDPAdapter(cfg.UDP_DEVICE_IP, int(cfg.UDP_DEVICE_PORT))
+        return UDPAdapter(udp_ip, int(cfg.UDP_DEVICE_PORT))
     if method == "adb_tcp":
-        return ADBTcpAdapter(cfg.ADB_BIN, cfg.ADB_SERIAL)
+        return ADBTcpAdapter(cfg.ADB_BIN, adb_serial)
     if method == "tcp":
-        return TCPAdapter(cfg.TCP_DEVICE_IP, int(cfg.TCP_DEVICE_PORT))
+        return TCPAdapter(tcp_ip, int(cfg.TCP_DEVICE_PORT))
     raise ValueError(f"unknown_method:{method}")

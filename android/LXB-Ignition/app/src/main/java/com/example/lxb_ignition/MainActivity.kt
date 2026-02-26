@@ -96,6 +96,8 @@ fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val statusMessage by viewModel.statusMessage.collectAsState()
     val requirement by viewModel.requirement.collectAsState()
     val sendResult by viewModel.sendResult.collectAsState()
+    val tcpMockPort by viewModel.tcpMockPort.collectAsState()
+    val tcpMockRunning by viewModel.tcpMockRunning.collectAsState()
 
     Column(
         modifier = modifier
@@ -113,6 +115,35 @@ fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             onStart = { viewModel.startServer() },
             onStop = { viewModel.stopServer() }
         )
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("TCP Mock Service", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = if (tcpMockRunning) "当前状态：运行中（端口 $tcpMockPort）" else "当前状态：未启动",
+                    fontSize = 12.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.startTcpMockService() },
+                        modifier = Modifier.weight(1f),
+                        enabled = !tcpMockRunning
+                    ) {
+                        Text("启动 TCP Mock")
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.stopTcpMockService() },
+                        modifier = Modifier.weight(1f),
+                        enabled = tcpMockRunning
+                    ) {
+                        Text("停止 TCP Mock")
+                    }
+                }
+            }
+        }
 
         // 发送需求
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -251,6 +282,7 @@ fun LogPanel(logLines: List<String>, modifier: Modifier = Modifier) {
 @Composable
 fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val lxbPort by viewModel.lxbPort.collectAsState()
+    val tcpMockPort by viewModel.tcpMockPort.collectAsState()
     val serverIp by viewModel.serverIp.collectAsState()
     val serverPort by viewModel.serverPort.collectAsState()
 
@@ -306,6 +338,16 @@ fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                 )
             }
         }
+
+        OutlinedTextField(
+            value = tcpMockPort,
+            onValueChange = { viewModel.tcpMockPort.value = it },
+            label = { Text("TCP Mock 端口") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            supportingText = { Text("用于 benchmark_comm 的 TCP mock 监听端口，默认 22345") }
+        )
 
         Button(
             onClick = { viewModel.saveConfig() },

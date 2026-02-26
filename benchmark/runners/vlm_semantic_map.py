@@ -28,6 +28,7 @@ from benchmark.config import (
     VLM_MODEL,
     VLM_STRUCTURED_LOG_FILE,
 )
+from benchmark.coord_calibration import get_coord_probe, map_point_by_probe
 from benchmark.runners.base import BaseRunner, InferenceCounter, LLMClient, RunResult
 from benchmark.tasks import BenchmarkTask
 from benchmark.verification import ExternalVisualVerifier
@@ -44,7 +45,6 @@ Strict type rules:
 _STEP_PROMPT = """\
 App: {app_name}
 Goal: {user_task}
-Screen: {screen_w}x{screen_h} pixels
 Step: {step}/{max_steps}
 History: {history}
 
@@ -61,11 +61,21 @@ or
 {{"done": false, "back": true, "reason": "<one sentence>"}}
 
 Type constraints (MANDATORY):
-- Valid: {{"done": false, "x": 512, "y": 830, "reason": "..."}}.
-- Invalid: x/y as strings, arrays, objects, or multi-candidate lists.
-- x and y must be REAL SCREEN PIXELS:
-  x in [0, {max_x}], y in [0, {max_y}].
-- Return exactly one action object and no prose."""
+- x and y must be JSON numbers (integers), not strings.
+- x and y must be scalar values, not arrays or objects.
+- If back=true, reason must be specific and goal-related (not just "back"/"返回").
+- Return exactly one action object and no prose.
+Examples:
+- Valid tap:
+  {{"done": false, "x": 420, "y": 1760, "reason": "点击底部我的标签进入个人中心"}}
+- Valid back:
+  {{"done": false, "back": true, "reason": "当前进入了无关详情页，返回上一层继续按语义地图导航"}}
+- Invalid:
+  {{"done": false, "x": "420", "y": 1760, "reason": "..."}}  // x is string
+- Invalid:
+  {{"done": false, "x": [420,430], "y": 1760, "reason": "..."}}  // multi-candidate
+- Invalid:
+  {{"done": false, "back": true, "reason": "返回"}}  // reason too generic"""
 
 def _parse_response(raw: str) -> dict[str, Any]:
     raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`")
@@ -155,9 +165,17 @@ class VLMSemanticMapRunner(BaseRunner):
         if raw_x is None or raw_y is None:
             return None, None, meta
 
-        x = cls._clamp(raw_x, 0, max(screen_w - 1, 0))
-        y = cls._clamp(raw_y, 0, max(screen_h - 1, 0))
-        meta.update({"coord_mode": "pixel_direct", "tap_x": x, "tap_y": y})
+        probe = get_coord_probe()
+        x, y, mode = map_point_by_probe(
+            probe=probe,
+            raw_x=float(raw_x),
+            raw_y=float(raw_y),
+            screen_w=screen_w,
+            screen_h=screen_h,
+        )
+        x = cls._clamp(x, 0, max(screen_w - 1, 0))
+        y = cls._clamp(y, 0, max(screen_h - 1, 0))
+        meta.update({"coord_mode": mode, "tap_x": x, "tap_y": y})
         return x, y, meta
 
     @staticmethod
@@ -210,10 +228,6 @@ class VLMSemanticMapRunner(BaseRunner):
             prompt = _STEP_PROMPT.format(
                 app_name=task.app_name,
                 user_task=task.user_task,
-                screen_w=screen_w,
-                screen_h=screen_h,
-                max_x=max(screen_w - 1, 0),
-                max_y=max(screen_h - 1, 0),
                 step=step,
                 max_steps=self.MAX_STEPS,
                 history=history_str,
@@ -253,8 +267,11 @@ class VLMSemanticMapRunner(BaseRunner):
                 continue
 
             if action.get("back"):
+                back_reason = str(action.get("reason", "")).strip()
+                if back_reason.lower() in {"back", "go back", "return"} or back_reason in {"返回", "后退", ""}:
+                    back_reason = "回退到上一级页面，重新寻找与目标更相关的导航入口"
                 client.key_event(KEY_BACK)
-                history.append(f"step{step}:BACK({action.get('reason', '')})")
+                history.append(f"step{step}:BACK({back_reason})")
                 steps = step
                 time.sleep(STEP_PAUSE_SEC)
                 verify_back = verifier.verify(client)
@@ -352,6 +369,7 @@ class VLMSemanticMapRunner(BaseRunner):
 
         return RunResult(
             method=self.METHOD_NAME,
+            model=VLM_MODEL,
             task_id=task.task_id,
             trial=trial,
             success=success,

@@ -25,6 +25,7 @@ from benchmark.config import (
     TEXT_LLM_MODEL, STEP_PAUSE_SEC, APP_LAUNCH_WAIT,
     VLM_STRUCTURED_LOG_FILE,
 )
+from benchmark.coord_calibration import get_coord_probe, map_point_by_probe
 from benchmark.runners.base import BaseRunner, InferenceCounter, LLMClient, RunResult
 from benchmark.tasks import BenchmarkTask
 from benchmark.verification import ExternalVisualVerifier
@@ -41,7 +42,6 @@ Strict type rules:
 _STEP_PROMPT = """\
 App: {app_name}
 Goal: {user_task}
-Screen: {screen_w}x{screen_h} pixels
 Step: {step}/{max_steps}
 History: {history}
 
@@ -58,11 +58,21 @@ Do NOT tap content cards, article titles, or product items.
   {{"done": false, "x": <x>, "y": <y>, "reason": "<one sentence>"}}
 
 Type constraints (MANDATORY):
-- Valid: {{"done": false, "x": 512, "y": 830, "reason": "..."}}.
-- Invalid: x/y as strings, arrays, objects, or multi-candidate lists.
-- x and y must be REAL SCREEN PIXELS:
-  x in [0, {max_x}], y in [0, {max_y}].
+- x and y must be JSON numbers (integers), not strings.
+- x and y must be scalar values, not arrays or objects.
+- If back=true, reason must be specific and goal-related (not just "back"/"返回").
 - Return exactly one action object and no prose.
+Examples:
+- Valid tap:
+  {{"done": false, "x": 512, "y": 830, "reason": "点击底部消息入口进入消息页"}}
+- Valid back:
+  {{"done": false, "back": true, "reason": "当前是详情页，回退到列表页继续寻找设置入口"}}
+- Invalid:
+  {{"done": false, "x": "512", "y": "830", "reason": "..."}}  // x/y are strings
+- Invalid:
+  {{"done": false, "x": [512], "y": 830, "reason": "..."}}    // x is array
+- Invalid:
+  {{"done": false, "back": true, "reason": "back"}}           // reason too generic
 
 Respond with ONLY the JSON object."""
 
@@ -128,9 +138,15 @@ class VLMReActRunner(BaseRunner):
         if raw_x is None or raw_y is None:
             return None, None, meta
 
-        x = cls._clamp(raw_x, 0, max(screen_w - 1, 0))
-        y = cls._clamp(raw_y, 0, max(screen_h - 1, 0))
-        meta["coord_mode"] = "pixel_direct"
+        probe = get_coord_probe()
+        x, y, mode = map_point_by_probe(
+            probe=probe,
+            raw_x=float(raw_x),
+            raw_y=float(raw_y),
+            screen_w=screen_w,
+            screen_h=screen_h,
+        )
+        meta["coord_mode"] = mode
 
         x = cls._clamp(x, 0, max(screen_w - 1, 0))
         y = cls._clamp(y, 0, max(screen_h - 1, 0))
@@ -213,10 +229,6 @@ class VLMReActRunner(BaseRunner):
             prompt = _STEP_PROMPT.format(
                 app_name=task.app_name,
                 user_task=task.user_task,
-                screen_w=screen_w,
-                screen_h=screen_h,
-                max_x=max(screen_w - 1, 0),
-                max_y=max(screen_h - 1, 0),
                 step=step,
                 max_steps=self.MAX_STEPS,
                 history=history_str,
@@ -293,8 +305,11 @@ class VLMReActRunner(BaseRunner):
                 continue
 
             if action.get("back"):
+                back_reason = str(action.get("reason", "")).strip()
+                if back_reason.lower() in {"back", "go back", "return"} or back_reason in {"返回", "后退", ""}:
+                    back_reason = "回退到上一级页面，重新寻找与目标更相关的导航入口"
                 client.key_event(KEY_BACK)
-                history.append(f"step{step}:BACK({action.get('reason','')})")
+                history.append(f"step{step}:BACK({back_reason})")
                 steps = step
                 self._append_structured_log({
                     "event": "step_action",
@@ -304,6 +319,7 @@ class VLMReActRunner(BaseRunner):
                     "step": step,
                     "decision": "back",
                     "action": action,
+                    "back_reason": back_reason,
                     "history": history[-5:],
                 })
                 time.sleep(STEP_PAUSE_SEC)
@@ -466,6 +482,7 @@ class VLMReActRunner(BaseRunner):
 
         return RunResult(
             method=self.METHOD_NAME,
+            model=VLM_MODEL,
             task_id=task.task_id,
             trial=trial,
             success=success,

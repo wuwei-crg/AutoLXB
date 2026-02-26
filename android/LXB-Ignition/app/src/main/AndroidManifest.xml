@@ -42,6 +42,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- TCP mock service for benchmark_comm (app-layer only, no lxb-core changes) -->
+        <service
+            android:name=".service.TcpMockService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Shizuku Provider（必须，Shizuku 通过此 provider 注入 binder） -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from benchmark.config import VLM_API_KEY, VLM_BASE_URL, VLM_MODEL
+from benchmark.config import VERIFY_API_KEY, VERIFY_BASE_URL, VERIFY_MODEL
 from benchmark.runners.base import InferenceCounter, LLMClient
 from benchmark.tasks import BenchmarkTask
 
@@ -33,9 +33,9 @@ class ExternalVisualVerifier:
     def __init__(self, task: BenchmarkTask) -> None:
         self.task = task
         self.vlm = LLMClient(
-            base_url=VLM_BASE_URL,
-            api_key=VLM_API_KEY,
-            model=VLM_MODEL,
+            base_url=VERIFY_BASE_URL,
+            api_key=VERIFY_API_KEY,
+            model=VERIFY_MODEL,
             counter=InferenceCounter(),  # excluded from benchmark metrics
             vision=True,
         )

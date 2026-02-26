@@ -98,6 +98,7 @@ class LXBRunner(BaseRunner):
 
         return RunResult(
             method=self.METHOD_NAME,
+            model=TEXT_LLM_MODEL,
             task_id=task.task_id,
             trial=trial,
             success=success,

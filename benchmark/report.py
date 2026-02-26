@@ -3,7 +3,7 @@ Benchmark result aggregation and reporting.
 
 Usage:
     python -m benchmark.report
-    python -m benchmark.report --file benchmark/results.jsonl
+    python -m benchmark.report --file benchmark/results/<run_id>.jsonl
     python -m benchmark.report --csv benchmark/summary.csv
 """
 
@@ -12,8 +12,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 from collections import defaultdict
 from statistics import mean, stdev
+
+from benchmark.config import RESULTS_DIR
+
+
+def _resolve_results_file(path_or_none: str | None) -> str | None:
+    if path_or_none:
+        p = Path(path_or_none)
+        if p.is_dir():
+            files = sorted(p.glob("*.jsonl"), key=lambda x: x.stat().st_mtime, reverse=True)
+            return str(files[0]) if files else None
+        return str(p)
+
+    d = Path(RESULTS_DIR)
+    files = sorted(d.glob("*.jsonl"), key=lambda x: x.stat().st_mtime, reverse=True) if d.exists() else []
+    return str(files[0]) if files else None
 
 
 def load_results(filepath: str) -> list[dict]:
@@ -208,8 +224,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Aggregate benchmark results")
     parser.add_argument(
         "--file",
-        default="benchmark/results.jsonl",
-        help="Path to JSONL results file",
+        default=None,
+        help="Path to JSONL results file. If omitted, uses latest file under RESULTS_DIR.",
     )
     parser.add_argument(
         "--csv",
@@ -219,12 +235,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.file):
-        print(f"Results file not found: {args.file}")
+    result_file = _resolve_results_file(args.file)
+    if not result_file or not os.path.exists(result_file):
+        print(f"Results file not found. --file={args.file!r}, RESULTS_DIR={RESULTS_DIR!r}")
         return
 
-    results = load_results(args.file)
-    print(f"Loaded {len(results)} result records.")
+    results = load_results(result_file)
+    print(f"Loaded {len(results)} result records from: {result_file}")
 
     stats = aggregate(results)
     print_table(stats)

@@ -26,6 +26,7 @@ from benchmark.tasks import BenchmarkTask
 @dataclass
 class RunResult:
     method:           str
+    model:            str
     task_id:          str
     trial:            int
     success:          bool

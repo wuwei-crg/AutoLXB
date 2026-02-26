@@ -13,10 +13,16 @@ TEXT_LLM_BASE_URL = "https://api.example.com/v1"
 TEXT_LLM_API_KEY = "YOUR_TEXT_LLM_API_KEY"
 TEXT_LLM_MODEL = "YOUR_TEXT_LLM_MODEL"
 
-# VLM (VLM-ReAct / verifier / semantic-map runner)
+# VLM (VLM-ReAct / semantic-map runner)
 VLM_BASE_URL = "https://api.example.com/v1"
 VLM_API_KEY = "YOUR_VLM_API_KEY"
 VLM_MODEL = "YOUR_VLM_MODEL"
+
+# Verifier VLM (external acceptance model)
+# Usually same base_url/api_key as above, but can use a different model.
+VERIFY_BASE_URL = VLM_BASE_URL
+VERIFY_API_KEY = VLM_API_KEY
+VERIFY_MODEL = "gemini-3-flash-preview"
 
 # Pricing (USD per token)
 # Update to match your provider's actual pricing.
@@ -32,7 +38,7 @@ APP_LAUNCH_WAIT = 3.0
 TRIALS_PER_TASK = 3
 
 # Output
-RESULTS_FILE = "benchmark/results.jsonl"
+RESULTS_DIR = "benchmark/results"
 VLM_STRUCTURED_LOG_FILE = "benchmark/logs/vlm_react_steps.jsonl"
 
 # VLM coordinate fallback (used when probe unavailable)

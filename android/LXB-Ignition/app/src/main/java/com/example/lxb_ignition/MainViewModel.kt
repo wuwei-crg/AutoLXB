@@ -2,8 +2,10 @@ package com.example.lxb_ignition
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.lxb_ignition.service.TcpMockService
 import com.example.lxb_ignition.shizuku.ShizukuManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val PREFS_NAME = "lxb_config"
         private const val KEY_LXB_PORT = "lxb_port"
+        private const val KEY_TCP_MOCK_PORT = "tcp_mock_port"
         private const val KEY_SERVER_IP = "server_ip"
         private const val KEY_SERVER_PORT = "server_port"
     }
@@ -44,6 +47,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ─── 配置：lxb-core 服务 ────────────────────────────────────────────
 
     val lxbPort = MutableStateFlow(prefs.getString(KEY_LXB_PORT, "12345") ?: "12345")
+    val tcpMockPort = MutableStateFlow(prefs.getString(KEY_TCP_MOCK_PORT, "22345") ?: "22345")
+    val tcpMockRunning = MutableStateFlow(false)
 
     // ─── 配置：远端服务器 ────────────────────────────────────────────────
 
@@ -97,6 +102,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun startTcpMockService() {
+        val port = tcpMockPort.value.toIntOrNull() ?: run {
+            appendLog("错误：TCP mock 端口无效")
+            return
+        }
+        saveConfig()
+        val app = getApplication<Application>()
+        val intent = Intent(app, TcpMockService::class.java).apply {
+            action = TcpMockService.ACTION_START
+            putExtra(TcpMockService.EXTRA_PORT, port)
+        }
+        app.startForegroundService(intent)
+        tcpMockRunning.value = true
+        appendLog("[TCP-MOCK] 已启动，端口=$port")
+    }
+
+    fun stopTcpMockService() {
+        val app = getApplication<Application>()
+        val intent = Intent(app, TcpMockService::class.java).apply {
+            action = TcpMockService.ACTION_STOP
+        }
+        app.startService(intent)
+        tcpMockRunning.value = false
+        appendLog("[TCP-MOCK] 已停止")
+    }
+
     fun sendRequirement() {
         val req = requirement.value.trim()
         if (req.isEmpty()) {
@@ -133,6 +164,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveConfig() {
         prefs.edit()
             .putString(KEY_LXB_PORT, lxbPort.value)
+            .putString(KEY_TCP_MOCK_PORT, tcpMockPort.value)
             .putString(KEY_SERVER_IP, serverIp.value)
             .putString(KEY_SERVER_PORT, serverPort.value)
             .apply()

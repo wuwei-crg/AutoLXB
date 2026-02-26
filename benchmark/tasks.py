@@ -55,15 +55,6 @@ TASKS: list[BenchmarkTask] = [
         depth="shallow",
     ),
     BenchmarkTask(
-        task_id="tb_s2",
-        app_name="淘宝",
-        package=_TB_PKG,
-        map_path=_TB_MAP,
-        user_task="打开购物车页面",
-        target_page="cart",
-        depth="shallow",
-    ),
-    BenchmarkTask(
         task_id="tb_s3",
         app_name="淘宝",
         package=_TB_PKG,
@@ -90,16 +81,6 @@ TASKS: list[BenchmarkTask] = [
         target_page="settings",
         depth="deep",
     ),
-    BenchmarkTask(
-        task_id="tb_d3",
-        app_name="淘宝",
-        package=_TB_PKG,
-        map_path=_TB_MAP,
-        user_task="进入菜鸟驿站寄件页面",
-        target_page="send_package_station",
-        depth="deep",
-    ),
-
     # B站：先保留原规模
     BenchmarkTask(
         task_id="bili_s1",
@@ -108,33 +89,6 @@ TASKS: list[BenchmarkTask] = [
         map_path=_BILI_MAP,
         user_task="查看消息页面",
         target_page="message",
-        depth="shallow",
-    ),
-    BenchmarkTask(
-        task_id="bili_s2",
-        app_name="B站",
-        package=_BILI_PKG,
-        map_path=_BILI_MAP,
-        user_task="进入关注页面",
-        target_page="follow",
-        depth="shallow",
-    ),
-    BenchmarkTask(
-        task_id="bili_s3",
-        app_name="B站",
-        package=_BILI_PKG,
-        map_path=_BILI_MAP,
-        user_task="打开个人主页",
-        target_page="profile",
-        depth="shallow",
-    ),
-    BenchmarkTask(
-        task_id="bili_s4",
-        app_name="B站",
-        package=_BILI_PKG,
-        map_path=_BILI_MAP,
-        user_task="打开搜索页面",
-        target_page="search",
         depth="shallow",
     ),
     BenchmarkTask(
@@ -147,15 +101,6 @@ TASKS: list[BenchmarkTask] = [
         depth="medium",
     ),
     BenchmarkTask(
-        task_id="bili_m2",
-        app_name="B站",
-        package=_BILI_PKG,
-        map_path=_BILI_MAP,
-        user_task="查看我新增的粉丝",
-        target_page="followers_list",
-        depth="medium",
-    ),
-    BenchmarkTask(
         task_id="bili_m3",
         app_name="B站",
         package=_BILI_PKG,
@@ -163,15 +108,6 @@ TASKS: list[BenchmarkTask] = [
         user_task="查看每周必看视频列表",
         target_page="weekly_videos",
         depth="medium",
-    ),
-    BenchmarkTask(
-        task_id="bili_d1",
-        app_name="B站",
-        package=_BILI_PKG,
-        map_path=_BILI_MAP,
-        user_task="查看我的回复和@列表",
-        target_page="notifications",
-        depth="deep",
     ),
     BenchmarkTask(
         task_id="bili_d2",

@@ -134,8 +134,9 @@ def _probe_one(llm: LLMClient, width: int, height: int) -> dict[str, Any]:
         "1) Output numbers only.\n"
         "2) Do NOT add markdown.\n"
         "3) Use your native coordinate space (do NOT convert on purpose).\n"
-        "4) For each corner block, return the point closest to the real image corner.\n"
-        "5) Be precise; this is for coordinate range calibration.\n"
+        "4) For each corner, return the colored point NEAREST to that image corner (corner-touch side), NOT the block center.\n"
+        "5) If uncertain between multiple colored pixels, choose the one closest to the corner boundary.\n"
+        "6) Be precise; this is for coordinate range calibration.\n"
     )
     raw = llm.complete_with_image(prompt, image_bytes)
     points_raw = _parse_coord_probe_response(raw)

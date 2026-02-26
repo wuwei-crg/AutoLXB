@@ -33,15 +33,21 @@ def main() -> None:
             if not line:
                 continue
             row = json.loads(line)
-            key = (row.get("method", ""), row.get("profile", ""), row.get("command", ""))
+            key = (
+                row.get("experiment_group", "unknown"),
+                row.get("endpoint", "lan"),
+                row.get("method", ""),
+                row.get("profile", ""),
+                row.get("command", ""),
+            )
             groups[key].append(row)
 
     with open(args.csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "method", "profile", "command", "count", "success_rate",
+            "experiment_group", "endpoint", "method", "profile", "command", "count", "success_rate",
             "latency_p50_ms", "latency_p95_ms", "latency_p99_ms",
-            "avg_payload_bytes", "avg_retries", "timeout_or_error_rate",
+            "avg_payload_bytes", "avg_retries", "timeout_or_error_rate", "total_time_sec",
         ])
         for key in sorted(groups.keys()):
             rows = groups[key]
@@ -50,8 +56,9 @@ def main() -> None:
             fail = [r for r in rows if not bool(r.get("success", False))]
             avg_payload = statistics.mean([int(r.get("payload_size", 0)) for r in rows]) if rows else 0.0
             avg_retries = statistics.mean([int(r.get("retries", 0)) for r in rows]) if rows else 0.0
+            total_time_sec = (sum(lats) / 1000.0) if rows else 0.0
             writer.writerow([
-                key[0], key[1], key[2], len(rows),
+                key[0], key[1], key[2], key[3], key[4], len(rows),
                 round(len(succ) / len(rows), 4) if rows else 0.0,
                 round(percentile(lats, 0.50), 2),
                 round(percentile(lats, 0.95), 2),
@@ -59,6 +66,7 @@ def main() -> None:
                 round(avg_payload, 2),
                 round(avg_retries, 2),
                 round(len(fail) / len(rows), 4) if rows else 0.0,
+                round(total_time_sec, 2),
             ])
 
 
