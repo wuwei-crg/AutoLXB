@@ -1382,9 +1382,8 @@ NAV|100|950|首页|tab|home
         import threading
 
         num_requests = self.vlm.config.concurrent_requests
-        threshold = self.vlm.config.occurrence_threshold
 
-        self.log("info", f"  并发推理: {num_requests} 次, 阈值 {threshold}")
+        self.log("info", f"  并发推理: {num_requests} 次")
 
         results = []
         lock = threading.Lock()
@@ -1442,23 +1441,21 @@ NAV|100|950|首页|tab|home
                 final_page = page_info
                 break
 
-        # 聚合导航节点（按坐标分组，出现次数 >= threshold 的保留）
+        # 收集所有推理运行的导航节点（全部送入融合+去重流程）
         all_nodes = []
         for _, nodes, _, _ in results:
             all_nodes.extend(nodes)
-
-        aggregated_nodes = self._aggregate_nav_nodes(all_nodes, threshold)
 
         # 聚合弹窗（按坐标分组，出现次数 >= 1 就保留，因为弹窗很重要）
         all_popups = []
         for _, _, popups, _ in results:
             all_popups.extend(popups)
 
-        aggregated_popups = self._aggregate_popups(all_popups, max(1, threshold - 1))
+        aggregated_popups = self._aggregate_popups(all_popups, 1)
 
-        self.log("info", f"  并发结果: {len(results)}/{num_requests} 成功, 聚合 {len(aggregated_nodes)} 节点, {len(aggregated_popups)} 弹窗")
+        self.log("info", f"  并发结果: {len(results)}/{num_requests} 成功, {len(all_nodes)} 个节点候选, {len(aggregated_popups)} 弹窗")
 
-        return final_page, aggregated_nodes, aggregated_popups, None
+        return final_page, all_nodes, aggregated_popups, None
 
     def _aggregate_popups(self, popups: List[PopupInfo], threshold: int) -> List[PopupInfo]:
         """聚合多次推理的弹窗信息"""
@@ -1514,64 +1511,6 @@ NAV|100|950|首页|tab|home
                 popup_type=most_common_type,
                 description=most_common_desc,
                 close_locator=NodeLocator(bounds=(avg_x, avg_y, avg_x, avg_y))
-            ))
-
-        return aggregated
-
-    def _aggregate_nav_nodes(self, nodes: List[NavNode], threshold: int) -> List[NavNode]:
-        """
-        ???????????
-
-        ?????????? >= threshold ???
-        """
-        if not nodes:
-            return []
-
-        groups = []
-        used = set()
-
-        for i, node in enumerate(nodes):
-            if i in used:
-                continue
-            if not node.locator.bounds:
-                continue
-
-            x1, y1 = node.locator.bounds[0], node.locator.bounds[1]
-            group = [node]
-            used.add(i)
-
-            for j, other in enumerate(nodes):
-                if j in used or not other.locator.bounds:
-                    continue
-                x2, y2 = other.locator.bounds[0], other.locator.bounds[1]
-                if abs(x1 - x2) < 50 and abs(y1 - y2) < 50:
-                    group.append(other)
-                    used.add(j)
-
-            groups.append(group)
-
-        aggregated = []
-        for group in groups:
-            if len(group) < threshold:
-                continue
-
-            avg_x = sum(n.locator.bounds[0] for n in group) // len(group)
-            avg_y = sum(n.locator.bounds[1] for n in group) // len(group)
-
-            names = [n.name for n in group]
-            most_common_name = max(set(names), key=names.count)
-
-            types = [n.node_type for n in group]
-            most_common_type = max(set(types), key=types.count)
-
-            targets = [n.target_page for n in group if n.target_page]
-            most_common_target = max(set(targets), key=targets.count) if targets else ""
-
-            aggregated.append(NavNode(
-                locator=NodeLocator(bounds=(avg_x, avg_y, avg_x, avg_y)),
-                name=most_common_name,
-                node_type=most_common_type,
-                target_page=most_common_target
             ))
 
         return aggregated
@@ -1947,7 +1886,18 @@ NAV|100|950|首页|tab|home
                 })
 
         self.log("info", f"  匹配结果: {len(enriched)}/{len(nav_nodes)} 个节点")
-        return enriched
+
+        # 按 locator key 去重（并发推理时同一 XML 节点可能被多次检测到）
+        seen_keys: set = set()
+        deduped = []
+        for node in enriched:
+            key = node.locator.unique_key()
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(node)
+        if len(deduped) < len(enriched):
+            self.log("info", f"  去重后: {len(deduped)} 个节点 (去除 {len(enriched) - len(deduped)} 个重复)")
+        return deduped
 
     def _enrich_popup_locators(self, popups: List[PopupInfo], xml_nodes: List[Dict]) -> List[PopupInfo]:
         """

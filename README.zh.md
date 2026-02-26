@@ -8,6 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/wuwei-crg/LXB-Framework.svg?style=social)](https://github.com/wuwei-crg/LXB-Framework)
 [![文档](https://img.shields.io/badge/docs-latest-brightgreen.svg)](docs/zh)
 
 ---
@@ -82,7 +83,7 @@ LXB-Framework 是一个面向 Android 自动化的工程体系，核心目标是
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/LXB-Framework.git
+git clone https://github.com/wuwei-crg/LXB-Framework.git
 cd LXB-Framework
 
 # 安装依赖
@@ -184,6 +185,6 @@ LXB-Framework/
 
 <div align="center">
 
-**[文档](docs/zh)** | **[示例](examples/)** | **[问题反馈](https://github.com/yourusername/LXB-Framework/issues)**
+**[文档](docs/zh)** | **[示例](examples/)** | **[问题反馈](https://github.com/wuwei-crg/LXB-Framework/issues)**
 
 </div>

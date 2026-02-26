@@ -26,6 +26,7 @@ except ImportError:
     HAS_NUMPY = False
 
 from .models import VLMDetection, VLMPageResult, BBox
+from . import coord_calibration as _cal
 
 
 # =============================================================================
@@ -173,6 +174,27 @@ role 类型：back_button, search, menu, top_tab, bottom_tab, fab, sidebar
         self._client = None
         self._cache: Dict[str, VLMPageResult] = {}
         self.stats = {"total_inferences": 0, "cache_hits": 0, "total_time_ms": 0.0}
+        self._probe: dict = {}  # populated by calibrate()
+
+    def calibrate(self, attempts: int = 3) -> bool:
+        """
+        Run coordinate space calibration using two probe images.
+
+        Sends synthetic corner-coloured images to the VLM and infers its
+        native coordinate space via affine fitting.  Must be called once
+        before any inference that requires coordinate conversion.
+
+        Returns True if calibration succeeded.
+        """
+        self._probe = _cal.calibrate(self._call_api, attempts=attempts)
+        ok = bool(self._probe)
+        if ok:
+            print(f"[VLM] 坐标校准完成: mode={self._probe['mode']}  "
+                  f"x=[{self._probe['x_min']:.1f}, {self._probe['x_max']:.1f}]  "
+                  f"y=[{self._probe['y_min']:.1f}, {self._probe['y_max']:.1f}]")
+        else:
+            print("[VLM] 坐标校准失败，将使用原始坐标值")
+        return ok
 
     def _get_client(self):
         """延迟创建 OpenAI 客户端"""
@@ -233,42 +255,10 @@ role 类型：back_button, search, menu, top_tab, bottom_tab, fab, sidebar
         except json.JSONDecodeError:
             return {}
 
-    def _detect_coord_format(self, bbox: List[int], image_width: int, image_height: int) -> str:
-        """
-        自动检测坐标格式
-        - 如果坐标值都 <= 1000，可能是归一化坐标
-        - 如果坐标值接近图片尺寸，是像素坐标
-        """
-        max_val = max(bbox)
-        if max_val <= 1000:
-            # 可能是归一化坐标，但也可能是小图的像素坐标
-            # 如果图片尺寸远大于 1000，则认为是归一化坐标
-            if image_width > 1200 or image_height > 1200:
-                return "normalized"
-        return "pixel"
-
     def _to_pixel_coords(self, bbox: List[int], image_width: int, image_height: int) -> BBox:
-        """将坐标转换为像素坐标（自动检测格式）"""
-        coord_format = self._detect_coord_format(bbox, image_width, image_height)
-
-        if coord_format == "normalized":
-            # 归一化坐标 (0-1000) 转像素
-            x1 = int(bbox[0] * image_width / 1000)
-            y1 = int(bbox[1] * image_height / 1000)
-            x2 = int(bbox[2] * image_width / 1000)
-            y2 = int(bbox[3] * image_height / 1000)
-        else:
-            # 已经是像素坐标，直接使用
-            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-
-        return (x1, y1, x2, y2)
-
-    def _normalize_to_pixel(self, bbox: List[int], image_width: int, image_height: int) -> BBox:
-        """将归一化坐标 (0-1000) 转换为像素坐标"""
-        x1 = int(bbox[0] * image_width / 1000)
-        y1 = int(bbox[1] * image_height / 1000)
-        x2 = int(bbox[2] * image_width / 1000)
-        y2 = int(bbox[3] * image_height / 1000)
+        """Convert VLM bbox coordinates to pixel coords using probe calibration."""
+        x1, y1 = _cal.map_point(self._probe, bbox[0], bbox[1], image_width, image_height)
+        x2, y2 = _cal.map_point(self._probe, bbox[2], bbox[3], image_width, image_height)
         return (x1, y1, x2, y2)
 
     def _iou(self, box1: BBox, box2: BBox) -> float:
@@ -466,7 +456,7 @@ role 类型：back_button, search, menu, top_tab, bottom_tab, fab, sidebar
             print("[VLM] 并发模式未启用，使用单次推理")
             return self.infer(screenshot_bytes)
 
-        print(f"[VLM] 🚀 并发推理模式: {self.config.concurrent_requests} 次并发, 阈值 {self.config.occurrence_threshold}")
+        print(f"[VLM] 🚀 并发推理模式: {self.config.concurrent_requests} 次并发")
 
         start = time.time()
         image = Image.open(io.BytesIO(screenshot_bytes))
@@ -514,15 +504,11 @@ role 类型：back_button, search, menu, top_tab, bottom_tab, fab, sidebar
         for i, r in enumerate(results):
             print(f"[VLM]   结果 #{i + 1}: {len(r.detections)} 个检测")
 
-        # 聚合结果
-        aggregated = self._aggregate_detections(
-            results,
-            width,
-            height,
-            self.config.occurrence_threshold
-        )
-
-        print(f"[VLM] ✅ 聚合后: {len(aggregated)} 个有效检测 (阈值={self.config.occurrence_threshold})")
+        # 合并所有推理结果（全部进入后续融合+去重流程）
+        all_detections: List[VLMDetection] = []
+        for r in results:
+            all_detections.extend(r.detections)
+        print(f"[VLM] 并发合并: {len(all_detections)} 个检测 (来自 {len(results)} 次推理)")
 
         # 聚合 caption（取最常见的）
         captions = [r.page_caption for r in results if r.page_caption]
@@ -533,115 +519,14 @@ role 类型：back_button, search, menu, top_tab, bottom_tab, fab, sidebar
 
         return VLMPageResult(
             page_caption=caption,
-            detections=aggregated,
+            detections=all_detections,
             inference_time_ms=total_time,
             image_size=image_size,
             concurrent_enabled=True,
             concurrent_requests=num_requests,
             concurrent_results=len(results),
-            aggregated_count=len(aggregated)
+            aggregated_count=len(all_detections)
         )
-
-    def _aggregate_detections(
-        self,
-        results: List[VLMPageResult],
-        image_width: int,
-        image_height: int,
-        threshold: int
-    ) -> List[VLMDetection]:
-        """
-        聚合多次 VLM 推理的检测结果
-
-        策略：
-        1. 收集所有检测框
-        2. 按 IoU 分组（IoU > 0.5 认为是同一位置）
-        3. 统计每组出现的次数
-        4. 只保留出现次数 >= threshold 的检测框
-        5. 每组取平均位置和最常见的标签
-        """
-        if not results:
-            return []
-
-        # 收集所有检测
-        all_detections = []
-        for result in results:
-            all_detections.extend(result.detections)
-
-        print(f"[VLM] 🔍 聚合: 共 {len(all_detections)} 个原始检测")
-
-        if not all_detections:
-            return []
-
-        # 按位置分组
-        groups = []  # 每组是相似的检测框列表
-        used = set()
-
-        for i, det in enumerate(all_detections):
-            if i in used:
-                continue
-
-            # 创建新组
-            group = [det]
-            used.add(i)
-
-            # 查找相似的检测框
-            for j, other in enumerate(all_detections):
-                if j in used or j == i:
-                    continue
-
-                if self._iou(det.bbox, other.bbox) > 0.5:
-                    group.append(other)
-                    used.add(j)
-
-            groups.append(group)
-
-        print(f"[VLM] 🔍 聚合: 分组为 {len(groups)} 个候选")
-
-        # 过滤并聚合
-        aggregated = []
-        filtered_count = 0
-        for group in groups:
-            if len(group) < threshold:
-                filtered_count += 1
-                continue  # 出现次数不足，认为是噪声
-
-            # 计算平均位置
-            bboxes = [g.bbox for g in group]
-            if HAS_NUMPY:
-                avg_bbox = (
-                    int(np.mean([b[0] for b in bboxes])),
-                    int(np.mean([b[1] for b in bboxes])),
-                    int(np.mean([b[2] for b in bboxes])),
-                    int(np.mean([b[3] for b in bboxes]))
-                )
-            else:
-                # 纯 Python 实现
-                avg_bbox = (
-                    sum(b[0] for b in bboxes) // len(bboxes),
-                    sum(b[1] for b in bboxes) // len(bboxes),
-                    sum(b[2] for b in bboxes) // len(bboxes),
-                    sum(b[3] for b in bboxes) // len(bboxes)
-                )
-
-            # 取最常见的标签和文本
-            labels = [g.label for g in group]
-            texts = [g.ocr_text for g in group if g.ocr_text]
-
-            most_common_label = max(set(labels), key=labels.count)
-            most_common_text = max(set(texts), key=texts.count) if texts else None
-
-            aggregated.append(VLMDetection(
-                bbox=avg_bbox,
-                label=most_common_label,
-                confidence=len(group) / len(results),  # 置信度 = 出现比例
-                ocr_text=most_common_text
-            ))
-
-        print(f"[VLM] 🔍 聚合: 过滤掉 {filtered_count} 个噪声组，保留 {len(aggregated)} 个有效检测")
-        for i, det in enumerate(aggregated):
-            print(f"[VLM]   └─ #{i+1}: {det.label} @ {det.bbox} (置信度: {det.confidence:.2f})")
-
-        return aggregated
 
     def is_available(self) -> bool:
         """检查 VLM 是否可用"""

@@ -8,6 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/wuwei-crg/LXB-Framework.svg?style=social)](https://github.com/wuwei-crg/LXB-Framework)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](docs/en)
 
 ---
@@ -82,7 +83,7 @@ LXB-Framework is an engineering system for Android automation with two core goal
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/LXB-Framework.git
+git clone https://github.com/wuwei-crg/LXB-Framework.git
 cd LXB-Framework
 
 # Install dependencies
@@ -184,6 +185,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**[Documentation](docs/en)** | **[Examples](examples/)** | **[Issues](https://github.com/yourusername/LXB-Framework/issues)**
+**[Documentation](docs/en)** | **[Examples](examples/)** | **[Issues](https://github.com/wuwei-crg/LXB-Framework/issues)**
 
 </div>

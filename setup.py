@@ -20,12 +20,12 @@ except FileNotFoundError:
 setup(
     name="lxb-link",
     version="1.0.0",
-    author="WuWei",
-    author_email="dev@lxb-link.example.com",
+    author="Runguo Chen",
+    author_email="1415327394@bupt.edu.cn",
     description="Reliable UDP Protocol for Android Device Control using Stop-and-Wait ARQ",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/lxb-link",
+    url="https://github.com/wuwei-crg/LXB-Framework",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     classifiers=[
@@ -71,8 +71,8 @@ setup(
         "networking",
     ],
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/lxb-link/issues",
-        "Source": "https://github.com/yourusername/lxb-link",
-        "Documentation": "https://github.com/yourusername/lxb-link/blob/main/README.md",
+        "Bug Reports": "https://github.com/wuwei-crg/LXB-Framework/issues",
+        "Source": "https://github.com/wuwei-crg/LXB-Framework",
+        "Documentation": "https://github.com/wuwei-crg/LXB-Framework/blob/main/README.md",
     },
 )
