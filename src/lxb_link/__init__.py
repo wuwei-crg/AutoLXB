@@ -53,7 +53,7 @@ from .protocol import ProtocolFrame
 from .transport import Transport
 
 
-__version__ = '1.0.0'
+__version__ = '0.0.1'
 __author__ = 'WuWei'
 __all__ = [
     # Main client class

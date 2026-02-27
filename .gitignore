@@ -247,3 +247,5 @@ benchmark_comm/results/
 
 TODO.md
 scripts/
+release_artifacts/
+.release_local/
