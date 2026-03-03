@@ -112,6 +112,13 @@ python app.py
 
 Then open `http://localhost:5000/` in your browser.
 
+### Release Assets
+
+Each release provides:
+- `lxb-ignition-vX.Y.Z.apk`
+- `lxb-framework-core-vX.Y.Z.zip`
+- `lxb-framework-sample-maps-vX.Y.Z.zip` (sample maps for quick verification/demo)
+
 ## Design Philosophy
 
 ### Route-Then-Act

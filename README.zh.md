@@ -112,6 +112,13 @@ python app.py
 
 然后访问 `http://localhost:5000/`
 
+### Release 产物
+
+每个 Release 会提供：
+- `lxb-ignition-vX.Y.Z.apk`
+- `lxb-framework-core-vX.Y.Z.zip`
+- `lxb-framework-sample-maps-vX.Y.Z.zip`（示例地图，用于快速验证/演示）
+
 ## 设计理念
 
 ### Route-Then-Act
