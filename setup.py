@@ -19,7 +19,7 @@ except FileNotFoundError:
 
 setup(
     name="lxb-link",
-    version="0.0.1",
+    version="0.0.3",
     author="Runguo Chen",
     author_email="1415327394@bupt.edu.cn",
     description="Reliable UDP Protocol for Android Device Control using Stop-and-Wait ARQ",

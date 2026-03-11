@@ -11,6 +11,8 @@
 [![GitHub Stars](https://img.shields.io/github/stars/wuwei-crg/LXB-Framework.svg?style=social)](https://github.com/wuwei-crg/LXB-Framework)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](docs/en)
 
+Paper: [TechRxiv](https://doi.org/10.36227/techrxiv.177273656.63195814/v1)
+
 ---
 
 [English](README.md) | [中文文档](README.zh.md)
@@ -19,16 +21,9 @@
 
 ---
 
-> **A note before you dive in**
+> **A note on current scope and limitations**
 >
-> This is an exploratory side project built by an undergraduate student — very much a Work in Progress.
-> The code is rough, many corner cases are not handled, and I make no promises about active maintenance.
-> I stumbled onto the idea of combining VLMs with XML accessibility trees and found it genuinely
-> interesting, so I documented it here hoping it might be useful or spark ideas for others.
->
-> If you are a researcher or engineer working in this space and spot something wrong or improvable,
-> feedback and PRs are warmly welcome. Please be gentle though — this is a learning project
-> and the author is still figuring things out.
+> The framework is already reasonably effective at building navigation maps for mainstream apps with relatively complete XML accessibility structures (e.g., Bilibili, Xiaohongshu, and, in some scenarios, Taobao), but it still has clear limitations: map building is weak for apps with limited usable XML structure (e.g., WeChat), popup handling is not yet robust enough (we can mainly record popups observed during mapping, while reliable closure via recorded locators still needs continuous validation), and locator construction is not yet resilient to dynamic text (e.g., rotating search hints or status-dependent strings such as "Messages, 2 unread", which can later cause matching failures). These are known shortcomings of the current version, and we will continue improving them in subsequent iterations.
 
 ---
 
@@ -118,6 +113,13 @@ python app.py
 ```
 
 Then open `http://localhost:5000/` in your browser.
+
+### Release Assets
+
+Each release provides:
+- `lxb-ignition-vX.Y.Z.apk`
+- `lxb-framework-core-vX.Y.Z.zip`
+- `lxb-framework-sample-maps-vX.Y.Z.zip` (sample maps for quick verification/demo)
 
 ## Design Philosophy
 

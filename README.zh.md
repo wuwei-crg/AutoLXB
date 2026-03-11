@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # LXB-Framework
 
@@ -11,6 +11,8 @@
 [![GitHub Stars](https://img.shields.io/github/stars/wuwei-crg/LXB-Framework.svg?style=social)](https://github.com/wuwei-crg/LXB-Framework)
 [![文档](https://img.shields.io/badge/docs-latest-brightgreen.svg)](docs/zh)
 
+论文链接：[TechRxiv](https://doi.org/10.36227/techrxiv.177273656.63195814/v1)
+
 ---
 
 [English](README.md) | [中文文档](README.zh.md)
@@ -19,15 +21,9 @@
 
 ---
 
-> **在正式开始之前，先叠个甲**
+> **在正式开始之前，先说明一下当前边界**
 >
-> 这是一个本科生的探索性项目，Work in Progress，别抱太高期望。
-> 代码目前比较粗糙，很多 Corner Case 没有覆盖，后续也不一定会持续维护更新。
-> 只是在折腾的过程中发现"VLM + XML 无障碍树"这个组合挺有意思的，
-> 就把思路和实现都记录下来，希望能给同样在这个方向探索的人提供一点参考。
->
-> 如果你是相关领域的研究者或工程师，发现了问题或者有更好的想法，
-> 欢迎开 Issue 或提 PR，非常感谢。求轻喷——孩子还小，怕生。
+> 本框架目前在具备较完整 XML 可访问性结构的主流应用中（如 Bilibili、小红书，以及部分场景下的淘宝）已能较稳定地完成导航地图构建，具备一定工程可用性；但我们也清楚其仍存在明显不足：对缺少有效 XML 结构的应用（如微信）建图能力较弱，弹窗处理仍不完备（目前主要能记录建图阶段出现的弹窗，且记录后的 Locator 关闭稳定性仍需持续验证），以及 Locator 构建对动态文本的鲁棒性不足（例如滚动推荐词、“消息，2条未读”这类随状态变化的文本，容易导致后续匹配失败）。这些问题属于当前版本的已知缺陷，后续会持续迭代完善。
 
 ---
 
@@ -118,6 +114,13 @@ python app.py
 
 然后访问 `http://localhost:5000/`
 
+### Release 产物
+
+每个 Release 会提供：
+- `lxb-ignition-vX.Y.Z.apk`
+- `lxb-framework-core-vX.Y.Z.zip`
+- `lxb-framework-sample-maps-vX.Y.Z.zip`（示例地图，用于快速验证/演示）
+
 ## 设计理念
 
 ### Route-Then-Act
@@ -176,3 +179,5 @@ LXB-Framework/
 **[文档](docs/zh)** | **[示例](examples/)** | **[问题反馈](https://github.com/wuwei-crg/LXB-Framework/issues)**
 
 </div>
+
+
