@@ -4043,6 +4043,47 @@ def debug_analyze_page():
         }), 500
 
 
+@app.route('/api/command/cortex_fsm_run', methods=['POST'])
+def cmd_cortex_fsm_run():
+    """端侧 Cortex FSM：INIT -> APP_RESOLVE -> ROUTE_PLAN -> ROUTING -> VISION_ACT。"""
+    error_response = _require_client_response()
+    if error_response:
+        return error_response
+
+    data = request.json or {}
+    user_task = (data.get('user_task') or '').strip()
+    package_name = (data.get('package') or '').strip()
+    map_path = (data.get('map_path') or '').strip()
+    start_page = (data.get('start_page') or '').strip()
+
+    if not user_task:
+        return jsonify({'success': False, 'message': 'user_task is required'}), 400
+
+    try:
+        result = client.cortex_fsm_run(
+            user_task=user_task,
+            package=package_name or None,
+            map_path=map_path or None,
+            start_page=start_page or None,
+        )
+        ok = result.get('status') == 'success'
+        pkg = (result.get('package_name') or package_name or '').strip()
+        target_page = (result.get('target_page') or '').strip()
+        state = (result.get('state') or '').strip()
+        if ok:
+            msg = f'CORTEX_FSM_RUN 成功: package={pkg or "<auto>"}, target_page={target_page or "<unknown>"}, state={state or "FINISH"}'
+        else:
+            reason = (result.get('reason') or '').strip() or 'unknown'
+            msg = f'CORTEX_FSM_RUN 失败: {reason} @state={state or "UNKNOWN"}'
+        return jsonify({
+            'success': ok,
+            'message': msg,
+            'response': result,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 if __name__ == '__main__':
     print("=" * 60)
     print("LXB Web Console")

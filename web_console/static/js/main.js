@@ -285,6 +285,28 @@ function handleCommand(cmd) {
             break;
         }
 
+        case 'cortex_fsm_run': {
+            const userTask = (document.getElementById('fsm-user-task')?.value || '').trim();
+            const pkgInput = document.getElementById('fsm-package') || document.getElementById('cortex-package');
+            const pkg = (pkgInput && pkgInput.value.trim()) || '';
+            const mapPath = (document.getElementById('fsm-map-path')?.value || '').trim();
+            const startPage = (document.getElementById('fsm-start-page')?.value || '').trim();
+
+            if (!userTask) {
+                addLog('error', 'CORTEX_FSM_RUN: 请填写 user_task');
+                break;
+            }
+
+            const payload = { user_task: userTask };
+            if (pkg) payload.package = pkg;
+            if (mapPath) payload.map_path = mapPath;
+            if (startPage) payload.start_page = startPage;
+
+            const label = `CORTEX_FSM_RUN task="${userTask.slice(0, 40)}"${pkg ? ` package=${pkg}` : ''}`;
+            sendCommand('/api/command/cortex_fsm_run', payload, label);
+            break;
+        }
+
         case 'demo_route_run':
             if (typeof runCortexRouteDemo === 'function') {
                 runCortexRouteDemo();

@@ -158,6 +158,7 @@ CMD_CORTEX_RESOLVE_LOCATOR = 0x72  # Resolve locator -> bounds (no action)
 CMD_CORTEX_TAP_LOCATOR = 0x73      # Resolve locator then tap
 CMD_CORTEX_TRACE_PULL = 0x74       # Pull last N trace lines (JSONL)
 CMD_CORTEX_ROUTE_RUN = 0x75        # Route-only execution (sync, from_page->to_page)
+CMD_CORTEX_FSM_RUN = 0x76          # Full Cortex FSM execution on device (sync)
 
 # =============================================================================
 
@@ -200,6 +201,7 @@ IMPLEMENTED_COMMANDS_V1 = {
     CMD_CORTEX_TAP_LOCATOR,
     CMD_CORTEX_TRACE_PULL,
     CMD_CORTEX_ROUTE_RUN,
+    CMD_CORTEX_FSM_RUN,
 }
 
 # =============================================================================
@@ -263,6 +265,8 @@ CHANNEL_MAP = {
     CMD_STOP_APP: CH_CONTROL,
     CMD_GET_SCREEN_STATE: CH_CONTROL,
     CMD_GET_SCREEN_SIZE: CH_CONTROL,
+    CMD_CORTEX_ROUTE_RUN: CH_CONTROL,
+    CMD_CORTEX_FSM_RUN: CH_CONTROL,
 
     # Data Channel (large data transfer)
     CMD_DUMP_HIERARCHY: CH_DATA,

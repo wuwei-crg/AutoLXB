@@ -345,6 +345,23 @@
                         <button class="btn btn-cmd btn-small btn-highlight" data-cmd="cortex_route_run" style="max-width:150px;">CORTEX_ROUTE_RUN</button>
                         <button class="btn btn-cmd btn-small" data-cmd="demo_route_run">Demo(Route)</button>
                     </div>
+                    <hr style="margin:10px 0; border-color:#1f2937;">
+                    <h4>FSM 测试（端侧 INIT → APP_RESOLVE → ROUTE → VISION_ACT）</h4>
+                    <div class="row">
+                        <input type="text" id="fsm-user-task" placeholder="user_task (例如: 打开B站搜索页)" class="mono">
+                    </div>
+                    <div class="row" style="margin-top:6px;">
+                        <input type="text" id="fsm-package" placeholder="可选: 固定包名 (留空则端侧 LLM 自动选 App)" class="mono">
+                    </div>
+                    <div class="row" style="margin-top:6px;">
+                        <input type="text" id="fsm-map-path" placeholder="可选: 端侧 map 路径覆盖 (默认使用当前包 map)" class="mono">
+                    </div>
+                    <div class="row" style="margin-top:6px;">
+                        <input type="text" id="fsm-start-page" placeholder="可选: start_page (默认由 map 推断首页)" class="mono">
+                    </div>
+                    <div class="row" style="margin-top:6px;">
+                        <button class="btn btn-cmd btn-small btn-highlight" data-cmd="cortex_fsm_run" style="max-width:170px;">CORTEX_FSM_RUN</button>
+                    </div>
                 </div>
             </div>
         </aside>

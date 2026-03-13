@@ -60,6 +60,7 @@ from .constants import (
     CMD_CORTEX_TAP_LOCATOR,
     CMD_CORTEX_TRACE_PULL,
     CMD_CORTEX_ROUTE_RUN,
+    CMD_CORTEX_FSM_RUN,
     # Match types for FIND_NODE
     MATCH_EXACT_TEXT,
     MATCH_CONTAINS_TEXT,
@@ -1257,6 +1258,49 @@ class LXBLinkClient:
 
         payload = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
         resp = self._cmd(CMD_CORTEX_ROUTE_RUN, payload, timeout_factor=8.0)
+        return json.loads(resp.decode("utf-8", errors="replace"))
+
+    def cortex_fsm_run(
+        self,
+        user_task: str,
+        package: str | None = None,
+        map_path: str | None = None,
+        start_page: str | None = None,
+    ) -> dict:
+        """
+        Run full Cortex FSM on device (INIT -> APP_RESOLVE -> ROUTE_PLAN -> ROUTING -> VISION_ACT).
+
+        Args:
+            user_task: High-level user task description (Chinese or English).
+            package: Optional fixed package name. If omitted, device-side LLM will select app.
+            map_path: Optional device map path override. Typically leave empty to use default.
+            start_page: Optional start page id for routing. Leave None to infer home from map.
+
+        Returns:
+            JSON dict with FSM result. Keys include:
+                - status: "success" or "failed"
+                - state: final FSM state name
+                - package_name: selected package
+                - target_page: planned target page (if any)
+                - route_result: route execution summary
+                - command_log / llm_history / lessons: planner internals
+        """
+        self._ensure_connected()
+        import json
+
+        payload_dict: dict[str, object] = {
+            "user_task": user_task,
+        }
+        if package:
+            payload_dict["package"] = package
+        if map_path:
+            payload_dict["map_path"] = map_path
+        if start_page:
+            payload_dict["start_page"] = start_page
+
+        payload = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
+        # FSM may take longer than a single route_run (INIT + APP_RESOLVE + ROUTE_* states).
+        resp = self._cmd(CMD_CORTEX_FSM_RUN, payload, timeout_factor=20.0)
         return json.loads(resp.decode("utf-8", errors="replace"))
 
     def _parse_dump_actions_response(self, data: bytes) -> dict:

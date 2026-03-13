@@ -183,6 +183,9 @@ public class CommandDispatcher {
                 case CommandIds.CMD_CORTEX_ROUTE_RUN:
                     response = cortexFacade.handleRouteRun(payload);
                     break;
+                case CommandIds.CMD_CORTEX_FSM_RUN:
+                    response = cortexFacade.handleCortexFsmRun(payload);
+                    break;
 
                 default:
                     System.out.println(TAG + " Unimplemented command: 0x" +

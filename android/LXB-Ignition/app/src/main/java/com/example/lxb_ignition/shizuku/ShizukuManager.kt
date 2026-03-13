@@ -166,6 +166,27 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    /**
+     * Write a small config file to a shell-accessible path using the Shizuku
+     * user service (reuses deployJar under the hood).
+     */
+    suspend fun writeConfigFile(destPath: String, content: ByteArray): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            val svc = service ?: return@withContext Result.failure(
+                Exception("Shizuku UserService 未连接，无法写入配置")
+            )
+            return@withContext try {
+                val ok = svc.deployJar(content, destPath)
+                if (ok) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(Exception("deployJar 返回 false"))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     private fun bindServiceIfNeeded() {
         if (!isBound) {
             log("绑定 Shizuku UserService...")
