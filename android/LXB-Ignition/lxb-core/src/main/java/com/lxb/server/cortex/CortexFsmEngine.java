@@ -132,8 +132,8 @@ public class CortexFsmEngine {
     private static final long UI_SETTLE_FALLBACK_MS = 600L;
     private static final double UI_SETTLE_SIM_THRESHOLD = 0.90d;
     private static final int UI_SETTLE_REQUIRED_HITS = 2;
-    private static final int VISION_MAX_TURNS_SINGLE = 30;
-    private static final int VISION_MAX_TURNS_LOOP = 60;
+    private static final int VISION_MAX_TURNS_SINGLE = 100;
+    private static final int VISION_MAX_TURNS_LOOP = 100;
 
     // Allowed ops per state, mirroring Python _ALLOWED_OPS
     private static final java.util.Set<String> VISION_ALLOWED_OPS = new java.util.HashSet<>();
