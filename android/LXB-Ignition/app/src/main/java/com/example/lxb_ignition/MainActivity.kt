@@ -1080,7 +1080,8 @@ fun ServerControlRow(
 
 @Composable
 fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
-    // simple in-tab navigation: 0 = overview, 1 = device core server, 2 = PC web_console, 3 = LLM
+    // simple in-tab navigation:
+    // 0 = overview, 1 = device core server, 2 = PC web_console, 3 = LLM, 4 = unlock policy
     var page by rememberSaveable { mutableIntStateOf(0) }
 
     when (page) {
@@ -1088,7 +1089,8 @@ fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             modifier = modifier,
             onOpenDeviceCore = { page = 1 },
             onOpenPcConsole = { page = 2 },
-            onOpenLlm = { page = 3 }
+            onOpenLlm = { page = 3 },
+            onOpenUnlockPolicy = { page = 4 }
         )
         1 -> SingleConfigPage(
             title = "Device core server",
@@ -1110,6 +1112,13 @@ fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             onBack = { page = 0 }
         ) {
             LlmConfigCard(viewModel)
+        }
+        4 -> SingleConfigPage(
+            title = "Unlock & lock policy",
+            modifier = modifier,
+            onBack = { page = 0 }
+        ) {
+            UnlockPolicyConfigCard(viewModel)
         }
     }
 }
@@ -1176,7 +1185,8 @@ fun ConfigOverviewPage(
     modifier: Modifier = Modifier,
     onOpenDeviceCore: () -> Unit,
     onOpenPcConsole: () -> Unit,
-    onOpenLlm: () -> Unit
+    onOpenLlm: () -> Unit,
+    onOpenUnlockPolicy: () -> Unit
 ) {
     Column(
         modifier = modifier
@@ -1208,6 +1218,11 @@ fun ConfigOverviewPage(
             title = "LLM config (device-side)",
             description = "Base URL, API key and model for device-side LLM/VLM calls.",
             onClick = onOpenLlm
+        )
+        ConfigEntryCard(
+            title = "Unlock & lock policy",
+            description = "Auto unlock before route, auto lock after task, and lockscreen credentials.",
+            onClick = onOpenUnlockPolicy
         )
     }
 }
@@ -1362,9 +1377,6 @@ fun LlmConfigCard(viewModel: MainViewModel) {
     val llmBaseUrl by viewModel.llmBaseUrl.collectAsState()
     val llmApiKey by viewModel.llmApiKey.collectAsState()
     val llmModel by viewModel.llmModel.collectAsState()
-    val autoUnlockBeforeRoute by viewModel.autoUnlockBeforeRoute.collectAsState()
-    val autoLockAfterTask by viewModel.autoLockAfterTask.collectAsState()
-    val unlockPin by viewModel.unlockPin.collectAsState()
     val llmTestResult by viewModel.llmTestResult.collectAsState()
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1405,54 +1417,6 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                 singleLine = true,
                 supportingText = { Text("e.g. gpt-4o-mini, qwen-plus") }
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Auto unlock before route", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Check state and unlock before launch/routing.",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        fontSize = 12.sp
-                    )
-                }
-                Switch(
-                    checked = autoUnlockBeforeRoute,
-                    onCheckedChange = { viewModel.autoUnlockBeforeRoute.value = it }
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Auto lock after task", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Lock screen when task ends if it was unlocked by FSM.",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        fontSize = 12.sp
-                    )
-                }
-                Switch(
-                    checked = autoLockAfterTask,
-                    onCheckedChange = { viewModel.autoLockAfterTask.value = it }
-                )
-            }
-            OutlinedTextField(
-                value = unlockPin,
-                onValueChange = { viewModel.unlockPin.value = it },
-                label = { Text("Unlock PIN / password") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = {
-                    Text("Used by device-side FSM after swipe unlock when lockscreen still requires credentials.")
-                }
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { viewModel.testLlmAndSyncConfig() },
@@ -1476,6 +1440,92 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                     } else {
                         Color(0xFFFF9800)
                     }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun UnlockPolicyConfigCard(viewModel: MainViewModel) {
+    val autoUnlockBeforeRoute by viewModel.autoUnlockBeforeRoute.collectAsState()
+    val autoLockAfterTask by viewModel.autoLockAfterTask.collectAsState()
+    val unlockPin by viewModel.unlockPin.collectAsState()
+    val llmTestResult by viewModel.llmTestResult.collectAsState()
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Unlock & lock policy", style = MaterialTheme.typography.titleSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto unlock before route", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Check screen state and unlock before app launch/routing.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = autoUnlockBeforeRoute,
+                    onCheckedChange = { viewModel.autoUnlockBeforeRoute.value = it }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto lock after task", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Lock screen when task ends if the FSM unlocked it.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = autoLockAfterTask,
+                    onCheckedChange = { viewModel.autoLockAfterTask.value = it }
+                )
+            }
+            OutlinedTextField(
+                value = unlockPin,
+                onValueChange = { viewModel.unlockPin.value = it },
+                label = { Text("Unlock PIN / password") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                supportingText = {
+                    Text("Used only when swipe unlock is not enough.")
+                }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { viewModel.syncDeviceConfigOnly() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Sync to device")
+                }
+                OutlinedButton(
+                    onClick = { viewModel.saveConfig() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Save only")
+                }
+            }
+            if (llmTestResult.isNotEmpty()) {
+                Text(
+                    text = llmTestResult,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
                 )
             }
         }

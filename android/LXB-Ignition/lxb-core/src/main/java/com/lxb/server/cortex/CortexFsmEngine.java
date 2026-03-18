@@ -140,6 +140,16 @@ public class CortexFsmEngine {
     private static final int UI_SETTLE_REQUIRED_HITS = 2;
     private static final int VISION_MAX_TURNS_SINGLE = 100;
     private static final int VISION_MAX_TURNS_LOOP = 100;
+    private static final long UNLOCK_POST_CMD_SLEEP_MS = 3000L;
+    private static final long UNLOCK_POST_PIN_SLEEP_MS = 1200L;
+    private static final long UNLOCK_POST_HOME_SLEEP_MS = 700L;
+    private static final long UNLOCK_STABLE_TIMEOUT_MS = 3000L;
+    private static final long UNLOCK_STABLE_SAMPLE_MS = 300L;
+    private static final int UNLOCK_STABLE_REQUIRED_HITS = 2;
+    private static final long STOP_POST_CMD_SLEEP_MS = 350L;
+    private static final long STOP_WAIT_EXIT_TIMEOUT_MS = 2200L;
+    private static final long STOP_WAIT_EXIT_SAMPLE_MS = 250L;
+    private static final int KEYCODE_HOME = 3;
     private static final int KEYCODE_ENTER = 66;
     private static final int KEYCODE_POWER = 26;
 
@@ -331,27 +341,24 @@ public class CortexFsmEngine {
                 String fastPathPkg = resolveMemoryFastPathPackage(ctx);
                 if (!fastPathPkg.isEmpty()) {
                     ctx.selectedPackage = fastPathPkg;
-                    boolean launchOk = launchAppForRouting(ctx, fastPathPkg);
+                    String memoryTargetPage = stringOrEmpty(ctx.taskMemoryHint.get("target_page"));
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("task_id", ctx.taskId);
                     m.put("index", idx);
                     m.put("sub_task_id", st.id);
                     m.put("package", fastPathPkg);
-                    m.put("launch_ok", launchOk);
+                    m.put("mode", "route_pipeline");
+                    m.put("memory_target_page", memoryTargetPage);
                     m.put("memory_summary", stringOrEmpty(ctx.taskMemoryHint.get("summary_text")));
                     trace.event("fsm_memory_fast_path", m);
-                    if (launchOk) {
-                        memoryFastPathUsed = true;
-                        anyMemoryFastPathUsed = true;
-                        // Align with routing launch settle to reduce early vision mismatch.
-                        try {
-                            Thread.sleep(1200);
-                        } catch (InterruptedException ignored) {
-                        }
-                        state = State.VISION_ACT;
-                    } else {
-                        state = State.APP_RESOLVE;
+                    memoryFastPathUsed = true;
+                    anyMemoryFastPathUsed = true;
+                    // Safety: memory fast path only skips APP_RESOLVE.
+                    // Keep ROUTE_PLAN/ROUTING to ensure deterministic entry page.
+                    if (!memoryTargetPage.isEmpty() && (ctx.targetPage == null || ctx.targetPage.trim().isEmpty())) {
+                        ctx.targetPage = memoryTargetPage;
                     }
+                    state = State.ROUTE_PLAN;
                 } else {
                     state = State.APP_RESOLVE;
                 }
@@ -1783,8 +1790,18 @@ public class CortexFsmEngine {
                 if (!ensureUnlockedBeforeRoute(ctx, packageName, attempt)) {
                     continue;
                 }
-                // Best-effort stop before launch to avoid start failure when app is in a bad background state.
-                stopAppBestEffortForRouting(packageName);
+                // Stop must be confirmed before launch to avoid stale task stack races after unlock.
+                boolean stopReady = stopAppAndWaitForRouting(packageName);
+                if (!stopReady) {
+                    Map<String, Object> ev = new LinkedHashMap<>();
+                    ev.put("package", packageName);
+                    ev.put("attempt", attempt);
+                    ev.put("stop_ready", false);
+                    ev.put("launch_ok", false);
+                    ev.put("package_ready", false);
+                    trace.event("fsm_routing_launch_attempt", ev);
+                    continue;
+                }
                 boolean launchOk = launchAppClearTaskForRouting(packageName);
                 boolean packageReady = launchOk && waitForForegroundPackageForRouting(
                         packageName, LAUNCH_WAIT_TIMEOUT_MS, LAUNCH_WAIT_SAMPLE_MS
@@ -1793,6 +1810,7 @@ public class CortexFsmEngine {
                 Map<String, Object> ev = new LinkedHashMap<>();
                 ev.put("package", packageName);
                 ev.put("attempt", attempt);
+                ev.put("stop_ready", true);
                 ev.put("launch_ok", launchOk);
                 ev.put("package_ready", packageReady);
                 trace.event("fsm_routing_launch_attempt", ev);
@@ -1853,50 +1871,102 @@ public class CortexFsmEngine {
         }
     }
 
-    private String getCurrentPackageForRouting() {
+    private boolean waitForForegroundPackageNotForRouting(String blockedPackage, long timeoutMs, long sampleMs) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (true) {
+            String currentPkg = getCurrentPackageForRouting();
+            if (!blockedPackage.equals(currentPkg)) {
+                return true;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            sleepQuiet(Math.max(1L, sampleMs));
+        }
+    }
+
+    private static class ActivityInfo {
+        final String packageName;
+        final String activityName;
+
+        ActivityInfo(String packageName, String activityName) {
+            this.packageName = packageName != null ? packageName : "";
+            this.activityName = activityName != null ? activityName : "";
+        }
+    }
+
+    private ActivityInfo getCurrentActivityInfoForRouting() {
         try {
             byte[] resp = perception != null ? perception.handleGetActivity() : null;
             if (resp == null || resp.length < 5) {
-                return "";
+                return new ActivityInfo("", "");
             }
             ByteBuffer buf = ByteBuffer.wrap(resp).order(ByteOrder.BIG_ENDIAN);
             byte status = buf.get();
             if (status == 0) {
-                return "";
+                return new ActivityInfo("", "");
             }
             int pkgLen = buf.getShort() & 0xFFFF;
             if (pkgLen <= 0 || buf.remaining() < pkgLen) {
-                return "";
+                return new ActivityInfo("", "");
             }
             byte[] pkgBytes = new byte[pkgLen];
             buf.get(pkgBytes);
-            return new String(pkgBytes, StandardCharsets.UTF_8).trim();
+            String pkg = new String(pkgBytes, StandardCharsets.UTF_8).trim();
+
+            String act = "";
+            if (buf.remaining() >= 2) {
+                int actLen = buf.getShort() & 0xFFFF;
+                if (actLen > 0 && buf.remaining() >= actLen) {
+                    byte[] actBytes = new byte[actLen];
+                    buf.get(actBytes);
+                    act = new String(actBytes, StandardCharsets.UTF_8).trim();
+                }
+            }
+            return new ActivityInfo(pkg, act);
         } catch (Exception ignored) {
-            return "";
+            return new ActivityInfo("", "");
         }
     }
 
-    private void stopAppBestEffortForRouting(String packageName) {
+    private String getCurrentPackageForRouting() {
+        return getCurrentActivityInfoForRouting().packageName;
+    }
+
+    private boolean isLikelyLockscreenShown() {
+        ActivityInfo a = getCurrentActivityInfoForRouting();
+        String pkg = a.packageName.toLowerCase(Locale.ROOT);
+        String act = a.activityName.toLowerCase(Locale.ROOT);
+        return pkg.contains("systemui")
+                || act.contains("keyguard")
+                || act.contains("lockscreen");
+    }
+
+    private boolean stopAppAndWaitForRouting(String packageName) {
         try {
             byte[] pkgBytes = packageName.getBytes(StandardCharsets.UTF_8);
             ByteBuffer buf = ByteBuffer.allocate(2 + pkgBytes.length).order(ByteOrder.BIG_ENDIAN);
             buf.putShort((short) pkgBytes.length);
             buf.put(pkgBytes);
             byte[] resp = execution != null ? execution.handleStopApp(buf.array()) : null;
-            boolean ok = resp != null && resp.length > 0 && resp[0] == 0x01;
+            boolean stopAck = resp != null && resp.length > 0 && resp[0] == 0x01;
+            sleepQuiet(STOP_POST_CMD_SLEEP_MS);
+            boolean foregroundCleared = waitForForegroundPackageNotForRouting(
+                    packageName, STOP_WAIT_EXIT_TIMEOUT_MS, STOP_WAIT_EXIT_SAMPLE_MS
+            );
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("package", packageName);
-            ev.put("result", ok ? "ok" : "fail");
+            ev.put("stop_ack", stopAck);
+            ev.put("foreground_cleared", foregroundCleared);
+            ev.put("result", (stopAck && foregroundCleared) ? "ok" : "retry");
             trace.event("fsm_routing_stop_app", ev);
-            try {
-                Thread.sleep(150);
-            } catch (InterruptedException ignored) {
-            }
+            return stopAck && foregroundCleared;
         } catch (Exception e) {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("package", packageName);
             ev.put("err", String.valueOf(e));
             trace.event("fsm_routing_stop_err", ev);
+            return false;
         }
     }
 
@@ -1939,32 +2009,62 @@ public class CortexFsmEngine {
         }
 
         int state = getScreenStateCode();
-        if (state == 1) {
+        boolean lockHint = isLikelyLockscreenShown();
+        if (state == 1 && !lockHint) {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
             ev.put("package", packageName);
             ev.put("route_attempt", routeAttempt);
             ev.put("screen_state", state);
+            ev.put("lock_hint", false);
             ev.put("result", "already_unlocked");
             trace.event("fsm_route_unlock", ev);
             return true;
         }
 
+        // Locked/off or lockscreen-like foreground: perform unlock flow with stable checks.
         for (int unlockAttempt = 1; unlockAttempt <= 3; unlockAttempt++) {
             byte[] unlockResp = execution != null ? execution.handleUnlock(new byte[0]) : null;
             boolean unlockCmdOk = unlockResp != null && unlockResp.length > 0 && unlockResp[0] == 0x01;
-            sleepQuiet(250);
+            sleepQuiet(UNLOCK_POST_CMD_SLEEP_MS);
 
-            int afterUnlockState = getScreenStateCode();
+            int stateAfterUnlockCmd = getScreenStateCode();
+            boolean lockHintAfterUnlockCmd = isLikelyLockscreenShown();
             boolean pinTried = false;
             boolean pinInputOk = false;
+            boolean homeSent = false;
+            boolean unlockedStable = false;
+            boolean homeStable = false;
 
-            if (afterUnlockState != 1 && !ctx.unlockPin.isEmpty()) {
+            // After wake+swipe, if lockscreen is still shown, try PIN/password.
+            if ((stateAfterUnlockCmd != 1 || lockHintAfterUnlockCmd) && !ctx.unlockPin.isEmpty()) {
                 pinTried = true;
                 pinInputOk = tryInputUnlockPin(ctx.unlockPin);
-                sleepQuiet(450);
-                afterUnlockState = getScreenStateCode();
+                sleepQuiet(UNLOCK_POST_PIN_SLEEP_MS);
             }
+
+            unlockedStable = waitForUnlockedStableForRouting(
+                    UNLOCK_STABLE_TIMEOUT_MS,
+                    UNLOCK_STABLE_SAMPLE_MS,
+                    UNLOCK_STABLE_REQUIRED_HITS
+            );
+
+            // Unlock considered successful only when lockscreen signal disappears stably.
+            if (unlockedStable) {
+                homeSent = sendKeyClick(KEYCODE_HOME);
+                sleepQuiet(UNLOCK_POST_HOME_SLEEP_MS);
+                homeStable = waitForUnlockedStableForRouting(
+                        UNLOCK_STABLE_TIMEOUT_MS,
+                        UNLOCK_STABLE_SAMPLE_MS,
+                        UNLOCK_STABLE_REQUIRED_HITS
+                );
+                if (homeStable) {
+                    ctx.unlockedByFsm = true;
+                }
+            }
+
+            int finalState = getScreenStateCode();
+            boolean finalLockHint = isLikelyLockscreenShown();
 
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
@@ -1974,16 +2074,22 @@ public class CortexFsmEngine {
             ev.put("unlock_cmd_ok", unlockCmdOk);
             ev.put("pin_tried", pinTried);
             ev.put("pin_input_ok", pinInputOk);
-            ev.put("screen_state_after", afterUnlockState);
+            ev.put("screen_state_after_unlock_cmd", stateAfterUnlockCmd);
+            ev.put("lock_hint_after_unlock_cmd", lockHintAfterUnlockCmd);
+            ev.put("unlocked_stable", unlockedStable);
+            ev.put("home_sent", homeSent);
+            ev.put("home_stable", homeStable);
+            ev.put("screen_state_final", finalState);
+            ev.put("lock_hint_final", finalLockHint);
             trace.event("fsm_route_unlock_attempt", ev);
 
-            if (afterUnlockState == 1) {
-                ctx.unlockedByFsm = true;
+            if (unlockedStable && homeStable && finalState == 1 && !finalLockHint) {
                 Map<String, Object> okEv = new LinkedHashMap<>();
                 okEv.put("task_id", ctx.taskId);
                 okEv.put("package", packageName);
                 okEv.put("route_attempt", routeAttempt);
                 okEv.put("unlock_attempt", unlockAttempt);
+                okEv.put("home_sent", homeSent);
                 okEv.put("result", "ok");
                 trace.event("fsm_route_unlock", okEv);
                 return true;
@@ -1996,8 +2102,30 @@ public class CortexFsmEngine {
         ev.put("route_attempt", routeAttempt);
         ev.put("result", "failed");
         ev.put("screen_state", getScreenStateCode());
+        ev.put("lock_hint", isLikelyLockscreenShown());
         trace.event("fsm_route_unlock", ev);
         return false;
+    }
+
+    private boolean waitForUnlockedStableForRouting(long timeoutMs, long sampleMs, int requiredHits) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        int hits = 0;
+        while (true) {
+            int state = getScreenStateCode();
+            boolean lockHint = isLikelyLockscreenShown();
+            if (state == 1 && !lockHint) {
+                hits += 1;
+                if (hits >= Math.max(1, requiredHits)) {
+                    return true;
+                }
+            } else {
+                hits = 0;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            sleepQuiet(Math.max(1L, sampleMs));
+        }
     }
 
     private boolean tryInputUnlockPin(String pin) {

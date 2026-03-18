@@ -1153,6 +1153,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ----- LLM config and test -----
 
+    private fun buildDeviceLlmConfigJson(): String {
+        return org.json.JSONObject()
+            .put("api_base_url", llmBaseUrl.value.trim())
+            .put("api_key", llmApiKey.value)
+            .put("model", llmModel.value.trim())
+            .put("auto_unlock_before_route", autoUnlockBeforeRoute.value)
+            .put("auto_lock_after_task", autoLockAfterTask.value)
+            .put("unlock_pin", unlockPin.value.trim())
+            .toString()
+    }
+
+    private suspend fun syncDeviceLlmConfigFile(): Result<String> {
+        val cfgBytes = buildDeviceLlmConfigJson().toByteArray(Charset.forName("UTF-8"))
+        val llmConfigPath = shizukuManager.getLlmConfigPath()
+        val syncResult = withContext(Dispatchers.IO) {
+            shizukuManager.writeConfigFile(llmConfigPath, cfgBytes)
+        }
+        return if (syncResult.isSuccess) {
+            Result.success(llmConfigPath)
+        } else {
+            Result.failure(
+                syncResult.exceptionOrNull() ?: Exception("Unknown error while syncing config")
+            )
+        }
+    }
+
+    fun syncDeviceConfigOnly() {
+        saveConfig()
+        viewModelScope.launch {
+            llmTestResult.value = "Syncing device config..."
+            val sync = syncDeviceLlmConfigFile()
+            if (sync.isSuccess) {
+                val path = sync.getOrNull().orEmpty()
+                val msg = "Device config synced: $path"
+                llmTestResult.value = msg
+                appendLog("[LLM] $msg")
+            } else {
+                val msg = "Failed to sync device config: ${sync.exceptionOrNull()?.message}"
+                llmTestResult.value = msg
+                appendLog("[LLM] $msg")
+            }
+        }
+    }
+
     fun testLlmAndSyncConfig() {
         val baseUrl = llmBaseUrl.value.trim()
         val model = llmModel.value.trim()
@@ -1167,26 +1211,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             llmTestResult.value = "Testing LLM..."
 
             // 1) Write device-side config file (shell readable)
-            val cfgJson = org.json.JSONObject()
-                .put("api_base_url", baseUrl)
-                .put("api_key", llmApiKey.value)
-                .put("model", model)
-                .put("auto_unlock_before_route", autoUnlockBeforeRoute.value)
-                .put("auto_lock_after_task", autoLockAfterTask.value)
-                .put("unlock_pin", unlockPin.value.trim())
-                .toString()
-            val cfgBytes = cfgJson.toByteArray(Charset.forName("UTF-8"))
-            val llmConfigPath = shizukuManager.getLlmConfigPath()
-
-            val syncResult = withContext(Dispatchers.IO) {
-                shizukuManager.writeConfigFile(llmConfigPath, cfgBytes)
-            }
-            if (syncResult.isFailure) {
-                val msg = "Failed to write device config: ${syncResult.exceptionOrNull()?.message}"
+            val sync = syncDeviceLlmConfigFile()
+            if (sync.isFailure) {
+                val msg = "Failed to write device config: ${sync.exceptionOrNull()?.message}"
                 llmTestResult.value = msg
                 appendLog("[LLM] $msg")
                 return@launch
             }
+            val llmConfigPath = sync.getOrNull().orEmpty()
             appendLog("[LLM] Config synced to $llmConfigPath")
 
             // 2) Directly call cloud LLM from APK to validate the config

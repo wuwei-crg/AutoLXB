@@ -950,20 +950,23 @@ public class UiAutomationWrapper {
 
             String launchActivity = getLaunchActivity(packageName);
             if (launchActivity == null || launchActivity.isEmpty()) {
-                cmd.append("monkey -p ").append(packageName)
-                        .append(" -c android.intent.category.LAUNCHER 1");
-            } else {
-                cmd.append("am start -n ").append(packageName).append("/").append(launchActivity);
-                if ((flags & 0x01) != 0) {
-                    cmd.append(" --activity-clear-task");
-                }
+                System.err.println(TAG + " launchApp failed: cannot resolve launch activity for " + packageName);
+                return false;
+            }
+            cmd.append("am start -n ").append(packageName).append("/").append(launchActivity);
+            if ((flags & 0x01) != 0) {
+                cmd.append(" --activity-clear-task");
             }
 
             Process process = Runtime.getRuntime().exec(cmd.toString());
+            int exitCode = process.waitFor();
 
             if ((flags & 0x02) != 0) {
-                process.waitFor();
                 Thread.sleep(500);
+            }
+            if (exitCode != 0) {
+                System.err.println(TAG + " launchApp failed: exitCode=" + exitCode + ", cmd=" + cmd);
+                return false;
             }
 
             System.out.println(TAG + " launchApp: " + packageName);
