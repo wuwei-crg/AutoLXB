@@ -2,14 +2,17 @@ package com.example.lxb_ignition
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.lxb_ignition.service.LocalLinkClient
+import com.example.lxb_ignition.service.TaskRuntimeService
 import com.example.lxb_ignition.shizuku.ShizukuManager
 import com.lxb.server.cortex.LlmClient
 import com.lxb.server.protocol.CommandIds
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
@@ -90,6 +93,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages.asStateFlow()
     private var nextMsgId: Long = 1L
     private var activeTraceJob: Job? = null
+    private var activeRuntimeTaskId: String = ""
 
     // Tasks tab: recent task list (lightweight snapshot).
     data class TaskSummary(
@@ -242,6 +246,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendUserMessage(req)
             appendSystemMessage("Task received, checking lxb-core server status...")
             sendResult.value = "Submitting task to device..."
+            activeRuntimeTaskId = ""
+            updateTaskRuntimeIndicator("SUBMITTING", "Submitting task to device...")
 
             val running = withContext(Dispatchers.IO) {
                 runCatching { shizukuManager.isServerRunning() }.getOrDefault(false)
@@ -251,6 +257,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sendResult.value = err
                 appendLog("[FSM] $err")
                 appendSystemMessage("Server is not running, please start the service first.")
+                stopTaskRuntimeIndicator()
                 return@launch
             }
 
@@ -306,6 +313,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (taskId.isNotEmpty()) {
                 appendSystemMessage("Task id: $taskId")
+                startTaskRuntimeIndicator(taskId, "RUNNING", "Task submitted, waiting for trace events...")
+            } else {
+                stopTaskRuntimeIndicator()
             }
         }
     }
@@ -329,6 +339,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog("[FSM] Cancel requested.")
                 withContext(Dispatchers.Main) {
                     appendSystemMessage("Cancel requested for current task.")
+                    updateTaskRuntimeIndicator("CANCELLING", "Cancel request sent.")
                 }
             }.onFailure { e ->
                 appendLog("[FSM] Cancel request failed: ${e.message}")
@@ -746,6 +757,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun appendChatMessageFromTrace(obj: org.json.JSONObject) {
         val event = obj.optString("event", "")
         if (event.isEmpty()) return
+        onTraceRuntimeEvent(obj, event)
 
         when (event) {
             "fsm_state_enter" -> {
@@ -1016,6 +1028,115 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun startTaskRuntimeIndicator(taskId: String, phase: String, detail: String) {
+        activeRuntimeTaskId = taskId
+        sendTaskRuntimeServiceAction(
+            action = TaskRuntimeService.ACTION_START,
+            taskId = taskId,
+            phase = phase,
+            detail = detail
+        )
+    }
+
+    private fun updateTaskRuntimeIndicator(phase: String, detail: String = "", taskId: String = "") {
+        val tid = if (taskId.isNotEmpty()) taskId else activeRuntimeTaskId
+        sendTaskRuntimeServiceAction(
+            action = TaskRuntimeService.ACTION_UPDATE,
+            taskId = tid,
+            phase = phase,
+            detail = detail
+        )
+    }
+
+    private fun stopTaskRuntimeIndicator() {
+        sendTaskRuntimeServiceAction(
+            action = TaskRuntimeService.ACTION_STOP,
+            taskId = activeRuntimeTaskId,
+            phase = "STOP",
+            detail = ""
+        )
+        activeRuntimeTaskId = ""
+    }
+
+    private fun sendTaskRuntimeServiceAction(action: String, taskId: String, phase: String, detail: String) {
+        val app = getApplication<Application>()
+        runCatching {
+            val intent = Intent(app, TaskRuntimeService::class.java).apply {
+                this.action = action
+                putExtra(TaskRuntimeService.EXTRA_TASK_ID, taskId)
+                putExtra(TaskRuntimeService.EXTRA_PHASE, phase)
+                putExtra(TaskRuntimeService.EXTRA_DETAIL, detail)
+            }
+            if (action == TaskRuntimeService.ACTION_STOP) {
+                app.startService(intent)
+            } else {
+                ContextCompat.startForegroundService(app, intent)
+            }
+        }.onFailure { e ->
+            appendLog("[RUNTIME_INDICATOR] action=$action failed: ${e.message}")
+        }
+    }
+
+    private fun shouldTrackRuntimeTask(traceTaskId: String): Boolean {
+        val tid = traceTaskId.trim()
+        if (tid.isEmpty()) {
+            return activeRuntimeTaskId.isNotEmpty()
+        }
+        if (activeRuntimeTaskId.isEmpty()) {
+            activeRuntimeTaskId = tid
+            return true
+        }
+        return activeRuntimeTaskId == tid
+    }
+
+    private fun onTraceRuntimeEvent(obj: org.json.JSONObject, event: String) {
+        val taskId = obj.optString("task_id", "")
+        if (!shouldTrackRuntimeTask(taskId)) {
+            return
+        }
+        when (event) {
+            "fsm_state_enter" -> {
+                when (obj.optString("state", "")) {
+                    "APP_RESOLVE" -> updateTaskRuntimeIndicator("APP_RESOLVE", "Selecting app...", taskId)
+                    "ROUTE_PLAN" -> updateTaskRuntimeIndicator("ROUTE_PLAN", "Planning route...", taskId)
+                    "ROUTING" -> updateTaskRuntimeIndicator("ROUTING", "Executing route...", taskId)
+                    "VISION_ACT" -> updateTaskRuntimeIndicator("VISION_ACT", "Running vision-action...", taskId)
+                    "FINISH" -> {
+                        updateTaskRuntimeIndicator("DONE", "Task finished.", taskId)
+                        stopTaskRuntimeIndicator()
+                    }
+                    "FAIL" -> {
+                        updateTaskRuntimeIndicator("FAILED", "Task failed.", taskId)
+                        stopTaskRuntimeIndicator()
+                    }
+                }
+            }
+
+            "vision_screenshot_ready" -> updateTaskRuntimeIndicator("VISION_CAPTURE", "Screenshot captured.", taskId)
+            "llm_prompt_vision_act" -> updateTaskRuntimeIndicator("VISION_LLM", "Calling LLM/VLM...", taskId)
+            "llm_response_vision_act" -> updateTaskRuntimeIndicator("VISION_PARSE", "Model responded.", taskId)
+            "vision_settle_begin" -> updateTaskRuntimeIndicator("SETTLING", "Waiting UI stable...", taskId)
+            "vision_settle_ready" -> updateTaskRuntimeIndicator("VISION_ACT", "UI stable.", taskId)
+            "vision_settle_timeout" -> updateTaskRuntimeIndicator("SETTLING", "UI settle timeout, continue.", taskId)
+            "vision_settle_fallback" -> updateTaskRuntimeIndicator("SETTLING", "Dump unavailable, fallback wait.", taskId)
+            "fsm_task_cancelled" -> {
+                updateTaskRuntimeIndicator("CANCELLED", "Cancelled by user.", taskId)
+                stopTaskRuntimeIndicator()
+            }
+
+            "planner_call_failed",
+            "vision_instruction_invalid",
+            "vision_action_loop_detected",
+            "exec_action_error",
+            "fsm_app_resolve_failed",
+            "fsm_route_plan_failed",
+            "fsm_routing_failed" -> {
+                updateTaskRuntimeIndicator("FAILED", "Execution failed.", taskId)
+                stopTaskRuntimeIndicator()
+            }
+        }
+    }
+
     // ----- LLM config and test -----
 
     fun testLlmAndSyncConfig() {
@@ -1148,6 +1269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         shizukuManager.detach()
         activeTraceJob?.cancel()
+        stopTaskRuntimeIndicator()
         httpClient.dispatcher.executorService.shutdown()
     }
 }

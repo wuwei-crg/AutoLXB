@@ -3,8 +3,10 @@ package com.lxb.server.cortex;
 import com.lxb.server.cortex.json.Json;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InterruptedIOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -16,6 +18,26 @@ import java.util.Map;
 public class LlmClient {
 
     public String chatOnce(LlmConfig config, String systemPrompt, String userMessage, byte[] imagePng) throws Exception {
+        final int maxAttempts = 3;
+        Exception last = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return chatOnceSingleAttempt(config, systemPrompt, userMessage, imagePng);
+            } catch (Exception e) {
+                last = e;
+                if (attempt >= maxAttempts || !shouldRetry(e)) {
+                    throw e;
+                }
+                sleepBackoff(attempt);
+            }
+        }
+        if (last != null) {
+            throw last;
+        }
+        throw new IllegalStateException("LLM call failed with unknown error");
+    }
+
+    private String chatOnceSingleAttempt(LlmConfig config, String systemPrompt, String userMessage, byte[] imagePng) throws Exception {
         HttpURLConnection conn = null;
         try {
             String endpoint = buildEndpointUrl(config.apiBaseUrl);
@@ -105,6 +127,37 @@ public class LlmClient {
                 conn.disconnect();
             }
         }
+    }
+
+    private static boolean shouldRetry(Exception e) {
+        if (e instanceof SocketTimeoutException) {
+            return true;
+        }
+        if (e instanceof InterruptedIOException) {
+            // Includes read timeout and interrupted I/O variants.
+            return true;
+        }
+        // Retry once/multiple times on transient HTTP failures wrapped in IllegalStateException.
+        if (e instanceof IllegalStateException) {
+            String msg = String.valueOf(e.getMessage());
+            // Retry for timeout and 5xx/429 classes; skip hard auth/missing endpoint failures.
+            if (msg.contains("timeout")) return true;
+            if (msg.contains("HTTP 5")) return true;
+            if (msg.contains("HTTP 429")) return true;
+            if (msg.contains("HTTP 408")) return true;
+            if (msg.contains("HTTP 401")) return false;
+            if (msg.contains("HTTP 403")) return false;
+            if (msg.contains("HTTP 404")) return false;
+            return true;
+        }
+        // Fallback: retry unknown transient exceptions as requested.
+        return true;
+    }
+
+    private static void sleepBackoff(int attempt) throws InterruptedException {
+        // 1st retry: 600ms, 2nd retry: 1200ms.
+        long ms = 600L * Math.max(1, attempt);
+        Thread.sleep(ms);
     }
 
     @SuppressWarnings("unchecked")

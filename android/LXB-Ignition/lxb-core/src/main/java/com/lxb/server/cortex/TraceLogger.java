@@ -7,9 +7,11 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Date;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -95,39 +97,62 @@ public class TraceLogger {
         int n = Math.max(1, Math.min(maxLines, capacity));
         int skip = Math.max(0, ring.size() - n);
 
-        // UDP datagrams have MTU limits; avoid returning an oversized JSONL blob that causes EMSGSIZE.
-        // Use character length as an approximation of byte length (JSON content is mostly ASCII).
-        final int maxChars = 60000;
+        // UDP/frame payload has an upper bound; keep response safely under that limit.
+        // Use UTF-8 byte size (not char count) to avoid underestimating non-ASCII lines.
+        final int maxBytes = 60000;
 
-        StringBuilder sb = new StringBuilder();
+        List<String> lines = new ArrayList<>(n);
         int i = 0;
-        boolean truncated = false;
         for (String line : ring) {
             if (i++ < skip) {
                 continue;
             }
-            if (sb.length() + line.length() + 1 > maxChars) {
-                truncated = true;
-                break;
+            lines.add(line);
+        }
+
+        int totalBytes = 0;
+        for (String line : lines) {
+            totalBytes += utf8Length(line) + 1; // '\n'
+        }
+
+        int droppedHead = 0;
+        while (totalBytes > maxBytes && !lines.isEmpty()) {
+            String dropped = lines.remove(0);
+            totalBytes -= utf8Length(dropped) + 1;
+            droppedHead += 1;
+        }
+
+        String marker = null;
+        if (droppedHead > 0) {
+            Map<String, Object> markerObj = new LinkedHashMap<>();
+            markerObj.put("event", "trace_truncated");
+            markerObj.put("reason", "trace_dump_exceeds_limit");
+            markerObj.put("drop_head_lines", droppedHead);
+            markerObj.put("kept_tail_lines", lines.size());
+            marker = Json.stringify(markerObj);
+            int markerBytes = utf8Length(marker) + 1;
+            while (!lines.isEmpty() && totalBytes + markerBytes > maxBytes) {
+                String dropped = lines.remove(0);
+                totalBytes -= utf8Length(dropped) + 1;
             }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (marker != null) {
+            sb.append(marker).append('\n');
+        }
+        for (String line : lines) {
             sb.append(line).append('\n');
         }
 
-        if (truncated) {
-            // Append a simple marker line so upstream can tell the trace was truncated.
-            String marker = Json.stringify(new LinkedHashMap<String, Object>() {{
-                put("event", "trace_truncated");
-                put("reason", "trace_dump_exceeds_limit");
-            }});
-            // Ensure marker itself also fits into the remaining budget.
-            int remaining = maxChars - sb.length();
-            if (marker.length() + 1 > remaining) {
-                marker = marker.substring(0, Math.max(0, remaining - 1));
-            }
-            sb.append(marker).append('\n');
-        }
-
         return sb.toString();
+    }
+
+    private static int utf8Length(String s) {
+        if (s == null || s.isEmpty()) {
+            return 0;
+        }
+        return s.getBytes(StandardCharsets.UTF_8).length;
     }
 
     /**

@@ -45,7 +45,7 @@ public class CortexFacade {
         this.perceptionEngine = perceptionEngine;
         this.executionEngine = executionEngine;
         this.mapManager = new MapManager();
-        this.trace = new TraceLogger(300);
+        this.trace = new TraceLogger(2000);
         this.locatorResolver = new LocatorResolver(perceptionEngine, trace);
         this.llmClient = new LlmClient();
         this.fsmEngine = new CortexFsmEngine(perceptionEngine, executionEngine, mapManager, trace);

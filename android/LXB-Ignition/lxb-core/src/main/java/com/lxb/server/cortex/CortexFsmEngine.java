@@ -1,6 +1,7 @@
 package com.lxb.server.cortex;
 
 import com.lxb.server.cortex.json.Json;
+import com.lxb.server.cortex.dump.DumpActionsParser;
 import com.lxb.server.execution.ExecutionEngine;
 import com.lxb.server.perception.PerceptionEngine;
 
@@ -10,10 +11,12 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -123,6 +126,11 @@ public class CortexFsmEngine {
     private static final long LAUNCH_WAIT_SAMPLE_MS = 500L;
     private static final int INPUT_METHOD_ADB = 0;
     private static final int INPUT_METHOD_CLIPBOARD = 1;
+    private static final long UI_SETTLE_TIMEOUT_MS = 2500L;
+    private static final long UI_SETTLE_SAMPLE_MS = 500L;
+    private static final long UI_SETTLE_FALLBACK_MS = 600L;
+    private static final double UI_SETTLE_SIM_THRESHOLD = 0.90d;
+    private static final int UI_SETTLE_REQUIRED_HITS = 2;
 
     // Allowed ops per state, mirroring Python _ALLOWED_OPS
     private static final java.util.Set<String> VISION_ALLOWED_OPS = new java.util.HashSet<>();
@@ -2312,7 +2320,7 @@ public class CortexFsmEngine {
                     put("x", tx);
                     put("y", ty);
                 }});
-                return true;
+                return waitForUiStableByDumpActions(ctx, "TAP");
             }
             if ("SWIPE".equals(cmd.op)) {
                 double x1f = Double.parseDouble(cmd.args.get(0));
@@ -2344,7 +2352,7 @@ public class CortexFsmEngine {
                 trace.event("exec_swipe_start", ev);
                 execution.handleSwipe(buf.array());
                 trace.event("exec_swipe_done", ev);
-                return true;
+                return waitForUiStableByDumpActions(ctx, "SWIPE");
             }
             if ("INPUT".equals(cmd.op)) {
                 String text = cmd.args.get(0);
@@ -2394,7 +2402,10 @@ public class CortexFsmEngine {
                 ev.put("actual_method", lastActualMethod);
                 ev.put("status", lastStatus);
                 trace.event("exec_input_result", ev);
-                return lastStatus == 1;
+                if (lastStatus != 1) {
+                    return false;
+                }
+                return waitForUiStableByDumpActions(ctx, "INPUT");
             }
             if ("WAIT".equals(cmd.op)) {
                 int ms = Integer.parseInt(cmd.args.get(0));
@@ -2420,7 +2431,7 @@ public class CortexFsmEngine {
                 trace.event("exec_back_start", ev);
                 execution.handleKeyEvent(buf.array());
                 trace.event("exec_back_done", ev);
-                return true;
+                return waitForUiStableByDumpActions(ctx, "BACK");
             }
 
             ctx.error = "unsupported_action_op:" + cmd.op;
@@ -2437,6 +2448,164 @@ public class CortexFsmEngine {
             ev.put("err", String.valueOf(e));
             trace.event("exec_action_error", ev);
             return false;
+        }
+    }
+
+    private boolean waitForUiStableByDumpActions(Context ctx, String op) {
+        Map<String, Object> begin = new LinkedHashMap<>();
+        begin.put("task_id", ctx.taskId);
+        begin.put("op", op);
+        begin.put("timeout_ms", UI_SETTLE_TIMEOUT_MS);
+        begin.put("sample_ms", UI_SETTLE_SAMPLE_MS);
+        begin.put("sim_threshold", UI_SETTLE_SIM_THRESHOLD);
+        trace.event("vision_settle_begin", begin);
+
+        try {
+            DumpSnapshot prev = captureDumpActionsSnapshot();
+            if (!prev.valid) {
+                Map<String, Object> ev = new LinkedHashMap<>();
+                ev.put("task_id", ctx.taskId);
+                ev.put("op", op);
+                ev.put("reason", "dump_unavailable");
+                ev.put("fallback_wait_ms", UI_SETTLE_FALLBACK_MS);
+                trace.event("vision_settle_fallback", ev);
+                sleepQuiet(UI_SETTLE_FALLBACK_MS);
+                return true;
+            }
+
+            int stableHits = 0;
+            long deadline = System.currentTimeMillis() + UI_SETTLE_TIMEOUT_MS;
+            int samples = 0;
+
+            while (System.currentTimeMillis() < deadline) {
+                sleepQuiet(UI_SETTLE_SAMPLE_MS);
+                DumpSnapshot cur = captureDumpActionsSnapshot();
+                if (!cur.valid) {
+                    Map<String, Object> ev = new LinkedHashMap<>();
+                    ev.put("task_id", ctx.taskId);
+                    ev.put("op", op);
+                    ev.put("reason", "dump_unavailable_midway");
+                    ev.put("fallback_wait_ms", UI_SETTLE_FALLBACK_MS);
+                    trace.event("vision_settle_fallback", ev);
+                    sleepQuiet(UI_SETTLE_FALLBACK_MS);
+                    return true;
+                }
+
+                samples += 1;
+                double sim = jaccard(prev.keys, cur.keys);
+                if (sim >= UI_SETTLE_SIM_THRESHOLD) {
+                    stableHits += 1;
+                } else {
+                    stableHits = 0;
+                }
+
+                Map<String, Object> sampleEv = new LinkedHashMap<>();
+                sampleEv.put("task_id", ctx.taskId);
+                sampleEv.put("op", op);
+                sampleEv.put("sample", samples);
+                sampleEv.put("prev_size", prev.keys.size());
+                sampleEv.put("cur_size", cur.keys.size());
+                sampleEv.put("similarity", sim);
+                sampleEv.put("stable_hits", stableHits);
+                trace.event("vision_settle_sample", sampleEv);
+
+                if (stableHits >= UI_SETTLE_REQUIRED_HITS) {
+                    Map<String, Object> ok = new LinkedHashMap<>();
+                    ok.put("task_id", ctx.taskId);
+                    ok.put("op", op);
+                    ok.put("samples", samples);
+                    ok.put("similarity", sim);
+                    trace.event("vision_settle_ready", ok);
+                    return true;
+                }
+                prev = cur;
+            }
+
+            Map<String, Object> timeoutEv = new LinkedHashMap<>();
+            timeoutEv.put("task_id", ctx.taskId);
+            timeoutEv.put("op", op);
+            timeoutEv.put("status", "timeout");
+            trace.event("vision_settle_timeout", timeoutEv);
+            return true;
+        } catch (Exception e) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("task_id", ctx.taskId);
+            err.put("op", op);
+            err.put("err", String.valueOf(e));
+            trace.event("vision_settle_error", err);
+            sleepQuiet(UI_SETTLE_FALLBACK_MS);
+            return true;
+        }
+    }
+
+    private DumpSnapshot captureDumpActionsSnapshot() {
+        try {
+            byte[] payload = perception != null ? perception.handleDumpActions(new byte[0]) : null;
+            List<DumpActionsParser.ActionNode> nodes = DumpActionsParser.parse(payload);
+            if (nodes == null || nodes.isEmpty()) {
+                return DumpSnapshot.invalid();
+            }
+            Set<String> keys = new HashSet<>(nodes.size() * 2);
+            for (DumpActionsParser.ActionNode n : nodes) {
+                if (n == null || n.bounds == null) {
+                    continue;
+                }
+                String cls = n.className != null ? n.className : "";
+                String rid = n.resourceId != null ? n.resourceId : "";
+                String key = (n.type & 0xFF) + "|" + cls + "|" + rid + "|"
+                        + n.bounds.left + "," + n.bounds.top + "," + n.bounds.right + "," + n.bounds.bottom;
+                keys.add(key);
+            }
+            if (keys.isEmpty()) {
+                return DumpSnapshot.invalid();
+            }
+            return DumpSnapshot.valid(keys);
+        } catch (Exception ignored) {
+            return DumpSnapshot.invalid();
+        }
+    }
+
+    private static double jaccard(Set<String> a, Set<String> b) {
+        if (a == null || b == null || a.isEmpty() || b.isEmpty()) {
+            return 0.0d;
+        }
+        Set<String> small = a.size() <= b.size() ? a : b;
+        Set<String> large = a.size() <= b.size() ? b : a;
+        int inter = 0;
+        for (String k : small) {
+            if (large.contains(k)) {
+                inter += 1;
+            }
+        }
+        int union = a.size() + b.size() - inter;
+        if (union <= 0) {
+            return 0.0d;
+        }
+        return ((double) inter) / ((double) union);
+    }
+
+    private static void sleepQuiet(long ms) {
+        try {
+            Thread.sleep(Math.max(0L, ms));
+        } catch (InterruptedException ignored) {
+        }
+    }
+
+    private static class DumpSnapshot {
+        final boolean valid;
+        final Set<String> keys;
+
+        DumpSnapshot(boolean valid, Set<String> keys) {
+            this.valid = valid;
+            this.keys = keys != null ? keys : new HashSet<String>();
+        }
+
+        static DumpSnapshot valid(Set<String> keys) {
+            return new DumpSnapshot(true, keys);
+        }
+
+        static DumpSnapshot invalid() {
+            return new DumpSnapshot(false, new HashSet<String>());
         }
     }
 
@@ -2495,16 +2664,27 @@ public class CortexFsmEngine {
         sb.append("- loop: continue until no pending target remains.\n\n");
 
         sb.append("[HISTORY_BLOCK]\n");
-        if (ctx.visionHistory.isEmpty()) {
+        String pendingInstruction = stringOrEmpty(ctx.pendingHistoryInstruction);
+        String pendingExpected = stringOrEmpty(ctx.pendingHistoryExpected);
+        boolean hasPending = !pendingInstruction.isEmpty() || !pendingExpected.isEmpty();
+
+        if (ctx.visionHistory.isEmpty() && !hasPending) {
             sb.append("Recent turns: none\n");
         } else {
             sb.append("Recent turns (oldest -> newest):\n");
+            int rowIndex = 1;
             for (int i = 0; i < ctx.visionHistory.size(); i++) {
                 Map<String, Object> row = ctx.visionHistory.get(i);
-                sb.append(i + 1).append(") action: ").append(stringOrEmpty(row.get("instruction"))).append("\n");
+                sb.append(rowIndex++).append(") action: ").append(stringOrEmpty(row.get("instruction"))).append("\n");
                 sb.append("   expected: ").append(stringOrEmpty(row.get("expected"))).append("\n");
                 sb.append("   actual: ").append(stringOrEmpty(row.get("actual"))).append("\n");
                 sb.append("   judgement: ").append(stringOrEmpty(row.get("judgement"))).append("\n");
+            }
+            if (hasPending) {
+                sb.append(rowIndex).append(") action: ").append(pendingInstruction).append("\n");
+                sb.append("   expected: ").append(pendingExpected).append("\n");
+                sb.append("   actual: pending - observe actual result in this turn\n");
+                sb.append("   judgement: pending - evaluate outcome in this turn\n");
             }
         }
         sb.append("History guidance:\n");
