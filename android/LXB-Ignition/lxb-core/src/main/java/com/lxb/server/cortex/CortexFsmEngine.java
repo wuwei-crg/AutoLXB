@@ -101,10 +101,11 @@ public class CortexFsmEngine {
         public int currentSubTaskIndex = -1;
 
         // External semantic history (maintained by host, not by model memory).
-        // Each row contains: instruction, expected, actual, judgement.
+        // Each row contains: instruction, expected, actual, judgement, carry_context.
         public final List<Map<String, Object>> visionHistory = new ArrayList<>();
         public String pendingHistoryInstruction = "";
         public String pendingHistoryExpected = "";
+        public String pendingHistoryCarryContext = "";
 
         // Optional guidance injected by TaskManager.
         public String userPlaybook = "";
@@ -293,6 +294,7 @@ public class CortexFsmEngine {
                 ctx.visionHistory.clear();
                 ctx.pendingHistoryInstruction = "";
                 ctx.pendingHistoryExpected = "";
+                ctx.pendingHistoryCarryContext = "";
 
                 // Select package: caller-provided package has highest priority, then sub_task appHint.
                 if (!initialPackageName.isEmpty()) {
@@ -390,6 +392,7 @@ public class CortexFsmEngine {
                         ctx.visionHistory.clear();
                         ctx.pendingHistoryInstruction = "";
                         ctx.pendingHistoryExpected = "";
+                        ctx.pendingHistoryCarryContext = "";
                         state = State.APP_RESOLVE;
                         continue;
                     }
@@ -752,6 +755,17 @@ public class CortexFsmEngine {
 
     private static String stringOrEmpty(Object o) {
         return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    private static String normalizeCarryContext(String s) {
+        if (s == null) {
+            return "";
+        }
+        String out = s.trim().replaceAll("[\\t\\r\\n]+", " ").replaceAll(" +", " ");
+        if (out.length() > 1200) {
+            out = out.substring(0, 1200).trim();
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")
@@ -2100,6 +2114,7 @@ public class CortexFsmEngine {
         String thinking = "";
         String actionText = "";
         String expectedText = "";
+        String carryContextText = "";
         String commandText = "";
         String lastParseError = "";
         List<Instruction> commands = null;
@@ -2123,7 +2138,7 @@ public class CortexFsmEngine {
                 StringBuilder retryPrompt = new StringBuilder(prompt);
                 retryPrompt.append("\n\n[FORMAT_RETRY]\n");
                 retryPrompt.append("Previous response could not be parsed: ").append(lastParseError).append("\n");
-                retryPrompt.append("Return exactly the required 8 tags in order, and provide one valid DSL command in <command>.");
+                retryPrompt.append("Return exactly the required 9 tags in order, and provide one valid DSL command in <command>.");
                 attemptPrompt = retryPrompt.toString();
             }
 
@@ -2165,6 +2180,7 @@ public class CortexFsmEngine {
                 thinking = extractTagText(raw, "Thinking");
                 actionText = extractTagText(raw, "action");
                 expectedText = extractTagText(raw, "expected");
+                carryContextText = normalizeCarryContext(extractTagText(raw, "carry_context"));
                 commandText = extractTagText(raw, "command");
 
                 // Backward compatibility: if <command> is missing, try old extractor.
@@ -2216,6 +2232,7 @@ public class CortexFsmEngine {
         structured.put("Thinking", thinking);
         structured.put("action", actionText);
         structured.put("expected", expectedText);
+        structured.put("carry_context", carryContextText);
         structured.put("command", commandText);
 
         Map<String, Object> hist = new LinkedHashMap<>();
@@ -2233,13 +2250,16 @@ public class CortexFsmEngine {
 
         // External history maintenance:
         // previous instruction/expected are matched with current actual/judgement.
-        if (!ctx.pendingHistoryInstruction.isEmpty() || !ctx.pendingHistoryExpected.isEmpty()) {
+        if (!ctx.pendingHistoryInstruction.isEmpty()
+                || !ctx.pendingHistoryExpected.isEmpty()
+                || !ctx.pendingHistoryCarryContext.isEmpty()) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("instruction", ctx.pendingHistoryInstruction);
             row.put("expected", ctx.pendingHistoryExpected);
             String actual = !observeResult.isEmpty() ? observeResult : observing;
             row.put("actual", actual);
             row.put("judgement", !judgeResult.isEmpty() ? judgeResult : "unknown");
+            row.put("carry_context", ctx.pendingHistoryCarryContext);
             ctx.visionHistory.add(row);
             while (ctx.visionHistory.size() > 8) {
                 ctx.visionHistory.remove(0);
@@ -2255,6 +2275,7 @@ public class CortexFsmEngine {
         // Stash next pair for history matching in next turn.
         ctx.pendingHistoryInstruction = actionText != null ? actionText.trim() : "";
         ctx.pendingHistoryExpected = expectedText != null ? expectedText.trim() : "";
+        ctx.pendingHistoryCarryContext = carryContextText;
 
         Instruction cmd0 = commands.get(0);
         String currentSig = cmd0.raw.trim();
@@ -2696,7 +2717,8 @@ public class CortexFsmEngine {
         sb.append("[HISTORY_BLOCK]\n");
         String pendingInstruction = stringOrEmpty(ctx.pendingHistoryInstruction);
         String pendingExpected = stringOrEmpty(ctx.pendingHistoryExpected);
-        boolean hasPending = !pendingInstruction.isEmpty() || !pendingExpected.isEmpty();
+        String pendingCarryContext = stringOrEmpty(ctx.pendingHistoryCarryContext);
+        boolean hasPending = !pendingInstruction.isEmpty() || !pendingExpected.isEmpty() || !pendingCarryContext.isEmpty();
 
         if (ctx.visionHistory.isEmpty() && !hasPending) {
             sb.append("Recent turns: none\n");
@@ -2709,15 +2731,18 @@ public class CortexFsmEngine {
                 sb.append("   expected: ").append(stringOrEmpty(row.get("expected"))).append("\n");
                 sb.append("   actual: ").append(stringOrEmpty(row.get("actual"))).append("\n");
                 sb.append("   judgement: ").append(stringOrEmpty(row.get("judgement"))).append("\n");
+                sb.append("   carry_context: ").append(stringOrEmpty(row.get("carry_context"))).append("\n");
             }
             if (hasPending) {
                 sb.append(rowIndex).append(") action: ").append(pendingInstruction).append("\n");
                 sb.append("   expected: ").append(pendingExpected).append("\n");
                 sb.append("   actual: pending - observe actual result in this turn\n");
                 sb.append("   judgement: pending - evaluate outcome in this turn\n");
+                sb.append("   carry_context: ").append(!pendingCarryContext.isEmpty() ? pendingCarryContext : "none").append("\n");
             }
         }
         sb.append("History guidance:\n");
+        sb.append("- Treat carry_context as durable notes for details that may disappear after scroll/page switch.\n");
         sb.append("- Do not repeat actions that already failed with no_effect/wrong_target.\n");
         sb.append("- If repeated no progress, change action strategy.\n\n");
 
@@ -2831,6 +2856,7 @@ public class CortexFsmEngine {
         sb.append("<Thinking>...</Thinking>\n");
         sb.append("<action>...</action>\n");
         sb.append("<expected>...</expected>\n");
+        sb.append("<carry_context>...</carry_context>\n");
         sb.append("<command>...</command>\n");
         sb.append("Field meaning:\n");
         sb.append("- <Observing>: describe what is currently visible and relevant to the current objective.\n");
@@ -2840,6 +2866,7 @@ public class CortexFsmEngine {
         sb.append("- <Thinking>: analyze current situation and decide next strategy.\n");
         sb.append("- <action>: one short natural-language next action intent.\n");
         sb.append("- <expected>: expected result after next action.\n");
+        sb.append("- <carry_context>: concise durable notes needed in later turns (for example question stem/options/key constraints). Use 'none' if nothing to carry.\n");
         sb.append("- <command>: executable command string.\n");
         sb.append("Special first-turn rule:\n");
         sb.append("- If there is no previous action/history, output:\n");
