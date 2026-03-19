@@ -2067,8 +2067,8 @@ public class PerceptionEngine {
                 }
             }
 
-            // Step 6: 等待 IMG_MISSING 或 IMG_FIN (最多重试 3 次)
-            int maxRetries = 3;
+            // Step 6: 等待 IMG_MISSING 或 IMG_FIN (最多重试 5 次)
+            int maxRetries = 5;
             for (int retry = 0; retry < maxRetries; retry++) {
                 FrameCodec.DecodedFrame decoded = waitForControlFrame(
                         server, clientAddr, clientPort, 1000

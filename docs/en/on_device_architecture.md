@@ -10,7 +10,7 @@ Primary target:
 2. Java-side backend runtime in `lxb-core`
 3. Route-Then-Act FSM executed on device
 
-Non-primary (legacy): Python Cortex and old WebConsole path.
+Legacy Python Cortex/WebConsole paths were removed from this repository.
 
 ## Runtime Layers
 
@@ -69,8 +69,7 @@ Repository split:
 
 The following parts are not the current source of truth in this repository:
 
-1. `src/cortex` (Python-side historical implementation)
-2. Old WebConsole documentation and APIs
-3. Historical map-builder path under Python docs
+1. Old WebConsole documentation and APIs
+2. Historical map-builder path under Python docs
 
 Use this doc and root README as the baseline for future updates.

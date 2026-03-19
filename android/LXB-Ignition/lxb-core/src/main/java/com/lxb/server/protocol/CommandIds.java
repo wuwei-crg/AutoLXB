@@ -2,7 +2,7 @@ package com.lxb.server.protocol;
 
 /**
  * Protocol command IDs shared by server modules.
- * Keep aligned with Python constants in src/lxb_link/constants.py.
+ * Keep aligned with client protocol constants (legacy Python path was removed).
  */
 public final class CommandIds {
 

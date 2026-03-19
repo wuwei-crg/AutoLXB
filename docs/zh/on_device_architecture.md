@@ -10,7 +10,7 @@
 2. Java 后端运行时（`lxb-core`）
 3. 设备侧执行 Route-Then-Act 状态机
 
-非主线（历史实现）：Python Cortex 与旧 WebConsole。
+本仓库已移除 Python Cortex/WebConsole 历史实现路径。
 
 ## 运行时分层
 
@@ -69,8 +69,7 @@
 
 以下内容在本仓库中不再是当前权威实现：
 
-1. `src/cortex`（Python 侧历史实现）
-2. 旧 WebConsole 相关文档与接口
-3. Python 文档中的旧 map_builder 路径
+1. 旧 WebConsole 相关文档与接口
+2. Python 文档中的旧 map_builder 路径
 
 后续请优先以本文和根目录 README 为准进行维护。
