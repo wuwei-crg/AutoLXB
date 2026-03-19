@@ -1,19 +1,29 @@
 ﻿# Docs Index (English)
 
-## Actively Maintained Docs
-- [LXB-Link](lxb_link.md)
-- [LXB-Server](lxb_server.md)
-- [LXB-Cortex](lxb_cortex.md)
-- [LXB-MapBuilder](lxb_map_builder.md)
-- [LXB-WebConsole](lxb_web_console.md)
+## Current Docs (Maintained)
 
-## Naming and Mapping
-- `LXB-Link` -> `src/lxb_link`
-- `LXB-Server` -> `android/LXB-Ignition/lxb-core`
-- `LXB-Cortex` -> `src/cortex`
-- `LXB-MapBuilder` -> `src/auto_map_builder`
-- `LXB-WebConsole` -> `web_console`
+1. [On-Device Architecture](on_device_architecture.md)
+2. [Project Quick Start (root README)](../../README.md)
 
-## Maintenance Rules
-- Keep `docs/zh` and `docs/en` mirrored in structure.
-- Treat current code behavior as source of truth.
+## Runtime Source of Truth
+
+1. Android app UI: `android/LXB-Ignition/app`
+2. Java backend service: `android/LXB-Ignition/lxb-core`
+3. FSM engine: `android/LXB-Ignition/lxb-core/src/main/java/com/lxb/server/cortex/CortexFsmEngine.java`
+4. Task/schedule manager: `android/LXB-Ignition/lxb-core/src/main/java/com/lxb/server/cortex/CortexTaskManager.java`
+
+## External Repositories
+
+1. LXB-MapBuilder: <https://github.com/wuwei-crg/LXB-MapBuilder>
+2. LXB-Maps: map data distribution repository
+
+## Legacy Docs
+
+Legacy Python/WebConsole docs were removed from this repository to avoid confusion.
+Historical details should be referenced from commit history when needed.
+
+## Maintenance Policy
+
+1. If behavior conflicts, code wins.
+2. Keep docs aligned to Android on-device runtime first.
+3. New features should update `on_device_architecture.md` first.
