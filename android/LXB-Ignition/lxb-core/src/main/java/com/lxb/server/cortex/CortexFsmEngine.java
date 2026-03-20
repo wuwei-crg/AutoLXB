@@ -65,6 +65,7 @@ public class CortexFsmEngine {
         public String startPage = null;
 
         public String selectedPackage = "";
+        public String selectedPackageLabel = "";
         public String targetPage = "";
 
         public final List<String> routeTrace = new ArrayList<>();
@@ -307,6 +308,7 @@ public class CortexFsmEngine {
                 ctx.lastCommand = "";
                 ctx.sameCommandStreak = 0;
                 ctx.sameActivityStreak = 0;
+                ctx.selectedPackageLabel = "";
                 ctx.currentSubTask = st;
                 ctx.currentSubTaskIndex = idx;
                 ctx.visionHistory.clear();
@@ -406,6 +408,7 @@ public class CortexFsmEngine {
             out.put("task_id", ctx.taskId);
             out.put("state", finalState.name());
             out.put("package_name", ctx.selectedPackage);
+            out.put("package_label", ctx.selectedPackageLabel != null ? ctx.selectedPackageLabel : "");
             out.put("target_page", ctx.targetPage != null ? ctx.targetPage : "");
             out.put("route_trace", new ArrayList<>(ctx.routeTrace));
             out.put("route_result", new LinkedHashMap<>(ctx.routeResult));
@@ -695,10 +698,17 @@ public class CortexFsmEngine {
                     Map<String, Object> m = (Map<String, Object>) item;
                     String pkg = stringOrEmpty(m.get("package"));
                     if (pkg.isEmpty()) continue;
-                    String name = stringOrEmpty(m.get("name"));
+                    String label = stringOrEmpty(m.get("label"));
+                    if (label.isEmpty()) {
+                        label = stringOrEmpty(m.get("name"));
+                    }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("package", pkg);
-                    row.put("name", !name.isEmpty() ? name : pkg.substring(pkg.lastIndexOf('.') + 1));
+                    String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
+                    String finalLabel = !label.isEmpty() ? label : fallback;
+                    row.put("label", finalLabel);
+                    // Keep "name" for backward compatibility with old callers/logics.
+                    row.put("name", finalLabel);
                     out.add(row);
                     continue;
                 }
@@ -706,7 +716,9 @@ public class CortexFsmEngine {
                 if (pkg.isEmpty()) continue;
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("package", pkg);
-                row.put("name", pkg.substring(pkg.lastIndexOf('.') + 1));
+                String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
+                row.put("label", fallback);
+                row.put("name", fallback);
                 out.add(row);
             }
         } else if (raw instanceof Map) {
@@ -714,10 +726,16 @@ public class CortexFsmEngine {
             Map<String, Object> m = (Map<String, Object>) raw;
             String pkg = stringOrEmpty(m.get("package"));
             if (!pkg.isEmpty()) {
-                String name = stringOrEmpty(m.get("name"));
+                String label = stringOrEmpty(m.get("label"));
+                if (label.isEmpty()) {
+                    label = stringOrEmpty(m.get("name"));
+                }
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("package", pkg);
-                row.put("name", !name.isEmpty() ? name : pkg.substring(pkg.lastIndexOf('.') + 1));
+                String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
+                String finalLabel = !label.isEmpty() ? label : fallback;
+                row.put("label", finalLabel);
+                row.put("name", finalLabel);
                 out.add(row);
             }
         }
@@ -884,10 +902,13 @@ public class CortexFsmEngine {
         for (Map<String, Object> c : ctx.appCandidates) {
             Map<String, Object> row = new LinkedHashMap<>();
             String pkg = stringOrEmpty(c.get("package"));
-            String name = stringOrEmpty(c.get("name"));
+            String label = stringOrEmpty(c.get("label"));
+            if (label.isEmpty()) {
+                label = stringOrEmpty(c.get("name"));
+            }
             if (pkg.isEmpty()) continue;
             row.put("package", pkg);
-            row.put("name", name);
+            row.put("label", label);
             rows.add(row);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -897,7 +918,7 @@ public class CortexFsmEngine {
         sb.append("You are an assistant that decomposes a high-level Android user task into a small number of high-level sub_tasks.\n");
         sb.append("User task (Chinese or English):\n");
         sb.append(ctx.userTask != null ? ctx.userTask : "").append("\n\n");
-        sb.append("Installed apps (JSON array with {\"package\",\"name\"}):\n");
+        sb.append("Installed apps (JSON array with {\"package\",\"label\"}):\n");
         sb.append(Json.stringify(payload)).append("\n\n");
         sb.append("Output JSON only, no extra text:\n");
         sb.append("{\"sub_tasks\":[{...}],\"task_type\":\"single|loop|mixed\"}\n");
@@ -1018,10 +1039,13 @@ public class CortexFsmEngine {
         for (Map<String, Object> c : ctx.appCandidates) {
             Map<String, Object> row = new LinkedHashMap<>();
             String pkg = stringOrEmpty(c.get("package"));
-            String name = stringOrEmpty(c.get("name"));
+            String label = stringOrEmpty(c.get("label"));
+            if (label.isEmpty()) {
+                label = stringOrEmpty(c.get("name"));
+            }
             if (pkg.isEmpty()) continue;
             row.put("package", pkg);
-            row.put("name", name);
+            row.put("label", label);
             rows.add(row);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -1031,7 +1055,7 @@ public class CortexFsmEngine {
         sb.append("You are an assistant that selects the best Android app to handle a task.\n");
         sb.append("User task (Chinese or English):\n");
         sb.append(ctx.userTask != null ? ctx.userTask : "").append("\n\n");
-        sb.append("Installed apps (JSON array with {\"package\",\"name\"}):\n");
+        sb.append("Installed apps (JSON array with {\"package\",\"label\"}):\n");
         sb.append(Json.stringify(payload)).append("\n\n");
         sb.append("Output JSON only, no extra text:\n");
         sb.append("{\"package_name\":\"one_package_from_apps\"}\n");
@@ -1309,14 +1333,38 @@ public class CortexFsmEngine {
         // Prefer name/label substring matches.
         for (Map<String, Object> c : ctx.appCandidates) {
             String pkg = stringOrEmpty(c.get("package"));
-            String name = stringOrEmpty(c.get("name")).toLowerCase();
-            if (!task.isEmpty() && !name.isEmpty() && task.contains(name)) {
+            String label = stringOrEmpty(c.get("label"));
+            if (label.isEmpty()) {
+                label = stringOrEmpty(c.get("name"));
+            }
+            String lower = label.toLowerCase();
+            if (!task.isEmpty() && !lower.isEmpty() && task.contains(lower)) {
                 return pkg;
             }
         }
         // Fallback: first candidate.
         Map<String, Object> first = ctx.appCandidates.get(0);
         return stringOrEmpty(first.get("package"));
+    }
+
+    private String resolvePackageLabel(Context ctx, String pkg) {
+        String p = pkg != null ? pkg.trim() : "";
+        if (p.isEmpty()) {
+            return "";
+        }
+        for (Map<String, Object> c : ctx.appCandidates) {
+            if (p.equals(stringOrEmpty(c.get("package")))) {
+                String label = stringOrEmpty(c.get("label"));
+                if (label.isEmpty()) {
+                    label = stringOrEmpty(c.get("name"));
+                }
+                if (!label.isEmpty()) {
+                    return label;
+                }
+                break;
+            }
+        }
+        return "";
     }
 
     private State runAppResolveState(Context ctx) {
@@ -1327,9 +1375,12 @@ public class CortexFsmEngine {
         trace.event("fsm_state_enter", ev);
         // 1) Caller-specified package: accept directly and skip LLM.
         if (ctx.selectedPackage != null && !ctx.selectedPackage.trim().isEmpty()) {
+            ctx.selectedPackage = ctx.selectedPackage.trim();
+            ctx.selectedPackageLabel = resolvePackageLabel(ctx, ctx.selectedPackage);
             Map<String, Object> done = new LinkedHashMap<>();
             done.put("task_id", ctx.taskId);
             done.put("package", ctx.selectedPackage);
+            done.put("app_name", ctx.selectedPackageLabel);
             done.put("source", "caller");
             trace.event("fsm_app_resolve_fixed_package", done);
             return State.ROUTE_PLAN;
@@ -1393,9 +1444,11 @@ public class CortexFsmEngine {
         }
 
         ctx.selectedPackage = chosenPackage.trim();
+        ctx.selectedPackageLabel = resolvePackageLabel(ctx, ctx.selectedPackage);
         Map<String, Object> done = new LinkedHashMap<>();
         done.put("task_id", ctx.taskId);
         done.put("package", ctx.selectedPackage);
+        done.put("app_name", ctx.selectedPackageLabel);
         done.put("source", usedFallback ? "fallback" : "llm");
         trace.event("fsm_app_resolve_done", done);
 

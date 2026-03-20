@@ -1,12 +1,17 @@
 package com.lxb.server.system;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * UiAutomation 系统层封装 (纯反射实现)
@@ -20,6 +25,13 @@ public class UiAutomationWrapper {
 
     private static final String TAG = "[LXB][UiAuto]";
     private static volatile boolean preferShellInputTouch = true;
+    private final Map<String, String> shellLabelCache = new HashMap<>();
+    private final Map<String, String> shellGlobalLabelMapCache = new HashMap<>();
+    private long shellGlobalLabelMapCacheTs = 0L;
+    private static final long SHELL_GLOBAL_LABEL_CACHE_TTL_MS = 10 * 60 * 1000L;
+    private final String externalAppLabelsPath = resolveExternalAppLabelsPath();
+    private final Map<String, String> externalLabelsCache = new HashMap<>();
+    private long externalLabelsLastModified = -1L;
 
     // 反射获取的 UiAutomation 实例
     private Object uiAutomation;
@@ -1034,62 +1046,149 @@ public class UiAutomationWrapper {
      * @return 应用列表，格式为 JSON 数组字符串
      */
     public String listApps(int filter) {
-        // Preferred: PackageManager reflection -> [{"package":"...","name":"..."}]
-        String rich = listAppsWithLabels(filter);
-        if (rich != null && rich.length() > 2) {
-            return rich;
+        // Snapshot-only mode: always use APK-provided labels snapshot.
+        String external = listAppsWithExternalLabels(filter);
+        if (external != null && external.length() > 2) {
+            return external;
         }
+        System.err.println(TAG + " listApps snapshot unavailable; returning []");
+        return "[]";
+    }
 
-        // Fallback: pm list packages -> ["com.xxx", ...]
-        StringBuilder result = new StringBuilder();
-        result.append("[");
-        boolean first = true;
+    private static String resolveExternalAppLabelsPath() {
+        String p = System.getProperty("lxb.app.labels.path");
+        return p != null ? p.trim() : "";
+    }
+
+    private String listAppsWithExternalLabels(int filter) {
         try {
-            String cmd;
-            switch (filter) {
-                case 1:
-                    cmd = "pm list packages -3";
-                    break;
-                case 2:
-                    cmd = "pm list packages -s";
-                    break;
-                default:
-                    cmd = "pm list packages";
-                    break;
+            Map<String, String> labels = loadExternalLabelsFromFile();
+            if (labels == null || labels.isEmpty()) {
+                return null;
+            }
+            List<String> packages = listPackagesByShell(filter);
+            if (packages.isEmpty()) {
+                return null;
             }
 
-            Process process = Runtime.getRuntime().exec(cmd);
-            BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            int labeled = 0;
+            for (String pkg : packages) {
+                if (pkg == null || pkg.isEmpty()) continue;
+                String label = labels.get(pkg);
+                if (label == null) label = "";
+                if (!label.trim().isEmpty()) labeled++;
+                if (!first) sb.append(",");
+                first = false;
+                sb.append("{\"package\":\"")
+                        .append(jsonEscape(pkg))
+                        .append("\",\"label\":\"")
+                        .append(jsonEscape(label))
+                        .append("\",\"name\":\"")
+                        .append(jsonEscape(label))
+                        .append("\"}");
+            }
+            sb.append("]");
+            System.out.println(TAG + " listAppsWithExternalLabels: filter=" + filter
+                    + " total=" + packages.size() + " labeled=" + labeled
+                    + " path=" + externalAppLabelsPath);
+            return sb.toString();
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithExternalLabels failed: " + e.getMessage());
+            return null;
+        }
+    }
 
+    private Map<String, String> loadExternalLabelsFromFile() {
+        if (externalAppLabelsPath == null || externalAppLabelsPath.isEmpty()) {
+            return null;
+        }
+        File f = new File(externalAppLabelsPath);
+        if (!f.exists() || !f.isFile() || f.length() <= 0) {
+            return null;
+        }
+
+        long lm = f.lastModified();
+        synchronized (externalLabelsCache) {
+            if (externalLabelsLastModified == lm && !externalLabelsCache.isEmpty()) {
+                return new HashMap<>(externalLabelsCache);
+            }
+        }
+
+        Map<String, String> out = new HashMap<>();
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
             String line;
             while ((line = reader.readLine()) != null) {
-                if (!line.startsWith("package:")) continue;
-                String packageName = line.substring(8);
-                if (!first) result.append(",");
-                first = false;
-                result.append("\"").append(jsonEscape(packageName)).append("\"");
+                String s = line != null ? line.trim() : "";
+                if (s.isEmpty()) continue;
+                int tab = s.indexOf('\t');
+                if (tab <= 0 || tab >= s.length() - 1) continue;
+                String pkg = s.substring(0, tab).trim();
+                String label = s.substring(tab + 1).trim();
+                if (pkg.isEmpty() || label.isEmpty()) continue;
+                out.put(pkg, label);
             }
-            reader.close();
-            process.waitFor();
         } catch (Exception e) {
-            System.err.println(TAG + " listApps fallback failed: " + e.getMessage());
+            System.err.println(TAG + " loadExternalLabelsFromFile failed: " + e.getMessage());
+            return null;
+        } finally {
+            try { if (reader != null) reader.close(); } catch (Exception ignored) {}
         }
-        result.append("]");
-        return result.toString();
+
+        synchronized (externalLabelsCache) {
+            externalLabelsCache.clear();
+            externalLabelsCache.putAll(out);
+            externalLabelsLastModified = lm;
+            return new HashMap<>(externalLabelsCache);
+        }
     }
 
     private String listAppsWithLabels(int filter) {
         try {
-            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-            Method currentApplication = activityThreadClass.getMethod("currentApplication");
-            Object application = currentApplication.invoke(null);
-            if (application == null) return null;
+            System.out.println(TAG + " listAppsWithLabels: begin filter=" + filter);
+            Object pm = resolvePackageManagerForLabels();
+            if (pm == null) {
+                System.err.println(TAG + " listAppsWithLabels: PackageManager unavailable");
+                String shellRich = listAppsWithLabelsViaShell(filter);
+                if (shellRich != null && shellRich.length() > 2) {
+                    System.out.println(TAG + " listAppsWithLabels: using viaShell (pm unavailable)");
+                    return shellRich;
+                }
+                return null;
+            }
 
-            Method getPackageManager = application.getClass().getMethod("getPackageManager");
-            Object pm = getPackageManager.invoke(application);
-            if (pm == null) return null;
+            String rich = listAppsWithLabelsViaInstalledApplications(pm, filter);
+            if (rich != null && rich.length() > 2) {
+                System.out.println(TAG + " listAppsWithLabels: using viaApplications");
+                return rich;
+            }
 
+            // Slow fallback: iterate installed packages and derive labels one by one.
+            rich = listAppsWithLabelsViaInstalledPackages(pm, filter);
+            if (rich != null && rich.length() > 2) {
+                System.out.println(TAG + " listAppsWithLabels: using viaPackages");
+                return rich;
+            }
+
+            System.err.println(TAG + " listAppsWithLabels: no labeled result from all strategies");
+            String shellRich = listAppsWithLabelsViaShell(filter);
+            if (shellRich != null && shellRich.length() > 2) {
+                System.out.println(TAG + " listAppsWithLabels: using viaShell (strategies exhausted)");
+                return shellRich;
+            }
+            return null;
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithLabels failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String listAppsWithLabelsViaInstalledApplications(Object pm, int filter) {
+        try {
             Method getInstalledApplications = pm.getClass().getMethod("getInstalledApplications", int.class);
             @SuppressWarnings("unchecked")
             List<Object> appInfos = (List<Object>) getInstalledApplications.invoke(pm, 0);
@@ -1100,10 +1199,17 @@ public class UiAutomationWrapper {
             Field flagsField = appInfoClass.getField("flags");
             int flagSystem = appInfoClass.getField("FLAG_SYSTEM").getInt(null);
             Method loadLabel = appInfoClass.getMethod("loadLabel", Class.forName("android.content.pm.PackageManager"));
+            Method getApplicationLabel = null;
+            try {
+                getApplicationLabel = pm.getClass().getMethod("getApplicationLabel", appInfoClass);
+            } catch (Exception ignored) {
+            }
 
             StringBuilder sb = new StringBuilder();
             sb.append("[");
             boolean first = true;
+            int kept = 0;
+            int labeled = 0;
 
             for (Object appInfo : appInfos) {
                 String packageName = (String) packageNameField.get(appInfo);
@@ -1112,11 +1218,30 @@ public class UiAutomationWrapper {
                 if (filter == 1 && isSystem) continue;
                 if (filter == 2 && !isSystem) continue;
 
-                Object labelObj = loadLabel.invoke(appInfo, pm);
-                String appName = labelObj != null ? labelObj.toString() : "";
+                String appName = "";
+                try {
+                    if (getApplicationLabel != null) {
+                        Object labelObj = getApplicationLabel.invoke(pm, appInfo);
+                        if (labelObj != null) appName = labelObj.toString();
+                    }
+                } catch (Exception ignored) {
+                }
+                if (appName == null || appName.trim().isEmpty()) {
+                    try {
+                        Object labelObj = loadLabel.invoke(appInfo, pm);
+                        if (labelObj != null) appName = labelObj.toString();
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (appName == null || appName.trim().isEmpty()) {
+                    appName = resolveLauncherActivityLabel(pm, packageName);
+                }
+                if (appName == null) appName = "";
+                if (!appName.trim().isEmpty()) labeled++;
 
                 if (!first) sb.append(",");
                 first = false;
+                kept++;
                 sb.append("{\"package\":\"")
                         .append(jsonEscape(packageName))
                         .append("\",\"name\":\"")
@@ -1125,12 +1250,421 @@ public class UiAutomationWrapper {
             }
 
             sb.append("]");
-            System.out.println(TAG + " listAppsWithLabels: filter=" + filter + " count=" + appInfos.size());
+            System.out.println(TAG + " listAppsWithLabels(viaApplications): filter=" + filter
+                    + " total=" + appInfos.size() + " kept=" + kept + " labeled=" + labeled);
             return sb.toString();
         } catch (Exception e) {
-            System.err.println(TAG + " listAppsWithLabels failed: " + e.getMessage());
+            System.err.println(TAG + " listAppsWithLabels(viaApplications) failed: " + e.getMessage());
             return null;
         }
+    }
+
+    private String listAppsWithLabelsViaInstalledPackages(Object pm, int filter) {
+        try {
+            Method getInstalledPackages = pm.getClass().getMethod("getInstalledPackages", int.class);
+            @SuppressWarnings("unchecked")
+            List<Object> packageInfos = (List<Object>) getInstalledPackages.invoke(pm, 0);
+            if (packageInfos == null) return null;
+
+            Class<?> pkgInfoClass = Class.forName("android.content.pm.PackageInfo");
+            Field packageNameField = pkgInfoClass.getField("packageName");
+            Field applicationInfoField = pkgInfoClass.getField("applicationInfo");
+
+            Class<?> appInfoClass = Class.forName("android.content.pm.ApplicationInfo");
+            Field flagsField = appInfoClass.getField("flags");
+            int flagSystem = appInfoClass.getField("FLAG_SYSTEM").getInt(null);
+            Method loadLabel = appInfoClass.getMethod("loadLabel", Class.forName("android.content.pm.PackageManager"));
+
+            Method getApplicationLabel = null;
+            try {
+                getApplicationLabel = pm.getClass().getMethod("getApplicationLabel", appInfoClass);
+            } catch (Exception ignored) {
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            int kept = 0;
+            int labeled = 0;
+
+            for (Object pkgInfo : packageInfos) {
+                if (pkgInfo == null) continue;
+                String packageName = (String) packageNameField.get(pkgInfo);
+                Object appInfo = applicationInfoField.get(pkgInfo);
+                if (appInfo == null) continue;
+
+                int flags = flagsField.getInt(appInfo);
+                boolean isSystem = (flags & flagSystem) != 0;
+                if (filter == 1 && isSystem) continue;
+                if (filter == 2 && !isSystem) continue;
+
+                String appName = "";
+                try {
+                    if (getApplicationLabel != null) {
+                        Object labelObj = getApplicationLabel.invoke(pm, appInfo);
+                        if (labelObj != null) appName = labelObj.toString();
+                    }
+                } catch (Exception ignored) {
+                }
+                if (appName == null || appName.trim().isEmpty()) {
+                    try {
+                        Object labelObj = loadLabel.invoke(appInfo, pm);
+                        if (labelObj != null) appName = labelObj.toString();
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (appName == null || appName.trim().isEmpty()) {
+                    appName = resolveLauncherActivityLabel(pm, packageName);
+                }
+                if (appName == null) appName = "";
+                if (!appName.trim().isEmpty()) labeled++;
+
+                if (!first) sb.append(",");
+                first = false;
+                kept++;
+                sb.append("{\"package\":\"")
+                        .append(jsonEscape(packageName))
+                        .append("\",\"name\":\"")
+                        .append(jsonEscape(appName))
+                        .append("\"}");
+            }
+
+            sb.append("]");
+            System.out.println(TAG + " listAppsWithLabels(viaPackages): filter=" + filter
+                    + " total=" + packageInfos.size() + " kept=" + kept + " labeled=" + labeled);
+            return sb.toString();
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithLabels(viaPackages) failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Try to resolve app label from launcher activity (more stable on some ROMs than app label).
+     */
+    private String resolveLauncherActivityLabel(Object pm, String packageName) {
+        if (pm == null || packageName == null || packageName.isEmpty()) {
+            return "";
+        }
+        try {
+            Class<?> intentClass = Class.forName("android.content.Intent");
+            Class<?> pkgMgrClass = Class.forName("android.content.pm.PackageManager");
+            Class<?> resolveInfoClass = Class.forName("android.content.pm.ResolveInfo");
+            Class<?> activityInfoClass = Class.forName("android.content.pm.ActivityInfo");
+
+            Method getLaunchIntentForPackage = pm.getClass().getMethod("getLaunchIntentForPackage", String.class);
+            Object launchIntent = getLaunchIntentForPackage.invoke(pm, packageName);
+            if (launchIntent == null) return "";
+
+            Method resolveActivity = pm.getClass().getMethod("resolveActivity", intentClass, int.class);
+            Object resolveInfo = resolveActivity.invoke(pm, launchIntent, 0);
+            if (resolveInfo == null) return "";
+
+            Field activityInfoField = resolveInfoClass.getField("activityInfo");
+            Object activityInfo = activityInfoField.get(resolveInfo);
+            if (activityInfo == null) return "";
+
+            Method loadLabel = activityInfoClass.getMethod("loadLabel", pkgMgrClass);
+            Object labelObj = loadLabel.invoke(activityInfo, pm);
+            return labelObj != null ? labelObj.toString() : "";
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    /**
+     * Final fallback when PackageManager reflection is unavailable:
+     * use shell commands to enumerate packages and parse application-label lines.
+     */
+    private String listAppsWithLabelsViaShell(int filter) {
+        try {
+            System.out.println(TAG + " listAppsWithLabels(viaShell): begin filter=" + filter);
+            List<String> packages = listPackagesByShell(filter);
+            if (packages.isEmpty()) {
+                return null;
+            }
+            Map<String, String> globalLabels = loadGlobalLabelsByShellCached();
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            int labeled = 0;
+            int fromGlobal = 0;
+            int fromPerPkg = 0;
+            int skippedByBudget = 0;
+            int skippedNoGlobal = 0;
+            int perPkgLookups = 0;
+            final long deadline = System.currentTimeMillis() + 2200L;
+            final int perPkgLookupMax = 6;
+            final boolean allowPerPkgFallback = globalLabels != null && !globalLabels.isEmpty();
+
+            for (String pkg : packages) {
+                if (pkg == null || pkg.isEmpty()) continue;
+                String name = "";
+                if (globalLabels != null) {
+                    String hit = globalLabels.get(pkg);
+                    if (hit != null && !hit.trim().isEmpty()) {
+                        name = hit;
+                        fromGlobal++;
+                    }
+                }
+                if (name.isEmpty() && allowPerPkgFallback) {
+                    if (System.currentTimeMillis() >= deadline || perPkgLookups >= perPkgLookupMax) {
+                        skippedByBudget++;
+                    } else {
+                        perPkgLookups++;
+                        name = resolveLabelByShellCached(pkg);
+                        if (name != null && !name.trim().isEmpty()) {
+                            fromPerPkg++;
+                        }
+                    }
+                } else if (name.isEmpty()) {
+                    skippedNoGlobal++;
+                }
+                if (name != null && !name.trim().isEmpty()) labeled++;
+                if (!first) sb.append(",");
+                first = false;
+                sb.append("{\"package\":\"")
+                        .append(jsonEscape(pkg))
+                        .append("\",\"name\":\"")
+                        .append(jsonEscape(name != null ? name : ""))
+                        .append("\"}");
+            }
+            sb.append("]");
+            System.out.println(TAG + " listAppsWithLabels(viaShell): filter=" + filter
+                    + " total=" + packages.size()
+                    + " labeled=" + labeled
+                    + " from_global=" + fromGlobal
+                    + " from_per_pkg=" + fromPerPkg
+                    + " per_pkg_lookups=" + perPkgLookups
+                    + " skipped_budget=" + skippedByBudget
+                    + " skipped_no_global=" + skippedNoGlobal
+                    + " global_cache_size=" + (globalLabels != null ? globalLabels.size() : 0));
+            return sb.toString();
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithLabels(viaShell) failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private Map<String, String> loadGlobalLabelsByShellCached() {
+        long now = System.currentTimeMillis();
+        synchronized (shellGlobalLabelMapCache) {
+            if (!shellGlobalLabelMapCache.isEmpty()
+                    && (now - shellGlobalLabelMapCacheTs) < SHELL_GLOBAL_LABEL_CACHE_TTL_MS) {
+                return new HashMap<>(shellGlobalLabelMapCache);
+            }
+        }
+
+        Map<String, String> parsed = parseGlobalLabelsByShell();
+        synchronized (shellGlobalLabelMapCache) {
+            shellGlobalLabelMapCache.clear();
+            if (parsed != null && !parsed.isEmpty()) {
+                shellGlobalLabelMapCache.putAll(parsed);
+            }
+            shellGlobalLabelMapCacheTs = now;
+            return new HashMap<>(shellGlobalLabelMapCache);
+        }
+    }
+
+    private Map<String, String> parseGlobalLabelsByShell() {
+        Map<String, String> out = new HashMap<>();
+        BufferedReader reader = null;
+        try {
+            // One-pass parse: keep only package headers and application-label lines.
+            String cmd = "dumpsys package packages 2>/dev/null | grep -E \"Package \\[|application-label\"";
+            Process process = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+
+            String currentPkg = null;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String s = line != null ? line.trim() : "";
+                if (s.isEmpty()) continue;
+
+                int pi = s.indexOf("Package [");
+                if (pi >= 0) {
+                    int l = s.indexOf('[', pi);
+                    int r = s.indexOf(']', l + 1);
+                    if (l >= 0 && r > l + 1) {
+                        currentPkg = s.substring(l + 1, r).trim();
+                    }
+                    continue;
+                }
+
+                if (currentPkg != null && s.contains("application-label")) {
+                    String label = extractLabelFromDumpLine(s);
+                    if (label != null && !label.trim().isEmpty() && !out.containsKey(currentPkg)) {
+                        out.put(currentPkg, label);
+                    }
+                }
+            }
+            process.waitFor();
+            System.out.println(TAG + " parseGlobalLabelsByShell: labels=" + out.size());
+        } catch (Exception e) {
+            System.err.println(TAG + " parseGlobalLabelsByShell failed: " + e.getMessage());
+        } finally {
+            try { if (reader != null) reader.close(); } catch (Exception ignored) {}
+        }
+        return out;
+    }
+
+    private List<String> listPackagesByShell(int filter) {
+        List<String> out = new ArrayList<>();
+        String cmd;
+        switch (filter) {
+            case 1:
+                cmd = "pm list packages -3";
+                break;
+            case 2:
+                cmd = "pm list packages -s";
+                break;
+            default:
+                cmd = "pm list packages";
+                break;
+        }
+
+        BufferedReader reader = null;
+        try {
+            Process process = Runtime.getRuntime().exec(new String[]{"sh", "-c", cmd});
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("package:")) continue;
+                String pkg = line.substring(8).trim();
+                if (!pkg.isEmpty()) out.add(pkg);
+            }
+            process.waitFor();
+        } catch (Exception e) {
+            System.err.println(TAG + " listPackagesByShell failed: " + e.getMessage());
+        } finally {
+            try { if (reader != null) reader.close(); } catch (Exception ignored) {}
+        }
+        return out;
+    }
+
+    private String resolveLabelByShellCached(String packageName) {
+        if (packageName == null || packageName.isEmpty()) return "";
+        synchronized (shellLabelCache) {
+            if (shellLabelCache.containsKey(packageName)) {
+                return shellLabelCache.get(packageName);
+            }
+        }
+        String label = resolveLabelByShell(packageName);
+        synchronized (shellLabelCache) {
+            shellLabelCache.put(packageName, label != null ? label : "");
+        }
+        return label != null ? label : "";
+    }
+
+    private String resolveLabelByShell(String packageName) {
+        // Try cmd package dump first (usually smaller than dumpsys package).
+        String line = runShellFirstLine("cmd package dump " + packageName
+                + " 2>/dev/null | grep -m 1 \"application-label\"");
+        String label = extractLabelFromDumpLine(line);
+        if (!label.isEmpty()) return label;
+        // Avoid heavy per-package dumpsys fallback in request path (too slow on many apps).
+        return label;
+    }
+
+    private String runShellFirstLine(String command) {
+        BufferedReader reader = null;
+        try {
+            Process process = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line = reader.readLine();
+            process.waitFor();
+            return line != null ? line.trim() : "";
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            try { if (reader != null) reader.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private String extractLabelFromDumpLine(String line) {
+        if (line == null) return "";
+        String s = line.trim();
+        if (s.isEmpty()) return "";
+        int idx = s.indexOf(':');
+        if (idx < 0 || idx + 1 >= s.length()) return "";
+        String v = s.substring(idx + 1).trim();
+        // remove simple wrapping quotes
+        while (!v.isEmpty() && (v.startsWith("'") || v.startsWith("\""))) {
+            v = v.substring(1).trim();
+        }
+        while (!v.isEmpty() && (v.endsWith("'") || v.endsWith("\""))) {
+            v = v.substring(0, v.length() - 1).trim();
+        }
+        if ("null".equalsIgnoreCase(v)) return "";
+        return v;
+    }
+
+    /**
+     * Resolve a usable PackageManager object in app_process context.
+     *
+     * Try order:
+     * 1) ActivityThread.currentApplication().getPackageManager()
+     * 2) ActivityThread.currentActivityThread().getSystemContext().getPackageManager()
+     * 3) ActivityThread.systemMain().getSystemContext().getPackageManager()
+     */
+    private Object resolvePackageManagerForLabels() {
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+
+            // Path-1: currentApplication
+            try {
+                Method currentApplication = activityThreadClass.getMethod("currentApplication");
+                Object application = currentApplication.invoke(null);
+                if (application != null) {
+                    Method getPackageManager = application.getClass().getMethod("getPackageManager");
+                    Object pm = getPackageManager.invoke(application);
+                    if (pm != null) {
+                        return pm;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+
+            // Path-2: currentActivityThread -> getSystemContext
+            try {
+                Method currentActivityThread = activityThreadClass.getMethod("currentActivityThread");
+                Object at = currentActivityThread.invoke(null);
+                if (at != null) {
+                    Method getSystemContext = activityThreadClass.getMethod("getSystemContext");
+                    Object systemContext = getSystemContext.invoke(at);
+                    if (systemContext != null) {
+                        Method getPackageManager = systemContext.getClass().getMethod("getPackageManager");
+                        Object pm = getPackageManager.invoke(systemContext);
+                        if (pm != null) {
+                            return pm;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+
+            // Path-3: systemMain -> getSystemContext
+            try {
+                Method systemMain = activityThreadClass.getMethod("systemMain");
+                Object at = systemMain.invoke(null);
+                if (at != null) {
+                    Method getSystemContext = activityThreadClass.getMethod("getSystemContext");
+                    Object systemContext = getSystemContext.invoke(at);
+                    if (systemContext != null) {
+                        Method getPackageManager = systemContext.getClass().getMethod("getPackageManager");
+                        Object pm = getPackageManager.invoke(systemContext);
+                        if (pm != null) {
+                            return pm;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        } catch (Exception e) {
+            System.err.println(TAG + " resolvePackageManagerForLabels failed: " + e.getMessage());
+        }
+        return null;
     }
 
     private String jsonEscape(String s) {
