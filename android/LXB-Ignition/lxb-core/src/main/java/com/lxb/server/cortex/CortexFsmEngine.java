@@ -658,17 +658,15 @@ public class CortexFsmEngine {
                     Map<String, Object> m = (Map<String, Object>) item;
                     String pkg = stringOrEmpty(m.get("package"));
                     if (pkg.isEmpty()) continue;
-                    String label = stringOrEmpty(m.get("label"));
-                    if (label.isEmpty()) {
-                        label = stringOrEmpty(m.get("name"));
-                    }
+                    Object rawLabel = m.containsKey("label") ? m.get("label") : m.get("name");
+                    String label = stringOrEmpty(rawLabel);
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("package", pkg);
-                    String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
-                    String finalLabel = !label.isEmpty() ? label : fallback;
-                    row.put("label", finalLabel);
+                    // Keep null/empty labels as-is so APP_RESOLVE prompt can explicitly
+                    // expose unknown labels and let the model infer from package id.
+                    row.put("label", label.isEmpty() ? null : label);
                     // Keep "name" for backward compatibility with old callers/logics.
-                    row.put("name", finalLabel);
+                    row.put("name", label.isEmpty() ? null : label);
                     out.add(row);
                     continue;
                 }
@@ -676,9 +674,8 @@ public class CortexFsmEngine {
                 if (pkg.isEmpty()) continue;
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("package", pkg);
-                String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
-                row.put("label", fallback);
-                row.put("name", fallback);
+                row.put("label", null);
+                row.put("name", null);
                 out.add(row);
             }
         } else if (raw instanceof Map) {
@@ -686,16 +683,12 @@ public class CortexFsmEngine {
             Map<String, Object> m = (Map<String, Object>) raw;
             String pkg = stringOrEmpty(m.get("package"));
             if (!pkg.isEmpty()) {
-                String label = stringOrEmpty(m.get("label"));
-                if (label.isEmpty()) {
-                    label = stringOrEmpty(m.get("name"));
-                }
+                Object rawLabel = m.containsKey("label") ? m.get("label") : m.get("name");
+                String label = stringOrEmpty(rawLabel);
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("package", pkg);
-                String fallback = pkg.substring(pkg.lastIndexOf('.') + 1);
-                String finalLabel = !label.isEmpty() ? label : fallback;
-                row.put("label", finalLabel);
-                row.put("name", finalLabel);
+                row.put("label", label.isEmpty() ? null : label);
+                row.put("name", label.isEmpty() ? null : label);
                 out.add(row);
             }
         }
@@ -927,7 +920,7 @@ public class CortexFsmEngine {
             }
             if (pkg.isEmpty()) continue;
             row.put("package", pkg);
-            row.put("label", label);
+            row.put("label", label.isEmpty() ? null : label);
             rows.add(row);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -938,6 +931,7 @@ public class CortexFsmEngine {
         sb.append("User task (Chinese or English):\n");
         sb.append(ctx.userTask != null ? ctx.userTask : "").append("\n\n");
         sb.append("Installed apps (JSON array with {\"package\",\"label\"}):\n");
+        sb.append("(label may be null; when null, infer app intent from package id)\n");
         sb.append(Json.stringify(payload)).append("\n\n");
         sb.append("Output JSON only, no extra text:\n");
         sb.append("{\"sub_tasks\":[{...}],\"task_type\":\"single|loop|mixed\"}\n");
@@ -1064,7 +1058,7 @@ public class CortexFsmEngine {
             }
             if (pkg.isEmpty()) continue;
             row.put("package", pkg);
-            row.put("label", label);
+            row.put("label", label.isEmpty() ? null : label);
             rows.add(row);
         }
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -1075,6 +1069,7 @@ public class CortexFsmEngine {
         sb.append("User task (Chinese or English):\n");
         sb.append(ctx.userTask != null ? ctx.userTask : "").append("\n\n");
         sb.append("Installed apps (JSON array with {\"package\",\"label\"}):\n");
+        sb.append("(label may be null; when null, infer app intent from package id)\n");
         sb.append(Json.stringify(payload)).append("\n\n");
         sb.append("Output JSON only, no extra text:\n");
         sb.append("{\"package_name\":\"one_package_from_apps\"}\n");

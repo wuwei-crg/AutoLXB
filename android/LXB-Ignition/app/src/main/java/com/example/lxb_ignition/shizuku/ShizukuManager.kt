@@ -109,6 +109,13 @@ class ShizukuManager(private val context: Context) {
                     val running = runCatching { svc.isRunning(SERVER_CLASS) }.getOrDefault(false)
                     if (running) {
                         log("Detected lxb-core already running in background")
+                        runCatching {
+                            val labelsBytes = buildAppLabelsTsv()
+                            val labelsOk = svc.deployJar(labelsBytes, TMP_APP_LABELS)
+                            log("App labels snapshot refresh (already running): ${if (labelsOk) "OK" else "FAIL"} (${labelsBytes.size} bytes) -> $TMP_APP_LABELS")
+                        }.onFailure { e ->
+                            log("App labels snapshot refresh failed: ${e.message}")
+                        }
                         logBytesRead = 0L
                         setState(State.RUNNING, "Server is already running in background")
                         startLogPolling(svc)

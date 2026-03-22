@@ -269,6 +269,11 @@ private val ZhMap = mapOf(
     "Auto unlock before route, auto lock after task, and lockscreen credentials." to "配置路由前自动解锁、任务后自动锁屏与锁屏凭据。",
     "Map sync & source" to "地图同步与来源",
     "Sync stable maps, pull map by identifier, and switch stable/candidate in debug mode." to "同步稳定地图、按标识拉取地图，并在调试模式切换 stable/candidate。",
+    "App update" to "应用更新",
+    "Check and open latest GitHub release APK." to "检查并打开 GitHub 最新 Release APK。",
+    "Current app version" to "当前应用版本",
+    "Check latest release" to "检查最新版本",
+    "Open releases" to "打开 Releases",
     "lxb-core server" to "lxb-core 服务",
     "TCP port" to "TCP 端口",
     "TCP port listened by lxb-core on device (default 12345)" to "设备端 lxb-core 监听的 TCP 端口（默认 12345）",
@@ -1509,6 +1514,7 @@ fun SingleConfigPage(
 @Composable
 fun LxbCoreConfigCard(viewModel: MainViewModel) {
     val lxbPort by viewModel.lxbPort.collectAsState()
+    val appUpdateResult by viewModel.appUpdateResult.collectAsState()
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1531,6 +1537,38 @@ fun LxbCoreConfigCard(viewModel: MainViewModel) {
                     )
                 }
             )
+            Text(tr("App update"), style = MaterialTheme.typography.titleSmall)
+            Text(
+                tr("Check and open latest GitHub release APK."),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                fontSize = 12.sp
+            )
+            Text(
+                "${tr("Current app version")}: ${BuildConfig.VERSION_NAME}",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                fontSize = 12.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { viewModel.checkAppUpdateFromGithub() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tr("Check latest release"))
+                }
+                OutlinedButton(
+                    onClick = { viewModel.openLatestReleasePage() },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tr("Open releases"))
+                }
+            }
+            if (appUpdateResult.isNotBlank()) {
+                Text(
+                    text = appUpdateResult,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                )
+            }
         }
     }
 }

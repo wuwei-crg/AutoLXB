@@ -1051,7 +1051,12 @@ public class UiAutomationWrapper {
         if (external != null && external.length() > 2) {
             return external;
         }
-        System.err.println(TAG + " listApps snapshot unavailable; returning []");
+        String fallback = listAppsWithPackageOnly(filter);
+        if (fallback != null && fallback.length() > 2) {
+            System.err.println(TAG + " listApps snapshot unavailable; using package-only fallback");
+            return fallback;
+        }
+        System.err.println(TAG + " listApps snapshot unavailable; fallback empty; returning []");
         return "[]";
     }
 
@@ -1078,17 +1083,11 @@ public class UiAutomationWrapper {
             for (String pkg : packages) {
                 if (pkg == null || pkg.isEmpty()) continue;
                 String label = labels.get(pkg);
-                if (label == null) label = "";
-                if (!label.trim().isEmpty()) labeled++;
+                String norm = label != null ? label.trim() : "";
+                if (!norm.isEmpty()) labeled++;
                 if (!first) sb.append(",");
                 first = false;
-                sb.append("{\"package\":\"")
-                        .append(jsonEscape(pkg))
-                        .append("\",\"label\":\"")
-                        .append(jsonEscape(label))
-                        .append("\",\"name\":\"")
-                        .append(jsonEscape(label))
-                        .append("\"}");
+                appendAppJsonRow(sb, pkg, norm.isEmpty() ? null : norm);
             }
             sb.append("]");
             System.out.println(TAG + " listAppsWithExternalLabels: filter=" + filter
@@ -1145,6 +1144,48 @@ public class UiAutomationWrapper {
             externalLabelsLastModified = lm;
             return new HashMap<>(externalLabelsCache);
         }
+    }
+
+    private String listAppsWithPackageOnly(int filter) {
+        try {
+            List<String> packages = listPackagesByShell(filter);
+            if (packages.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            boolean first = true;
+            for (String pkg : packages) {
+                if (pkg == null || pkg.isEmpty()) continue;
+                if (!first) sb.append(",");
+                first = false;
+                appendAppJsonRow(sb, pkg, null);
+            }
+            sb.append("]");
+            return sb.toString();
+        } catch (Exception e) {
+            System.err.println(TAG + " listAppsWithPackageOnly failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void appendAppJsonRow(StringBuilder sb, String pkg, String label) {
+        sb.append("{\"package\":\"")
+                .append(jsonEscape(pkg))
+                .append("\",\"label\":");
+        appendNullableJsonString(sb, label);
+        sb.append(",\"name\":");
+        appendNullableJsonString(sb, label);
+        sb.append("}");
+    }
+
+    private void appendNullableJsonString(StringBuilder sb, String value) {
+        String v = value != null ? value.trim() : "";
+        if (v.isEmpty()) {
+            sb.append("null");
+            return;
+        }
+        sb.append("\"").append(jsonEscape(v)).append("\"");
     }
 
     private String listAppsWithLabels(int filter) {

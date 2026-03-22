@@ -17,7 +17,12 @@ class ShizukuServiceImpl : IShizukuService.Stub() {
 
     override fun deployJar(jarBytes: ByteArray, destPath: String): Boolean {
         return try {
-            FileOutputStream(destPath).use { it.write(jarBytes) }
+            val outFile = File(destPath)
+            val parent = outFile.parentFile
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs()
+            }
+            FileOutputStream(outFile).use { it.write(jarBytes) }
             true
         } catch (_: Exception) {
             false

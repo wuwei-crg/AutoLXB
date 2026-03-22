@@ -3,6 +3,7 @@ package com.example.lxb_ignition
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.lxb_ignition.map.MapSyncManager
@@ -48,6 +49,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_MAP_DEBUG_LOCAL_OVERRIDE = "map_debug_local_override"
         private const val KEY_UI_LANG = "ui_lang"
         private const val DEFAULT_MAP_REPO_RAW_BASE_URL = "https://raw.githubusercontent.com/wuwei-crg/LXB-MapRepo/main"
+        private const val RELEASE_API_LATEST = "https://api.github.com/repos/wuwei-crg/LXB-Framework/releases/latest"
+        private const val RELEASE_WEB_LATEST = "https://github.com/wuwei-crg/LXB-Framework/releases/latest"
 
         // Local TCP port for trace push from lxb-core.
         private const val TRACE_PUSH_PORT = 23456
@@ -106,6 +109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val mapTargetId = MutableStateFlow("")
     val llmTestResult = MutableStateFlow("")
     val mapSyncResult = MutableStateFlow("")
+    val appUpdateResult = MutableStateFlow("")
     val uiLang = MutableStateFlow(normalizeUiLang(prefs.getString(KEY_UI_LANG, "en")))
 
     // Control tab
@@ -1397,6 +1401,136 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             llmTestResult.value = result
             appendLog("[LLM] $result")
+        }
+    }
+
+    fun checkAppUpdateFromGithub() {
+        viewModelScope.launch {
+            appUpdateResult.value = "Checking latest release..."
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val request = Request.Builder()
+                        .url(RELEASE_API_LATEST)
+                        .addHeader("Accept", "application/vnd.github+json")
+                        .addHeader("User-Agent", "lxb-ignition-android")
+                        .get()
+                        .build()
+                    httpClient.newCall(request).execute().use { resp ->
+                        val code = resp.code
+                        val text = resp.body?.string() ?: ""
+                        if (code !in 200..299) {
+                            return@use Pair("Update check failed: HTTP $code ${text.take(160)}", "")
+                        }
+
+                        val obj = runCatching { org.json.JSONObject(text) }.getOrNull()
+                            ?: return@use Pair("Update check failed: invalid GitHub response.", "")
+                        val tag = obj.optString("tag_name", "").trim()
+                        val latestVersion = normalizeVersion(tag)
+                        val currentVersion = normalizeVersion(BuildConfig.VERSION_NAME)
+                        val htmlUrl = obj.optString("html_url", RELEASE_WEB_LATEST).trim()
+                        val apkUrl = findReleaseApkUrl(obj)
+                        val cmp = compareVersion(latestVersion, currentVersion)
+
+                        if (latestVersion.isBlank()) {
+                            return@use Pair("Update check failed: latest tag is empty.", "")
+                        }
+
+                        if (cmp <= 0) {
+                            return@use Pair(
+                                "Already up to date (current=$currentVersion, latest=$latestVersion).",
+                                ""
+                            )
+                        }
+
+                        val target = if (apkUrl.isNotBlank()) apkUrl else htmlUrl
+                        val msg = if (apkUrl.isNotBlank()) {
+                            "New version found: v$latestVersion (current=$currentVersion). Opening APK download..."
+                        } else {
+                            "New version found: v$latestVersion (current=$currentVersion). Opening release page..."
+                        }
+                        Pair(msg, target)
+                    }
+                }.getOrElse { e -> Pair("Update check failed: ${e.message}", "") }
+            }
+            val msg = result.first
+            val url = result.second
+            if (url.isNotBlank()) {
+                openUrl(url)
+            }
+            appUpdateResult.value = msg
+            appendLog("[UPDATE] $msg")
+        }
+    }
+
+    fun openLatestReleasePage() {
+        openUrl(RELEASE_WEB_LATEST)
+    }
+
+    private fun findReleaseApkUrl(obj: org.json.JSONObject): String {
+        val assets = obj.optJSONArray("assets") ?: return ""
+        var fallback = ""
+        for (i in 0 until assets.length()) {
+            val a = assets.optJSONObject(i) ?: continue
+            val name = a.optString("name", "")
+            val url = a.optString("browser_download_url", "")
+            if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
+                if (name.contains("lxb-ignition", ignoreCase = true)) {
+                    return url
+                }
+                if (fallback.isBlank()) {
+                    fallback = url
+                }
+            }
+        }
+        return fallback
+    }
+
+    private fun normalizeVersion(raw: String): String {
+        val s = raw.trim().removePrefix("v").removePrefix("V")
+        return if (s.isBlank()) "0.0.0" else s
+    }
+
+    private fun compareVersion(a: String, b: String): Int {
+        val pa = parseVersionParts(a)
+        val pb = parseVersionParts(b)
+        val n = maxOf(pa.size, pb.size)
+        for (i in 0 until n) {
+            val va = if (i < pa.size) pa[i] else 0
+            val vb = if (i < pb.size) pb[i] else 0
+            if (va != vb) {
+                return if (va > vb) 1 else -1
+            }
+        }
+        return 0
+    }
+
+    private fun parseVersionParts(v: String): List<Int> {
+        val parts = mutableListOf<Int>()
+        v.split(".").forEach { token ->
+            val digits = buildString {
+                for (ch in token) {
+                    if (ch.isDigit()) append(ch) else break
+                }
+            }
+            parts.add(digits.toIntOrNull() ?: 0)
+        }
+        return parts
+    }
+
+    private fun openUrl(url: String) {
+        val u = url.trim()
+        if (u.isBlank()) {
+            appUpdateResult.value = "Invalid update URL."
+            return
+        }
+        runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(u)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            getApplication<Application>().startActivity(intent)
+        }.onFailure { e ->
+            appUpdateResult.value = "Failed to open browser: ${e.message}"
+            appendLog("[UPDATE] Failed to open browser: ${e.message}")
         }
     }
 
