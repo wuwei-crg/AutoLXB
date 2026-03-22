@@ -36,6 +36,11 @@ Android-first mobile automation framework focused on **Route-Then-Act** executio
 - Recommended battery policy: `No restrictions` (especially on MIUI)
 - Map repository and map publishing tool are maintained in separate repositories
 
+## Related Repositories
+
+- Map Builder (construction + publish tooling): https://github.com/wuwei-crg/LXB-MapBuilder
+- Map Repository (stable/candidate map artifacts): https://github.com/wuwei-crg/LXB-MapRepo
+
 ## Build
 
 ```bash

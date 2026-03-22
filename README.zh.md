@@ -36,6 +36,11 @@
 - 建议将电池策略设为“无限制”（特别是 MIUI）
 - Map 仓库与 Map 发布工具已拆分到独立仓库维护
 
+## 相关仓库
+
+- MapBuilder（建图与发布工具）：https://github.com/wuwei-crg/LXB-MapBuilder
+- MapRepo（stable/candidate 地图仓库）：https://github.com/wuwei-crg/LXB-MapRepo
+
 ## 开发构建
 
 ```bash
