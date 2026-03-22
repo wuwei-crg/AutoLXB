@@ -19,6 +19,10 @@ Android-first mobile automation framework focused on practical daily automation.
 - **Scheduled task mode**: set a time and let the task run automatically.
   - Example: "At 08:30 every weekday, place a coffee order."
 
+## Demo Video
+
+- Bilibili: https://www.bilibili.com/video/BV1sCQDB2Es2
+
 ## Quick Start
 
 1. Install Shizuku: https://github.com/RikkaApps/Shizuku

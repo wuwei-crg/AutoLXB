@@ -19,6 +19,10 @@
 - **定时任务模式**：设定时间自动执行任务。
   - 示例："工作日早上 08:30 自动下单一杯咖啡。"
 
+## 演示视频
+
+- Bilibili：https://www.bilibili.com/video/BV1sCQDB2Es2
+
 ## 快速开始
 
 1. 安装 Shizuku：https://github.com/RikkaApps/Shizuku
