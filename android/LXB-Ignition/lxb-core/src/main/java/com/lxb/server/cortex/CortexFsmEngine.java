@@ -191,6 +191,72 @@ public class CortexFsmEngine {
     }
 
     /**
+     * Expose a thin system_control wrapper so TaskManager can run task-level
+     * lifecycle hooks (e.g., DND/recording) without changing FSM state flow.
+     */
+    public Map<String, Object> runSystemControl(String taskId, String action, Map<String, Object> args) {
+        Map<String, Object> req = new LinkedHashMap<>();
+        req.put("action", action != null ? action.trim() : "");
+        if (args != null && !args.isEmpty()) {
+            req.putAll(args);
+        }
+
+        Map<String, Object> out = parseSystemControlResponse(
+                execution != null
+                        ? execution.handleSystemControl(Json.stringify(req).getBytes(StandardCharsets.UTF_8))
+                        : null,
+                action
+        );
+
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("task_id", taskId != null ? taskId : "");
+        ev.put("action", action != null ? action : "");
+        ev.put("ok", toBool(out.get("ok"), false));
+        ev.put("result", out);
+        trace.event("fsm_task_system_control", ev);
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseSystemControlResponse(byte[] resp, String action) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", false);
+        out.put("action", action != null ? action : "");
+        if (resp == null || resp.length < 3) {
+            out.put("error", "empty_response");
+            return out;
+        }
+        try {
+            ByteBuffer buf = ByteBuffer.wrap(resp).order(ByteOrder.BIG_ENDIAN);
+            int status = buf.get() & 0xFF;
+            int jsonLen = buf.getShort() & 0xFFFF;
+            out.put("transport_ok", status != 0);
+            if (jsonLen > 0 && buf.remaining() >= jsonLen) {
+                byte[] jsonBytes = new byte[jsonLen];
+                buf.get(jsonBytes);
+                String jsonText = new String(jsonBytes, StandardCharsets.UTF_8);
+                Object parsed = Json.parse(jsonText);
+                if (parsed instanceof Map) {
+                    out.clear();
+                    out.putAll((Map<String, Object>) parsed);
+                    if (!out.containsKey("action")) {
+                        out.put("action", action != null ? action : "");
+                    }
+                } else {
+                    out.put("raw", jsonText);
+                    out.put("ok", status != 0);
+                }
+            } else {
+                out.put("ok", status != 0);
+            }
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e));
+        }
+        return out;
+    }
+
+    /**
      * Sub-task contract for TASK_DECOMPOSE (v2).
      */
     public static class SubTask {
@@ -697,6 +763,14 @@ public class CortexFsmEngine {
 
     private static String stringOrEmpty(Object o) {
         return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    private static boolean toBool(Object o, boolean def) {
+        if (o == null) return def;
+        if (o instanceof Boolean) return ((Boolean) o).booleanValue();
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty()) return def;
+        return "true".equalsIgnoreCase(s) || "1".equals(s);
     }
 
     private static String normalizeCarryContext(String s) {

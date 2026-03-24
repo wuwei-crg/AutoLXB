@@ -7,11 +7,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Calendar;
+import java.util.Locale;
+import java.text.SimpleDateFormat;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,6 +64,7 @@ public class CortexTaskManager {
     private final String taskMemoryPath;
     private static final String DEFAULT_SCHEDULES_PATH = "/data/local/tmp/lxb/schedules.v1.json";
     private static final String DEFAULT_TASK_RUNS_PATH = "/data/local/tmp/lxb/task_runs.v1.json";
+    private static final String DEFAULT_RECORD_ROOT = "/sdcard/Movies/lxb";
     private final String schedulesPath;
     private final String taskRunsPath;
 
@@ -112,7 +116,7 @@ public class CortexTaskManager {
             String traceMode,
             Integer traceUdpPort
     ) {
-        return submitTask(userTask, packageName, mapPath, startPage, traceMode, traceUdpPort, null);
+        return submitTask(userTask, packageName, mapPath, startPage, traceMode, traceUdpPort, null, null);
     }
 
     public String submitTask(
@@ -124,6 +128,19 @@ public class CortexTaskManager {
             Integer traceUdpPort,
             String userPlaybook
     ) {
+        return submitTask(userTask, packageName, mapPath, startPage, traceMode, traceUdpPort, userPlaybook, null);
+    }
+
+    public String submitTask(
+            String userTask,
+            String packageName,
+            String mapPath,
+            String startPage,
+            String traceMode,
+            Integer traceUdpPort,
+            String userPlaybook,
+            Boolean recordEnabled
+    ) {
         return submitTaskInternal(
                 userTask,
                 packageName,
@@ -133,7 +150,8 @@ public class CortexTaskManager {
                 traceUdpPort,
                 "manual",
                 null,
-                userPlaybook
+                userPlaybook,
+                recordEnabled
         );
     }
 
@@ -146,7 +164,8 @@ public class CortexTaskManager {
             Integer traceUdpPort,
             String source,
             String scheduleId,
-            String userPlaybook
+            String userPlaybook,
+            Boolean recordEnabled
     ) {
         long now = System.currentTimeMillis();
         TaskInstance instance = new TaskInstance();
@@ -163,6 +182,7 @@ public class CortexTaskManager {
         instance.memoryApplied = memoryHint != null && !memoryHint.isEmpty();
         instance.state = TaskState.PENDING;
         instance.createdAt = now;
+        instance.recordEnabled = recordEnabled != null && recordEnabled.booleanValue();
 
         FsmTaskRequest req = new FsmTaskRequest(
                 userTask,
@@ -175,6 +195,7 @@ public class CortexTaskManager {
                 instance.scheduleId,
                 instance.userPlaybook,
                 memoryHint,
+                instance.recordEnabled,
                 instance
         );
         try {
@@ -206,7 +227,8 @@ public class CortexTaskManager {
             long runAtMs,
             String repeatModeRaw,
             int repeatWeekdays,
-            String userPlaybook
+            String userPlaybook,
+            boolean recordEnabled
     ) {
         if (userTask == null || userTask.trim().isEmpty()) {
             throw new IllegalArgumentException("user_task is required");
@@ -235,6 +257,7 @@ public class CortexTaskManager {
         def.runAtMs = runAtMs;
         def.repeatMode = repeatMode;
         def.repeatWeekdays = normalizedMask;
+        def.recordEnabled = recordEnabled;
         Calendar c = Calendar.getInstance();
         c.setTimeInMillis(runAtMs);
         def.hourOfDay = c.get(Calendar.HOUR_OF_DAY);
@@ -273,7 +296,8 @@ public class CortexTaskManager {
             long runAtMs,
             String repeatModeRaw,
             int repeatWeekdays,
-            String userPlaybook
+            String userPlaybook,
+            boolean recordEnabled
     ) {
         if (scheduleId == null || scheduleId.trim().isEmpty()) {
             throw new IllegalArgumentException("schedule_id is required");
@@ -314,6 +338,7 @@ public class CortexTaskManager {
             def.runAtMs = runAtMs;
             def.repeatMode = repeatMode;
             def.repeatWeekdays = normalizedMask;
+            def.recordEnabled = recordEnabled;
             def.hourOfDay = c.get(Calendar.HOUR_OF_DAY);
             def.minuteOfHour = c.get(Calendar.MINUTE);
             def.nextRunAt = firstRunAt;
@@ -407,7 +432,8 @@ public class CortexTaskManager {
                                     def.traceUdpPort,
                                     "schedule",
                                     def.scheduleId,
-                                    def.userPlaybook
+                                    def.userPlaybook,
+                                    Boolean.valueOf(def.recordEnabled)
                             );
                         } catch (Exception ignored) {
                             // Keep scheduler resilient; failures are reflected by missing task rows.
@@ -448,6 +474,7 @@ public class CortexTaskManager {
                             }
                         };
 
+                TaskSessionHooks hooks = applyTaskSessionStart(instance, req);
                 try {
                     Map<String, Object> out = fsmEngine.run(
                             req.userTask,
@@ -502,6 +529,9 @@ public class CortexTaskManager {
                     instance.state = TaskState.FAILED;
                     instance.reason = String.valueOf(e);
                     saveTaskRunsToDisk();
+                } finally {
+                    applyTaskSessionEnd(instance, hooks);
+                    saveTaskRunsToDisk();
                 }
             } catch (InterruptedException e) {
                 // Allow graceful shutdown if ever needed.
@@ -509,6 +539,62 @@ public class CortexTaskManager {
                 break;
             }
         }
+    }
+
+    private TaskSessionHooks applyTaskSessionStart(TaskInstance instance, FsmTaskRequest req) {
+        TaskSessionHooks hooks = new TaskSessionHooks();
+        hooks.recordEnabled = req.recordEnabled;
+
+        // Always enable DND at task start (best-effort).
+        try {
+            Map<String, Object> dndArgs = new LinkedHashMap<String, Object>();
+            dndArgs.put("mode", "none");
+            hooks.dndOn = toBool(fsmEngine.runSystemControl(instance.taskId, "dnd_set", dndArgs).get("ok"), false);
+        } catch (Exception ignored) {
+            hooks.dndOn = false;
+        }
+
+        // Recording is schedule-controlled; manual tasks default to off.
+        if (req.recordEnabled) {
+            hooks.recordPath = buildRecordFilePath(instance.taskId, instance.startedAt);
+            instance.recordFilePath = hooks.recordPath;
+            try {
+                Map<String, Object> recArgs = new LinkedHashMap<String, Object>();
+                recArgs.put("path", hooks.recordPath);
+                Map<String, Object> rec = fsmEngine.runSystemControl(instance.taskId, "screen_record_start", recArgs);
+                hooks.recordStarted = toBool(rec.get("ok"), false);
+                instance.recordStarted = hooks.recordStarted;
+            } catch (Exception ignored) {
+                hooks.recordStarted = false;
+                instance.recordStarted = false;
+            }
+        }
+        return hooks;
+    }
+
+    private void applyTaskSessionEnd(TaskInstance instance, TaskSessionHooks hooks) {
+        // Stop recording first, then restore DND.
+        if (hooks != null && hooks.recordStarted) {
+            try {
+                fsmEngine.runSystemControl(instance.taskId, "screen_record_stop", new LinkedHashMap<String, Object>());
+            } catch (Exception ignored) {
+            }
+        }
+        try {
+            Map<String, Object> dndOff = new LinkedHashMap<String, Object>();
+            dndOff.put("mode", "off");
+            fsmEngine.runSystemControl(instance.taskId, "dnd_set", dndOff);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static String buildRecordFilePath(String taskId, long startedAtMs) {
+        String safeTaskId = taskId != null && !taskId.trim().isEmpty()
+                ? taskId.trim().replaceAll("[^A-Za-z0-9._-]", "_")
+                : "unknown_task";
+        long ts = startedAtMs > 0L ? startedAtMs : System.currentTimeMillis();
+        String fileName = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(ts)) + ".mp4";
+        return DEFAULT_RECORD_ROOT + "/" + safeTaskId + "/" + fileName;
     }
 
     private void registerTaskInstance(TaskInstance instance) {
@@ -544,6 +630,7 @@ public class CortexTaskManager {
         final String scheduleId;
         final String userPlaybook;
         final Map<String, Object> taskMemoryHint;
+        final boolean recordEnabled;
         final TaskInstance instance;
 
         FsmTaskRequest(String userTask,
@@ -556,6 +643,7 @@ public class CortexTaskManager {
                        String scheduleId,
                        String userPlaybook,
                        Map<String, Object> taskMemoryHint,
+                       boolean recordEnabled,
                        TaskInstance instance) {
             this.userTask = userTask;
             this.packageName = packageName;
@@ -567,8 +655,16 @@ public class CortexTaskManager {
             this.scheduleId = scheduleId;
             this.userPlaybook = userPlaybook;
             this.taskMemoryHint = taskMemoryHint;
+            this.recordEnabled = recordEnabled;
             this.instance = instance;
         }
+    }
+
+    private static class TaskSessionHooks {
+        boolean dndOn;
+        boolean recordEnabled;
+        boolean recordStarted;
+        String recordPath;
     }
 
     /**
@@ -608,6 +704,9 @@ public class CortexTaskManager {
         String userPlaybook;     // optional guidance text
         String taskMemoryKey;    // normalized key
         boolean memoryApplied;   // whether this run consumed memory hint
+        boolean recordEnabled;   // schedule-controlled recording switch
+        boolean recordStarted;   // recording process started successfully
+        String recordFilePath;   // output path (if enabled)
         String taskSummary;      // final DONE summary for user-facing result
         Map<String, Object> resultSummary;
     }
@@ -650,6 +749,9 @@ public class CortexTaskManager {
         out.put("schedule_id", inst.scheduleId);
         out.put("task_memory_key", inst.taskMemoryKey);
         out.put("memory_applied", inst.memoryApplied);
+        out.put("record_enabled", inst.recordEnabled);
+        out.put("record_started", inst.recordStarted);
+        out.put("record_file", inst.recordFilePath);
         out.put("task_summary", inst.taskSummary);
         if (inst.resultSummary != null) {
             out.put("summary", inst.resultSummary);
@@ -692,6 +794,9 @@ public class CortexTaskManager {
             row.put("schedule_id", inst.scheduleId);
             row.put("task_memory_key", inst.taskMemoryKey);
             row.put("memory_applied", inst.memoryApplied);
+            row.put("record_enabled", inst.recordEnabled);
+            row.put("record_started", inst.recordStarted);
+            row.put("record_file", inst.recordFilePath);
             row.put("task_summary", inst.taskSummary);
             result.add(row);
         }
@@ -1046,6 +1151,9 @@ public class CortexTaskManager {
         row.put("user_playbook", inst.userPlaybook);
         row.put("task_memory_key", inst.taskMemoryKey);
         row.put("memory_applied", inst.memoryApplied);
+        row.put("record_enabled", inst.recordEnabled);
+        row.put("record_started", inst.recordStarted);
+        row.put("record_file", inst.recordFilePath);
         row.put("task_summary", inst.taskSummary);
         return row;
     }
@@ -1069,6 +1177,9 @@ public class CortexTaskManager {
             inst.userPlaybook = stringOrEmpty(row.get("user_playbook"));
             inst.taskMemoryKey = stringOrEmpty(row.get("task_memory_key"));
             inst.memoryApplied = toBool(row.get("memory_applied"), false);
+            inst.recordEnabled = toBool(row.get("record_enabled"), false);
+            inst.recordStarted = toBool(row.get("record_started"), false);
+            inst.recordFilePath = stringOrEmpty(row.get("record_file"));
             inst.taskSummary = stringOrEmpty(row.get("task_summary"));
             return inst;
         } catch (Exception ignored) {
@@ -1101,6 +1212,7 @@ public class CortexTaskManager {
             int port = toInt(row.get("trace_udp_port"), 0);
             def.traceUdpPort = port > 0 ? Integer.valueOf(port) : null;
             def.userPlaybook = stringOrEmpty(row.get("user_playbook"));
+            def.recordEnabled = toBool(row.get("record_enabled"), false);
             def.runAtMs = toLong(row.get("run_at"), 0L);
             def.repeatMode = normalizeRepeatMode(stringOrEmpty(row.get("repeat_mode")));
             def.repeatWeekdays = toInt(row.get("repeat_weekdays"), 0) & 0x7F;
@@ -1234,6 +1346,7 @@ public class CortexTaskManager {
         String traceMode;
         Integer traceUdpPort;
         String userPlaybook;
+        boolean recordEnabled;
 
         long runAtMs;
         String repeatMode;
@@ -1258,6 +1371,7 @@ public class CortexTaskManager {
         out.put("trace_mode", def.traceMode);
         out.put("trace_udp_port", def.traceUdpPort);
         out.put("user_playbook", def.userPlaybook);
+        out.put("record_enabled", def.recordEnabled);
         out.put("run_at", def.runAtMs);
         out.put("repeat_mode", def.repeatMode);
         out.put("repeat_weekdays", def.repeatWeekdays);

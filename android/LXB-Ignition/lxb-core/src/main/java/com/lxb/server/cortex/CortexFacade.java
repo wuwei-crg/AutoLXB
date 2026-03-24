@@ -335,7 +335,8 @@ public class CortexFacade {
      *   "map_path": "/data/local/tmp/nav_map.json", // optional, reserved for future
      *   "start_page": "bilibili_home",   // optional
      *   "trace_mode": "push",            // optional: "push" to enable UDP trace streaming
-     *   "trace_udp_port": 23456          // optional: Android app local UDP port for trace push
+     *   "trace_udp_port": 23456,         // optional: Android app local UDP port for trace push
+     *   "record_enabled": false          // optional: task-level recording switch
      * }
      *
      * For now this wires only INIT -> APP_RESOLVE, and requires package to be provided.
@@ -351,6 +352,7 @@ public class CortexFacade {
             String traceMode = stringOrEmpty(req.get("trace_mode"));
             int traceUdpPort = toInt(req.get("trace_udp_port"), 0);
             String userPlaybook = stringOrEmpty(req.get("user_playbook"));
+            boolean recordEnabled = toBool(req.get("record_enabled"), false);
 
             if (userTask.isEmpty()) {
                 return err("user_task is required");
@@ -363,7 +365,8 @@ public class CortexFacade {
                     startPage.isEmpty() ? null : startPage,
                     traceMode.isEmpty() ? null : traceMode,
                     traceUdpPort > 0 ? traceUdpPort : null,
-                    userPlaybook.isEmpty() ? null : userPlaybook
+                    userPlaybook.isEmpty() ? null : userPlaybook,
+                    Boolean.valueOf(recordEnabled)
             );
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("ok", true);
@@ -514,7 +517,8 @@ public class CortexFacade {
      *   "run_at": 1711111111111,         // required epoch ms, phone system time
      *   "repeat_mode": "once|daily|weekly", // optional, default once
      *   "repeat_weekdays": 31,           // optional, weekly mask (Mon bit0 ... Sun bit6)
-     *   "user_playbook": "optional"
+     *   "user_playbook": "optional",
+     *   "record_enabled": false          // optional
      * }
      */
     public byte[] handleCortexScheduleAdd(byte[] payload) {
@@ -548,6 +552,7 @@ public class CortexFacade {
                 repeatMode = repeatDaily ? "daily" : "once";
             }
             String userPlaybook = stringOrEmpty(req.get("user_playbook"));
+            boolean recordEnabled = toBool(req.get("record_enabled"), false);
 
             Map<String, Object> schedule = taskManager.addScheduledTask(
                     name,
@@ -560,7 +565,8 @@ public class CortexFacade {
                     runAt,
                     repeatMode,
                     repeatWeekdays,
-                    userPlaybook
+                    userPlaybook,
+                    recordEnabled
             );
 
             Map<String, Object> out = new LinkedHashMap<>();
@@ -656,7 +662,8 @@ public class CortexFacade {
      *   "run_at": 1711111111111,         // required epoch ms
      *   "repeat_mode": "once|daily|weekly",
      *   "repeat_weekdays": 31,           // Mon bit0 ... Sun bit6
-     *   "user_playbook": "optional"
+     *   "user_playbook": "optional",
+     *   "record_enabled": false          // optional
      * }
      */
     public byte[] handleCortexScheduleUpdate(byte[] payload) {
@@ -692,6 +699,7 @@ public class CortexFacade {
                 repeatMode = repeatDaily ? "daily" : "once";
             }
             String userPlaybook = stringOrEmpty(req.get("user_playbook"));
+            boolean recordEnabled = toBool(req.get("record_enabled"), false);
 
             Map<String, Object> schedule = taskManager.updateScheduledTask(
                     scheduleId,
@@ -705,7 +713,8 @@ public class CortexFacade {
                     runAt,
                     repeatMode,
                     repeatWeekdays,
-                    userPlaybook
+                    userPlaybook,
+                    recordEnabled
             );
             if (schedule == null) {
                 return err("schedule not found: " + scheduleId);
@@ -1034,6 +1043,14 @@ public class CortexFacade {
         } catch (Exception ignored) {
             return defaultValue;
         }
+    }
+
+    private static boolean toBool(Object o, boolean defaultValue) {
+        if (o == null) return defaultValue;
+        if (o instanceof Boolean) return (Boolean) o;
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty()) return defaultValue;
+        return "true".equalsIgnoreCase(s) || "1".equals(s);
     }
 
     private static Map<String, Object> buildRouteEvent(String pkg, String from, String to, String status) {
