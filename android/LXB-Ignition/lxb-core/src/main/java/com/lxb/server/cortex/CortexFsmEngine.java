@@ -2683,12 +2683,16 @@ public class CortexFsmEngine {
             boolean lockHintAfterUnlockCmd = isLikelyLockscreenShown();
             boolean pinTried = false;
             boolean pinInputOk = false;
+            boolean pinpadDetected = false;
             boolean homeSent = false;
             boolean unlockedStable = false;
             boolean homeStable = false;
 
-            // After wake+swipe, if lockscreen is still shown, try PIN/password.
-            if ((stateAfterUnlockCmd != 1 || lockHintAfterUnlockCmd) && !ctx.unlockPin.isEmpty()) {
+            // After wake+swipe, only input PIN when dump_actions indicates a clickable numeric keypad.
+            if (!ctx.unlockPin.isEmpty()) {
+                pinpadDetected = detectClickableNumericKeypad(ctx);
+            }
+            if (pinpadDetected && !ctx.unlockPin.isEmpty()) {
                 pinTried = true;
                 pinInputOk = tryInputUnlockPin(ctx, ctx.unlockPin);
                 sleepQuiet(UNLOCK_POST_PIN_SLEEP_MS);
@@ -2725,6 +2729,7 @@ public class CortexFsmEngine {
             ev.put("unlock_cmd_ok", unlockCmdOk);
             ev.put("pin_tried", pinTried);
             ev.put("pin_input_ok", pinInputOk);
+            ev.put("pinpad_detected", pinpadDetected);
             ev.put("screen_state_after_unlock_cmd", stateAfterUnlockCmd);
             ev.put("lock_hint_after_unlock_cmd", lockHintAfterUnlockCmd);
             ev.put("unlocked_stable", unlockedStable);
@@ -2840,6 +2845,56 @@ public class CortexFsmEngine {
         return inputOk;
     }
 
+    private boolean detectClickableNumericKeypad(Context ctx) {
+        try {
+            byte[] payload = perception != null ? perception.handleDumpActions(new byte[0]) : null;
+            List<DumpActionsParser.ActionNode> nodes = DumpActionsParser.parse(payload);
+            if (nodes == null || nodes.isEmpty()) {
+                Map<String, Object> ev = new LinkedHashMap<>();
+                ev.put("task_id", ctx != null ? ctx.taskId : "");
+                ev.put("result", "no_nodes");
+                trace.event("fsm_unlock_pinpad_detect", ev);
+                return false;
+            }
+
+            int bottomMax = 0;
+            for (DumpActionsParser.ActionNode n : nodes) {
+                if (n != null && n.bounds != null) {
+                    bottomMax = Math.max(bottomMax, n.bounds.bottom);
+                }
+            }
+            if (bottomMax <= 0) {
+                bottomMax = 2400;
+            }
+
+            for (char d = '0'; d <= '9'; d++) {
+                DigitTapTarget t = pickDigitTapTarget(nodes, d, bottomMax, true);
+                if (t == null) {
+                    Map<String, Object> ev = new LinkedHashMap<>();
+                    ev.put("task_id", ctx != null ? ctx.taskId : "");
+                    ev.put("result", "missing_digit");
+                    ev.put("digit", String.valueOf(d));
+                    trace.event("fsm_unlock_pinpad_detect", ev);
+                    return false;
+                }
+            }
+
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("task_id", ctx != null ? ctx.taskId : "");
+            ev.put("result", "ok");
+            ev.put("digits", 10);
+            trace.event("fsm_unlock_pinpad_detect", ev);
+            return true;
+        } catch (Exception e) {
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("task_id", ctx != null ? ctx.taskId : "");
+            ev.put("result", "failed");
+            ev.put("err", String.valueOf(e));
+            trace.event("fsm_unlock_pinpad_detect", ev);
+            return false;
+        }
+    }
+
     private boolean tryInputUnlockPinByTap(Context ctx, String digits) {
         if (digits == null || digits.isEmpty()) {
             return false;
@@ -2863,7 +2918,7 @@ public class CortexFsmEngine {
 
             for (int i = 0; i < digits.length(); i++) {
                 char d = digits.charAt(i);
-                DigitTapTarget target = pickDigitTapTarget(nodes, d, bottomMax);
+                DigitTapTarget target = pickDigitTapTarget(nodes, d, bottomMax, false);
                 if (target == null) {
                     Map<String, Object> miss = new LinkedHashMap<>();
                     miss.put("task_id", ctx != null ? ctx.taskId : "");
@@ -2900,7 +2955,12 @@ public class CortexFsmEngine {
         }
     }
 
-    private DigitTapTarget pickDigitTapTarget(List<DumpActionsParser.ActionNode> nodes, char digit, int screenBottom) {
+    private DigitTapTarget pickDigitTapTarget(
+            List<DumpActionsParser.ActionNode> nodes,
+            char digit,
+            int screenBottom,
+            boolean requireClickable
+    ) {
         if (nodes == null || nodes.isEmpty()) {
             return null;
         }
@@ -2926,7 +2986,11 @@ public class CortexFsmEngine {
             }
 
             // Prefer clickable key-like nodes near lower screen area.
-            if ((n.type & 0x01) != 0) {
+            boolean clickable = (n.type & 0x01) != 0;
+            if (requireClickable && !clickable) {
+                continue;
+            }
+            if (clickable) {
                 score += 25;
             } else if ((n.type & 0x08) != 0) {
                 score -= 25;
