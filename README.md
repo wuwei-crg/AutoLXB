@@ -42,6 +42,11 @@ Android-first mobile automation framework focused on practical daily automation.
 - Map Builder (construction + publish tooling): https://github.com/wuwei-crg/LXB-MapBuilder
 - Map Repository (stable/candidate map artifacts): https://github.com/wuwei-crg/LXB-MapRepo
 
+## Acknowledgement
+
+- Inspired by Shizuku: https://github.com/RikkaApps/Shizuku
+- Third-party notice: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
