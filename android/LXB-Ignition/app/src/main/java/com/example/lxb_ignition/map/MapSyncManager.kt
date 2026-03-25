@@ -1,7 +1,7 @@
 package com.example.lxb_ignition.map
 
 import android.app.Application
-import com.example.lxb_ignition.shizuku.ShizukuManager
+import com.example.lxb_ignition.storage.AppStatePaths
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -19,7 +19,6 @@ import java.util.zip.GZIPOutputStream
 
 class MapSyncManager(
     private val app: Application,
-    private val shizukuManager: ShizukuManager,
     private val httpClient: OkHttpClient
 ) {
     companion object {
@@ -463,13 +462,13 @@ class MapSyncManager(
     }
 
     private fun currentMapFile(packageName: String): File {
-        val pkgDir = File(shizukuManager.getMapDirPath(), safePackage(packageName))
+        val pkgDir = File(AppStatePaths.getMapDir(app), safePackage(packageName))
         if (!pkgDir.exists()) pkgDir.mkdirs()
         return File(pkgDir, "nav_map.json")
     }
 
     private fun backupMapFile(packageName: String): File {
-        val pkgDir = File(shizukuManager.getMapDirPath(), safePackage(packageName))
+        val pkgDir = File(AppStatePaths.getMapDir(app), safePackage(packageName))
         if (!pkgDir.exists()) pkgDir.mkdirs()
         return File(pkgDir, "nav_map.bak.json")
     }
@@ -485,7 +484,7 @@ class MapSyncManager(
     }
 
     private fun baseDir(): File {
-        return File(shizukuManager.getLxbStateBaseDir())
+        return AppStatePaths.getStateBaseDir(app)
     }
 
     private fun registryFile(): File = File(baseDir(), REGISTRY_FILE)

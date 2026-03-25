@@ -246,7 +246,6 @@ android {
     }
     buildFeatures {
         compose = true
-        aidl = true
         buildConfig = true
     }
 
@@ -275,10 +274,6 @@ dependencies {
 
     // ViewModel for Compose
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
-
-    // Shizuku - 特权 shell 执行
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // OkHttp - 发送需求到远端服务器
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

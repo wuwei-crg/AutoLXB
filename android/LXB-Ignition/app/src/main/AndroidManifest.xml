@@ -48,13 +48,6 @@
             </intent-filter>
         </activity>
 
-        <!-- LXB 前台服务保活 -->
-        <service
-            android:name=".service.LXBKeepaliveService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <service
             android:name=".service.TaskRuntimeService"
             android:enabled="true"
@@ -66,15 +59,6 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-
-        <!-- Shizuku Provider（必须，Shizuku 通过此 provider 注入 binder） -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
 
