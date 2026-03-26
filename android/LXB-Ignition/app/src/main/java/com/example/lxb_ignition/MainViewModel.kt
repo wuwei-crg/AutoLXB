@@ -52,6 +52,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_AUTO_UNLOCK_BEFORE_ROUTE = "auto_unlock_before_route"
         private const val KEY_AUTO_LOCK_AFTER_TASK = "auto_lock_after_task"
         private const val KEY_UNLOCK_PIN = "unlock_pin"
+        private const val KEY_USE_MAP = "use_map"
         private const val KEY_MAP_REPO_RAW_BASE_URL = "map_repo_raw_base_url"
         private const val KEY_MAP_DEBUG_LOCAL_OVERRIDE = "map_debug_local_override"
         private const val KEY_UI_LANG = "ui_lang"
@@ -99,6 +100,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val autoUnlockBeforeRoute = MutableStateFlow(prefs.getBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, true))
     val autoLockAfterTask = MutableStateFlow(prefs.getBoolean(KEY_AUTO_LOCK_AFTER_TASK, true))
     val unlockPin = MutableStateFlow(prefs.getString(KEY_UNLOCK_PIN, "") ?: "")
+    val useMap = MutableStateFlow(prefs.getBoolean(KEY_USE_MAP, true))
     val mapRepoRawBaseUrl = MutableStateFlow(
         prefs.getString(KEY_MAP_REPO_RAW_BASE_URL, DEFAULT_MAP_REPO_RAW_BASE_URL)
             ?: DEFAULT_MAP_REPO_RAW_BASE_URL
@@ -408,6 +410,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             appendSystemMessage("Server is running, calling Cortex FSM on device...")
+            val sync = withContext(Dispatchers.IO) { syncDeviceLlmConfigFile() }
+            if (sync.isFailure) {
+                val err = "Failed to sync runtime config: ${sync.exceptionOrNull()?.message}"
+                sendResult.value = err
+                appendLog("[FSM] $err")
+                appendSystemMessage(err)
+                stopTaskRuntimeIndicator()
+                return@launch
+            }
 
             // Ensure trace listener is running so that chat shows live FSM progress.
             ensureTraceUdpListener()
@@ -422,6 +433,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             .put("user_task", req)
                             .put("trace_mode", "push")
                             .put("trace_udp_port", TRACE_PUSH_PORT)
+                            .put("use_map", useMap.value)
                             .toString()
                         val payload = json.toByteArray(Charsets.UTF_8)
 
@@ -1282,6 +1294,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .put("auto_unlock_before_route", autoUnlockBeforeRoute.value)
             .put("auto_lock_after_task", autoLockAfterTask.value)
             .put("unlock_pin", unlockPin.value.trim())
+            .put("use_map", useMap.value)
             .toString()
     }
 
@@ -1522,6 +1535,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setUseMap(enabled: Boolean) {
+        useMap.value = enabled
+        saveConfig()
+        viewModelScope.launch {
+            val sync = syncDeviceLlmConfigFile()
+            val state = if (enabled) "ON" else "OFF"
+            val msg = if (sync.isSuccess) {
+                "Map routing $state. Device config synced: ${sync.getOrNull().orEmpty()}"
+            } else {
+                "Map routing $state, but device config sync failed: ${sync.exceptionOrNull()?.message}"
+            }
+            mapSyncResult.value = msg
+            appendLog("[MAP] $msg")
+            appendSystemMessage(msg)
+        }
+    }
+
     fun testLlmAndSyncConfig() {
         val baseUrl = llmBaseUrl.value.trim()
         val model = llmModel.value.trim()
@@ -1740,6 +1770,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, autoUnlockBeforeRoute.value)
             .putBoolean(KEY_AUTO_LOCK_AFTER_TASK, autoLockAfterTask.value)
             .putString(KEY_UNLOCK_PIN, unlockPin.value)
+            .putBoolean(KEY_USE_MAP, useMap.value)
             .putString(KEY_MAP_REPO_RAW_BASE_URL, mapRepoRawBaseUrl.value)
             .putBoolean(KEY_MAP_DEBUG_LOCAL_OVERRIDE, mapDebugMode.value)
             .putString(KEY_UI_LANG, normalizedLang)

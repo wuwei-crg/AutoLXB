@@ -353,6 +353,8 @@ public class CortexFacade {
             int traceUdpPort = toInt(req.get("trace_udp_port"), 0);
             String userPlaybook = stringOrEmpty(req.get("user_playbook"));
             boolean recordEnabled = toBool(req.get("record_enabled"), false);
+            Object useMapObj = req.get("use_map");
+            Boolean useMapOverride = useMapObj != null ? Boolean.valueOf(toBool(useMapObj, true)) : null;
 
             if (userTask.isEmpty()) {
                 return err("user_task is required");
@@ -366,7 +368,8 @@ public class CortexFacade {
                     traceMode.isEmpty() ? null : traceMode,
                     traceUdpPort > 0 ? traceUdpPort : null,
                     userPlaybook.isEmpty() ? null : userPlaybook,
-                    Boolean.valueOf(recordEnabled)
+                    Boolean.valueOf(recordEnabled),
+                    useMapOverride
             );
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("ok", true);

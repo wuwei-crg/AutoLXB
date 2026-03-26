@@ -168,15 +168,6 @@ fun LXBIgnitionApp(viewModel: MainViewModel = viewModel()) {
 fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val coreRuntime by viewModel.coreRuntimeStatus.collectAsState()
     val wireless by viewModel.wirelessBootstrapStatus.collectAsState()
-    val requirement by viewModel.requirement.collectAsState()
-    val chatMessages by viewModel.chatMessages.collectAsState()
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(chatMessages.size) {
-        if (chatMessages.isNotEmpty()) {
-            listState.animateScrollToItem(chatMessages.size - 1)
-        }
-    }
 
     Column(
         modifier = modifier
@@ -199,61 +190,71 @@ fun ControlTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             status = wireless,
             onStartGuide = { viewModel.startWirelessBootstrapGuide() }
         )
+    }
+}
 
-        // Chat-style task session
-        Card(
+@Composable
+fun TaskSessionCard(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val requirement by viewModel.requirement.collectAsState()
+    val chatMessages by viewModel.chatMessages.collectAsState()
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(chatMessages.size) {
+        if (chatMessages.isNotEmpty()) {
+            listState.animateScrollToItem(chatMessages.size - 1)
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(
+            Text(tr("Task Session"), style = MaterialTheme.typography.titleSmall)
+            LazyColumn(
+                state = listState,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .fillMaxWidth()
+                    .height(220.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(tr("Task Session"), style = MaterialTheme.typography.titleSmall)
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
+                items(chatMessages) { msg ->
+                    ChatBubble(message = msg)
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = requirement,
+                    onValueChange = { viewModel.requirement.value = it },
+                    label = { Text(tr("Describe what you want to do")) },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 3
+                )
+                Column(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(chatMessages) { msg ->
-                        ChatBubble(message = msg)
-                    }
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    OutlinedTextField(
-                        value = requirement,
-                        onValueChange = { viewModel.requirement.value = it },
-                        label = { Text(tr("Describe what you want to do")) },
-                        modifier = Modifier.weight(1f),
-                        maxLines = 3
-                    )
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Button(
+                        onClick = { viewModel.runRequirementOnDevice() },
+                        modifier = Modifier.height(40.dp)
                     ) {
-                        Button(
-                            onClick = { viewModel.runRequirementOnDevice() },
-                            modifier = Modifier.height(40.dp)
-                        ) {
-                            Text(tr("Run"))
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.cancelCurrentTaskOnDevice() },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                horizontal = 8.dp,
-                                vertical = 4.dp
-                            )
-                        ) {
-                            Text(tr("Stop"), fontSize = 12.sp)
-                        }
+                        Text(tr("Run"))
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.cancelCurrentTaskOnDevice() },
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 8.dp,
+                            vertical = 4.dp
+                        )
+                    ) {
+                        Text(tr("Stop"), fontSize = 12.sp)
                     }
                 }
             }
@@ -287,6 +288,7 @@ private val ZhMap = mapOf(
     "Stop" to "停止",
     "Task Manager" to "任务管理",
     "Refresh All" to "全部刷新",
+    "No runs yet. Submit a task from Task Session or wait for schedules." to "暂无执行记录。可在任务会话中提交任务，或等待定时任务执行。",
     "Schedules" to "定时任务",
     "Recent Runs" to "最近执行",
     "Back" to "返回",
@@ -353,7 +355,12 @@ private val ZhMap = mapOf(
     "Sync to device" to "同步到设备",
     "Map sync & lane control" to "地图同步与轨道控制",
     "Map repo raw base URL" to "Map 仓库 Raw Base URL",
+    "Use map routing" to "使用 Map 路由",
+    "ON: route with map when available." to "开启：有地图时优先按地图路由。",
+    "OFF: force no-map mode (launch then vision-only)." to "关闭：强制无地图模式（仅启动后视觉执行）。",
     "Debug mode" to "调试模式",
+    "ON: use candidate map when available; fallback to stable." to "开启：优先使用 candidate，无则回退 stable。",
+    "OFF: always use stable map." to "关闭：始终使用 stable。",
     "Package name" to "包名",
     "Used for pull-by-identifier and active status." to "用于按标识拉取与查看当前生效状态。",
     "Map ID" to "Map ID",
@@ -392,6 +399,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             Column(
                 modifier = modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -414,6 +422,8 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         Text(tr("Refresh All"), fontSize = 12.sp)
                     }
                 }
+
+                TaskSessionCard(viewModel = viewModel)
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -588,7 +598,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                 .padding(12.dp)
                         ) {
                             Text(
-                                text = "No runs yet. Submit a task from Control tab or wait for schedules.",
+                                text = "No runs yet. Submit a task from Task Session or wait for schedules.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                             )
@@ -1794,6 +1804,7 @@ fun UnlockPolicyConfigCard(viewModel: MainViewModel) {
 @Composable
 fun MapSyncConfigCard(viewModel: MainViewModel) {
     val mapRepoRawBaseUrl by viewModel.mapRepoRawBaseUrl.collectAsState()
+    val useMap by viewModel.useMap.collectAsState()
     val mapDebugMode by viewModel.mapDebugMode.collectAsState()
     val mapTargetPackage by viewModel.mapTargetPackage.collectAsState()
     val mapTargetId by viewModel.mapTargetId.collectAsState()
@@ -1822,12 +1833,35 @@ fun MapSyncConfigCard(viewModel: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Text(tr("Use map routing"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = if (useMap) {
+                            tr("ON: route with map when available.")
+                        } else {
+                            tr("OFF: force no-map mode (launch then vision-only).")
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    )
+                }
+                Switch(
+                    checked = useMap,
+                    onCheckedChange = { viewModel.setUseMap(it) }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(tr("Debug mode"), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        text = if (mapDebugMode)
-                            "ON: use candidate map when available; fallback to stable."
-                        else
-                            "OFF: always use stable map.",
+                        text = if (mapDebugMode) {
+                            tr("ON: use candidate map when available; fallback to stable.")
+                        } else {
+                            tr("OFF: always use stable map.")
+                        },
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
                     )

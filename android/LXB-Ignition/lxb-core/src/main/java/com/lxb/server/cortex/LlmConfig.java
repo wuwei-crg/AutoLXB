@@ -18,7 +18,8 @@ import java.util.Map;
  *   "model": "gpt-4o-mini",
  *   "auto_unlock_before_route": true,
  *   "auto_lock_after_task": true,
- *   "unlock_pin": "1234"
+ *   "unlock_pin": "1234",
+ *   "use_map": true
  * }
  */
 public class LlmConfig {
@@ -31,9 +32,10 @@ public class LlmConfig {
     public final boolean autoUnlockBeforeRoute;
     public final boolean autoLockAfterTask;
     public final String unlockPin;
+    public final boolean useMap;
 
     public LlmConfig(String apiBaseUrl, String apiKey, String model) {
-        this(apiBaseUrl, apiKey, model, true, true, "");
+        this(apiBaseUrl, apiKey, model, true, true, "", true);
     }
 
     public LlmConfig(
@@ -42,7 +44,8 @@ public class LlmConfig {
             String model,
             boolean autoUnlockBeforeRoute,
             boolean autoLockAfterTask,
-            String unlockPin
+            String unlockPin,
+            boolean useMap
     ) {
         this.apiBaseUrl = apiBaseUrl;
         this.apiKey = apiKey;
@@ -50,6 +53,7 @@ public class LlmConfig {
         this.autoUnlockBeforeRoute = autoUnlockBeforeRoute;
         this.autoLockAfterTask = autoLockAfterTask;
         this.unlockPin = unlockPin != null ? unlockPin : "";
+        this.useMap = useMap;
     }
 
     public static LlmConfig loadDefault() throws Exception {
@@ -76,6 +80,7 @@ public class LlmConfig {
         boolean autoUnlockBeforeRoute = parseBool(obj.get("auto_unlock_before_route"), true);
         boolean autoLockAfterTask = parseBool(obj.get("auto_lock_after_task"), true);
         String unlockPin = stringOrEmpty(obj.get("unlock_pin"));
+        boolean useMap = parseBool(obj.get("use_map"), true);
 
         if (baseUrl.isEmpty() || model.isEmpty()) {
             throw new IllegalStateException("LLM config missing api_base_url or model");
@@ -87,7 +92,8 @@ public class LlmConfig {
                 model,
                 autoUnlockBeforeRoute,
                 autoLockAfterTask,
-                unlockPin
+                unlockPin,
+                useMap
         );
     }
 

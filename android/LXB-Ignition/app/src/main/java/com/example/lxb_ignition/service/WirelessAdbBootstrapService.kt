@@ -71,9 +71,12 @@ class WirelessAdbBootstrapService : Service() {
         private const val KEY_WIRELESS_ADB_PORT = "wireless_adb_port"
         private const val DEFAULT_LXB_PORT = 12345
         private const val WATCHDOG_INTERVAL_MS = 12_000L
+        private const val START_RETRY_MAX_ATTEMPTS = 12
+        private const val START_RETRY_INTERVAL_MS = 5_000L
 
         private const val PAIRING_SERVICE_TYPE = "_adb-tls-pairing._tcp."
         private const val CONNECT_SERVICE_TYPE = "_adb-tls-connect._tcp."
+        private const val ACTION_WIRELESS_DEBUGGING_SETTINGS = "android.settings.WIRELESS_DEBUGGING_SETTINGS"
         private const val CORE_CLASS = "com.lxb.server.Main"
         private const val CORE_NICE_NAME = "lxb_core"
         private val STARTER_ASSET_BY_ABI = linkedMapOf(
@@ -120,6 +123,7 @@ class WirelessAdbBootstrapService : Service() {
     private var currentState = "IDLE"
     private var currentMessage = "Idle"
     private var watchdogJob: Job? = null
+    private var startRetryJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -162,6 +166,7 @@ class WirelessAdbBootstrapService : Service() {
     override fun onDestroy() {
         stopDiscovery()
         watchdogJob?.cancel()
+        startRetryJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
@@ -201,6 +206,7 @@ class WirelessAdbBootstrapService : Service() {
 
     private fun startCoreNative() {
         ensureForegroundRunning()
+        startRetryJob?.cancel()
         setState("STARTING_CORE", "Starting core via saved wireless endpoint...")
         updateNotification()
         scope.launch {
@@ -209,16 +215,27 @@ class WirelessAdbBootstrapService : Service() {
                 val port = getConfiguredPort()
                 finishBootstrap("RUNNING", "Native start succeeded. lxb-core is listening on port $port.")
             } else {
-                finishBootstrap(
-                    "FAILED",
-                    "Native start failed: ${res.detail}"
+                if (res.detail.contains("no saved endpoint")) {
+                    finishBootstrap(
+                        "FAILED",
+                        "Native start failed: ${res.detail}"
+                    )
+                    return@launch
+                }
+                openWirelessDebuggingSettings()
+                setState(
+                    "WAIT_WIRELESS_DEBUGGING",
+                    "Native start failed. Enable Wireless debugging; will auto-retry..."
                 )
+                updateNotification()
+                scheduleStartRetry()
             }
         }
     }
 
     private fun stopCoreNative() {
         ensureForegroundRunning()
+        startRetryJob?.cancel()
         setState("STOPPING", "Stopping core process via saved wireless endpoint...")
         updateNotification()
         scope.launch {
@@ -244,10 +261,36 @@ class WirelessAdbBootstrapService : Service() {
     private fun stopBootstrap() {
         stopDiscovery()
         watchdogJob?.cancel()
+        startRetryJob?.cancel()
         running = false
         setState("IDLE", "Bootstrap stopped.")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun scheduleStartRetry() {
+        startRetryJob?.cancel()
+        startRetryJob = scope.launch {
+            for (attempt in 1..START_RETRY_MAX_ATTEMPTS) {
+                if (!running) return@launch
+                delay(START_RETRY_INTERVAL_MS)
+                setState(
+                    "WAIT_WIRELESS_DEBUGGING",
+                    "Waiting Wireless debugging... retry $attempt/$START_RETRY_MAX_ATTEMPTS"
+                )
+                updateNotification()
+                val res = relaunchCoreViaSavedEndpoint()
+                if (res.ok) {
+                    val port = getConfiguredPort()
+                    finishBootstrap("RUNNING", "Native start succeeded after retry. lxb-core is listening on port $port.")
+                    return@launch
+                }
+            }
+            finishBootstrap(
+                "FAILED",
+                "Native start failed after retries. Please enable Wireless debugging and tap Start again."
+            )
+        }
     }
 
     private fun submitPairing(pairCodeRaw: String) {
@@ -422,6 +465,12 @@ class WirelessAdbBootstrapService : Service() {
             startActivity(i)
             true
         }.getOrDefault(false)
+    }
+
+    private fun openWirelessDebuggingSettings(): Boolean {
+        val direct = openSettings(ACTION_WIRELESS_DEBUGGING_SETTINGS)
+        if (direct) return true
+        return openSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
     }
 
     private fun startDiscovery() {
@@ -706,12 +755,9 @@ class WirelessAdbBootstrapService : Service() {
     ): RelaunchResult {
         val starterAsset = resolveStarterAssetForDevice()
             ?: return RelaunchResult(false, unsupportedAbiDetail())
-        val jarCheck = runShellCommand(manager, "ls -l $REMOTE_JAR_PATH", 6000)
-        if (!jarCheck.ok) {
-            val deploy = deployCoreJarViaShell(manager)
-            if (!deploy.ok) {
-                return RelaunchResult(false, "deploy_failed=${deploy.detail}")
-            }
+        val deploy = deployCoreJarViaShell(manager)
+        if (!deploy.ok) {
+            return RelaunchResult(false, "deploy_failed=${deploy.detail}")
         }
         val starterDeploy = deployStarterBinaryViaShell(manager, starterAsset)
         if (!starterDeploy.ok) {

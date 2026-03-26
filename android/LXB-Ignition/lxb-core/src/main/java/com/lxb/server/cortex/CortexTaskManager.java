@@ -141,6 +141,30 @@ public class CortexTaskManager {
             String userPlaybook,
             Boolean recordEnabled
     ) {
+        return submitTask(
+                userTask,
+                packageName,
+                mapPath,
+                startPage,
+                traceMode,
+                traceUdpPort,
+                userPlaybook,
+                recordEnabled,
+                null
+        );
+    }
+
+    public String submitTask(
+            String userTask,
+            String packageName,
+            String mapPath,
+            String startPage,
+            String traceMode,
+            Integer traceUdpPort,
+            String userPlaybook,
+            Boolean recordEnabled,
+            Boolean useMapOverride
+    ) {
         return submitTaskInternal(
                 userTask,
                 packageName,
@@ -151,7 +175,8 @@ public class CortexTaskManager {
                 "manual",
                 null,
                 userPlaybook,
-                recordEnabled
+                recordEnabled,
+                useMapOverride
         );
     }
 
@@ -165,7 +190,8 @@ public class CortexTaskManager {
             String source,
             String scheduleId,
             String userPlaybook,
-            Boolean recordEnabled
+            Boolean recordEnabled,
+            Boolean useMapOverride
     ) {
         long now = System.currentTimeMillis();
         TaskInstance instance = new TaskInstance();
@@ -196,6 +222,7 @@ public class CortexTaskManager {
                 instance.userPlaybook,
                 memoryHint,
                 instance.recordEnabled,
+                useMapOverride,
                 instance
         );
         try {
@@ -433,7 +460,8 @@ public class CortexTaskManager {
                                     "schedule",
                                     def.scheduleId,
                                     def.userPlaybook,
-                                    Boolean.valueOf(def.recordEnabled)
+                                    Boolean.valueOf(def.recordEnabled),
+                                    null
                             );
                         } catch (Exception ignored) {
                             // Keep scheduler resilient; failures are reflected by missing task rows.
@@ -485,6 +513,7 @@ public class CortexTaskManager {
                             req.traceUdpPort,
                             req.userPlaybook,
                             req.taskMemoryHint,
+                            req.useMapOverride,
                             instance.taskId,
                             checker
                     );
@@ -631,6 +660,7 @@ public class CortexTaskManager {
         final String userPlaybook;
         final Map<String, Object> taskMemoryHint;
         final boolean recordEnabled;
+        final Boolean useMapOverride;
         final TaskInstance instance;
 
         FsmTaskRequest(String userTask,
@@ -644,6 +674,7 @@ public class CortexTaskManager {
                        String userPlaybook,
                        Map<String, Object> taskMemoryHint,
                        boolean recordEnabled,
+                       Boolean useMapOverride,
                        TaskInstance instance) {
             this.userTask = userTask;
             this.packageName = packageName;
@@ -656,6 +687,7 @@ public class CortexTaskManager {
             this.userPlaybook = userPlaybook;
             this.taskMemoryHint = taskMemoryHint;
             this.recordEnabled = recordEnabled;
+            this.useMapOverride = useMapOverride;
             this.instance = instance;
         }
     }

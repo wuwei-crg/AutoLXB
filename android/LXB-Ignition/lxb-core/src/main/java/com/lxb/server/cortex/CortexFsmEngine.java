@@ -120,6 +120,7 @@ public class CortexFsmEngine {
         public boolean autoUnlockBeforeRoute = true;
         public boolean autoLockAfterTask = true;
         public String unlockPin = "";
+        public boolean useMap = true;
         public boolean unlockedByFsm = false;
 
         public Context(String taskId) {
@@ -305,6 +306,7 @@ public class CortexFsmEngine {
             Integer traceUdpPort,
             String userPlaybook,
             Map<String, Object> taskMemoryHint,
+            Boolean useMapOverride,
             String taskIdOverride,
             CancellationChecker cancellationChecker
     ) {
@@ -324,6 +326,14 @@ public class CortexFsmEngine {
         String initialPackageName = packageName != null ? packageName : "";
         ctx.selectedPackage = initialPackageName;
         loadUnlockPolicyFromConfig(ctx);
+        if (useMapOverride != null) {
+            ctx.useMap = useMapOverride.booleanValue();
+            Map<String, Object> useMapEv = new LinkedHashMap<>();
+            useMapEv.put("task_id", ctx.taskId);
+            useMapEv.put("use_map", ctx.useMap);
+            useMapEv.put("source", "request_override");
+            trace.event("fsm_use_map_policy", useMapEv);
+        }
 
         boolean enablePush = "push".equalsIgnoreCase(traceMode)
                 && traceUdpPort != null
@@ -521,6 +531,7 @@ public class CortexFsmEngine {
             out.put("memory_fast_path_fallback", anyMemoryFastPathFallback);
             out.put("auto_unlock_before_route", ctx.autoUnlockBeforeRoute);
             out.put("auto_lock_after_task", ctx.autoLockAfterTask);
+            out.put("use_map", ctx.useMap);
             out.put("unlocked_by_fsm", ctx.unlockedByFsm);
             if (ctx.error != null && !ctx.error.isEmpty()) {
                 out.put("reason", ctx.error);
@@ -1622,6 +1633,18 @@ public class CortexFsmEngine {
         }
 
         String pkg = ctx.selectedPackage.trim();
+        if (!ctx.useMap) {
+            ctx.mapPath = null;
+            ctx.targetPage = "";
+            Map<String, Object> noMapEv = new LinkedHashMap<>();
+            noMapEv.put("task_id", ctx.taskId);
+            noMapEv.put("package", pkg);
+            noMapEv.put("reason", "use_map_disabled");
+            noMapEv.put("use_map", false);
+            trace.event("fsm_route_plan_no_map", noMapEv);
+            return State.ROUTING;
+        }
+
         File mapFile = mapManager.getCurrentMapFile(pkg);
 
         // 2) No map for this package: keep pipeline, but mark as no-map mode.
@@ -2625,16 +2648,19 @@ public class CortexFsmEngine {
         ctx.autoUnlockBeforeRoute = true;
         ctx.autoLockAfterTask = true;
         ctx.unlockPin = "";
+        ctx.useMap = true;
         try {
             LlmConfig cfg = LlmConfig.loadDefault();
             ctx.autoUnlockBeforeRoute = cfg.autoUnlockBeforeRoute;
             ctx.autoLockAfterTask = cfg.autoLockAfterTask;
             ctx.unlockPin = cfg.unlockPin != null ? cfg.unlockPin.trim() : "";
+            ctx.useMap = cfg.useMap;
 
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
             ev.put("auto_unlock_before_route", ctx.autoUnlockBeforeRoute);
             ev.put("auto_lock_after_task", ctx.autoLockAfterTask);
+            ev.put("use_map", ctx.useMap);
             ev.put("has_unlock_pin", !ctx.unlockPin.isEmpty());
             trace.event("fsm_unlock_policy_loaded", ev);
         } catch (Exception e) {
@@ -2644,6 +2670,7 @@ public class CortexFsmEngine {
             ev.put("err", String.valueOf(e));
             ev.put("auto_unlock_before_route", ctx.autoUnlockBeforeRoute);
             ev.put("auto_lock_after_task", ctx.autoLockAfterTask);
+            ev.put("use_map", ctx.useMap);
             trace.event("fsm_unlock_policy_default", ev);
         }
     }
@@ -3668,17 +3695,6 @@ public class CortexFsmEngine {
                 ctx.sameCommandStreak = 1;
             }
             ctx.lastCommand = currentSig;
-
-            if (ctx.sameCommandStreak >= 3 && ctx.sameActivityStreak >= 3) {
-                ctx.error = "vision_action_loop_detected:repeated_same_command";
-                Map<String, Object> fail = new LinkedHashMap<>();
-                fail.put("task_id", ctx.taskId);
-                fail.put("command", currentSig);
-                fail.put("same_command_streak", ctx.sameCommandStreak);
-                fail.put("same_activity_streak", ctx.sameActivityStreak);
-                trace.event("vision_action_loop_detected", fail);
-                return State.FAIL;
-            }
 
             appendCommands(ctx, State.VISION_ACT, commands);
 
