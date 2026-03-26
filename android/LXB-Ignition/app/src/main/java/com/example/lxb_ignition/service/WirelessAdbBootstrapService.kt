@@ -89,6 +89,7 @@ class WirelessAdbBootstrapService : Service() {
         private const val REMOTE_JAR_PATH = "/data/local/tmp/lxb-core.jar"
         private const val REMOTE_STARTER_PATH = "/data/local/tmp/lxb-starter"
         private const val REMOTE_LOG_PATH = "/data/local/tmp/lxb-core.log"
+        private const val REMOTE_APP_LABELS_PATH = "/data/local/tmp/lxb-app-labels.tsv"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -767,6 +768,12 @@ class WirelessAdbBootstrapService : Service() {
                 "starter_deploy_failed abi=${starterAsset.abi} asset=${starterAsset.assetName} detail=${starterDeploy.detail}"
             )
         }
+        val appLabelsDeploy = deployAppLabelsSnapshotViaShell(manager)
+        val appLabelsNote = if (appLabelsDeploy.ok) {
+            "labels_ok"
+        } else {
+            "labels_warn=${appLabelsDeploy.detail}"
+        }
         val errors = ArrayList<String>(3)
         for (attempt in 1..2) {
             runStarterStop(manager)
@@ -774,14 +781,14 @@ class WirelessAdbBootstrapService : Service() {
             Thread.sleep(350L)
             val launch = runStarterStart(manager, port)
             if (waitLocalPortReady(port, 3500L, 200L)) {
-                return RelaunchResult(true, "ok")
+                return RelaunchResult(true, "ok;$appLabelsNote")
             }
             if (!launch.ok) {
                 errors.add("a$attempt:starter_start_failed ${launch.detail}")
                 continue
             }
             if (waitLocalPortReady(port, 7000L, 250L)) {
-                return RelaunchResult(true, "ok")
+                return RelaunchResult(true, "ok;$appLabelsNote")
             }
             val tail = runShellCommand(manager, "tail -n 40 $REMOTE_LOG_PATH", 8000)
             val ps = runShellCommand(
@@ -988,6 +995,8 @@ class WirelessAdbBootstrapService : Service() {
             append(shellQuote(llmConfigPath))
             append(" --task-memory ")
             append(shellQuote(taskMemoryPath))
+            append(" --app-labels ")
+            append(shellQuote(REMOTE_APP_LABELS_PATH))
         }
     }
 
@@ -1017,6 +1026,21 @@ class WirelessAdbBootstrapService : Service() {
         )
     }
 
+    private fun deployAppLabelsSnapshotViaShell(manager: WirelessAdbConnectionManager): DeployResult {
+        val labelsBytes = runCatching { buildAppLabelsTsv() }.getOrElse { e ->
+            return DeployResult(false, "build_app_labels_failed: ${e.message}")
+        }
+        if (labelsBytes.isEmpty()) {
+            return DeployResult(false, "build_app_labels_empty")
+        }
+        return deployBytesToRemote(
+            manager = manager,
+            bytes = labelsBytes,
+            remotePath = REMOTE_APP_LABELS_PATH,
+            executable = false
+        )
+    }
+
     private fun deployAssetToRemote(
         manager: WirelessAdbConnectionManager,
         assetName: String,
@@ -1029,6 +1053,20 @@ class WirelessAdbBootstrapService : Service() {
         if (bytes.isEmpty()) {
             return DeployResult(false, "asset_empty($assetName)")
         }
+        return deployBytesToRemote(
+            manager = manager,
+            bytes = bytes,
+            remotePath = remotePath,
+            executable = executable
+        )
+    }
+
+    private fun deployBytesToRemote(
+        manager: WirelessAdbConnectionManager,
+        bytes: ByteArray,
+        remotePath: String,
+        executable: Boolean
+    ): DeployResult {
         val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
         val init = runShellCommand(manager, "rm -f ${remotePath}.b64 $remotePath", 7000)
         if (!init.ok) return DeployResult(false, "init failed: ${init.shortOutput()}")
@@ -1055,6 +1093,49 @@ class WirelessAdbBootstrapService : Service() {
         val decode = runShellCommand(manager, decodeCmd, 15000)
         if (!decode.ok) return DeployResult(false, "decode failed: ${decode.shortOutput()}")
         return DeployResult(true, decode.shortOutput())
+    }
+
+    private fun buildAppLabelsTsv(): ByteArray {
+        val pm = packageManager
+        val labelsByPkg = linkedMapOf<String, String>()
+        val apps = runCatching { pm.getInstalledApplications(0) }.getOrDefault(emptyList())
+        for (app in apps) {
+            val pkg = app.packageName?.trim().orEmpty()
+            if (pkg.isEmpty()) continue
+            val label = sanitizeLabel(
+                runCatching { pm.getApplicationLabel(app)?.toString() ?: "" }.getOrDefault("")
+            )
+            if (label.isNotEmpty()) {
+                labelsByPkg[pkg] = label
+            }
+        }
+
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val launcherActivities = runCatching { pm.queryIntentActivities(launcherIntent, 0) }
+            .getOrDefault(emptyList())
+        for (ri in launcherActivities) {
+            val pkg = ri.activityInfo?.packageName?.trim().orEmpty()
+            if (pkg.isEmpty()) continue
+            if (labelsByPkg.containsKey(pkg)) continue
+            val label = sanitizeLabel(runCatching { ri.loadLabel(pm)?.toString() ?: "" }.getOrDefault(""))
+            if (label.isNotEmpty()) {
+                labelsByPkg[pkg] = label
+            }
+        }
+
+        val sb = StringBuilder()
+        for ((pkg, label) in labelsByPkg) {
+            sb.append(pkg).append('\t').append(label).append('\n')
+        }
+        return sb.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    private fun sanitizeLabel(raw: String): String {
+        return raw
+            .replace('\t', ' ')
+            .replace('\n', ' ')
+            .replace('\r', ' ')
+            .trim()
     }
 
     private fun shellQuote(v: String): String {

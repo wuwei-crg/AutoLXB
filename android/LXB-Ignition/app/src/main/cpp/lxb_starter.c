@@ -25,6 +25,7 @@ typedef struct {
     char map_dir[512];
     char llm_config_path[512];
     char task_memory_path[512];
+    char app_labels_path[512];
 } Config;
 
 static void print_err(const char *code, const char *fmt, ...) {
@@ -142,6 +143,8 @@ static int parse_args(int argc, char **argv, Config *cfg) {
             snprintf(cfg->llm_config_path, sizeof(cfg->llm_config_path), "%s", argv[++i]);
         } else if (strcmp(argv[i], "--task-memory") == 0 && i + 1 < argc) {
             snprintf(cfg->task_memory_path, sizeof(cfg->task_memory_path), "%s", argv[++i]);
+        } else if (strcmp(argv[i], "--app-labels") == 0 && i + 1 < argc) {
+            snprintf(cfg->app_labels_path, sizeof(cfg->app_labels_path), "%s", argv[++i]);
         }
     }
     if (cfg->process[0] == '\0') snprintf(cfg->process, sizeof(cfg->process), "lxb_core");
@@ -191,6 +194,7 @@ static int start_core(const Config *cfg) {
         char map_dir_arg[700];
         char llm_cfg_arg[700];
         char task_mem_arg[700];
+        char app_labels_arg[700];
         snprintf(classpath_arg, sizeof(classpath_arg), "-Djava.class.path=%s", cfg->jar);
         snprintf(nice_arg, sizeof(nice_arg), "--nice-name=%s", cfg->process);
         if (cfg->map_dir[0] != '\0') {
@@ -208,14 +212,20 @@ static int start_core(const Config *cfg) {
         } else {
             task_mem_arg[0] = '\0';
         }
+        if (cfg->app_labels_path[0] != '\0') {
+            snprintf(app_labels_arg, sizeof(app_labels_arg), "-Dlxb.app.labels.path=%s", cfg->app_labels_path);
+        } else {
+            app_labels_arg[0] = '\0';
+        }
 
-        char *child_argv[12];
+        char *child_argv[14];
         int argi = 0;
         child_argv[argi++] = "/system/bin/app_process";
         child_argv[argi++] = classpath_arg;
         if (map_dir_arg[0] != '\0') child_argv[argi++] = map_dir_arg;
         if (llm_cfg_arg[0] != '\0') child_argv[argi++] = llm_cfg_arg;
         if (task_mem_arg[0] != '\0') child_argv[argi++] = task_mem_arg;
+        if (app_labels_arg[0] != '\0') child_argv[argi++] = app_labels_arg;
         child_argv[argi++] = "/system/bin";
         child_argv[argi++] = nice_arg;
         child_argv[argi++] = (char *) cfg->main_class;
