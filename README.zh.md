@@ -81,6 +81,7 @@
 ## 致谢
 
 `app_process` 守护进程的设计思路参考了 [Shizuku](https://github.com/RikkaApps/Shizuku)。LXB-Framework 自行实现了 Wireless ADB 配对与连接，运行时不依赖 Shizuku。
+本项目也在 [LINUX DO 社区](https://linux.do/) 进行分享与交流，感谢社区的支持与反馈。
 
 第三方声明见：[THIRD_PARTY_NOTICES.zh.md](THIRD_PARTY_NOTICES.zh.md)
 

@@ -81,6 +81,7 @@ Navigation maps are built with [LXB-MapBuilder](https://github.com/wuwei-crg/LXB
 ## Acknowledgement
 
 The `app_process` daemon design is inspired by [Shizuku](https://github.com/RikkaApps/Shizuku). LXB-Framework implements its own Wireless ADB pairing and connection and does not depend on Shizuku at runtime.
+This project is also shared with and supported by the [LINUX DO community](https://linux.do/).
 
 Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
