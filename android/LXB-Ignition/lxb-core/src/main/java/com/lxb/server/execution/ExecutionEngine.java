@@ -28,6 +28,7 @@ public class ExecutionEngine {
     private static final String TAG = "[LXB][Execution]";
     private static final int DEFAULT_SYSTEM_CONTROL_TIMEOUT_MS = 8000;
     private static final int SCREEN_RECORD_VERIFY_DELAY_MS = 500;
+    private static final int SWIPE_MIN_DURATION_MS = 1500;
 
     // 系统层依赖
     private UiAutomationWrapper uiAutomation;
@@ -107,10 +108,12 @@ public class ExecutionEngine {
         int y1 = buffer.getShort() & 0xFFFF;
         int x2 = buffer.getShort() & 0xFFFF;
         int y2 = buffer.getShort() & 0xFFFF;
-        int duration = buffer.getShort() & 0xFFFF;
+        int requestedDuration = buffer.getShort() & 0xFFFF;
+        int duration = Math.max(requestedDuration, SWIPE_MIN_DURATION_MS);
 
         System.out.println(TAG + " SWIPE from (" + x1 + ", " + y1 +
-                ") to (" + x2 + ", " + y2 + "), duration=" + duration + "ms");
+                ") to (" + x2 + ", " + y2 + "), duration=" + duration + "ms"
+                + " (requested=" + requestedDuration + "ms)");
 
         if (uiAutomation == null) {
             System.err.println(TAG + " UiAutomation not available");

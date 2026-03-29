@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 public class UiAutomationWrapper {
 
     private static final String TAG = "[LXB][UiAuto]";
+    private static final int SWIPE_MIN_DURATION_MS = 1500;
     private static volatile boolean preferShellInputTouch = true;
     private final Map<String, String> shellLabelCache = new HashMap<>();
     private final Map<String, String> shellGlobalLabelMapCache = new HashMap<>();
@@ -509,9 +510,14 @@ public class UiAutomationWrapper {
      * 滑动手势
      */
     public boolean swipe(int x1, int y1, int x2, int y2, int duration) {
+        int normalizedDuration = Math.max(duration, SWIPE_MIN_DURATION_MS);
+        if (normalizedDuration != duration) {
+            System.out.println(TAG + " Swipe duration clamped to min " + SWIPE_MIN_DURATION_MS +
+                    "ms (requested=" + duration + "ms)");
+        }
         // Respect configured touch mode: shell-first or UiAutomation-first.
         if (preferShellInputTouch) {
-            if (swipeViaShell(x1, y1, x2, y2, duration)) {
+            if (swipeViaShell(x1, y1, x2, y2, normalizedDuration)) {
                 return true;
             }
         }
@@ -520,7 +526,7 @@ public class UiAutomationWrapper {
         if (injectInputEventMethod != null && uiAutomation != null) {
             try {
                 long downTime = uptimeMillis();
-                int steps = Math.max(2, duration / 16);
+                int steps = Math.max(2, normalizedDuration / 16);
 
                 Object down = motionEventObtainMethod.invoke(null,
                         downTime, downTime, ACTION_DOWN, (float) x1, (float) y1, 0);
@@ -529,7 +535,7 @@ public class UiAutomationWrapper {
                 if (!(Boolean) injectInputEventMethod.invoke(uiAutomation, down, true)) {
                     motionEventRecycleMethod.invoke(down);
                     // 尝试后备方案
-                    return swipeViaShell(x1, y1, x2, y2, duration);
+                    return swipeViaShell(x1, y1, x2, y2, normalizedDuration);
                 }
                 motionEventRecycleMethod.invoke(down);
 
@@ -537,7 +543,7 @@ public class UiAutomationWrapper {
                     float t = (float) i / steps;
                     int x = (int) (x1 + (x2 - x1) * t);
                     int y = (int) (y1 + (y2 - y1) * t);
-                    long eventTime = downTime + (long) (duration * t);
+                    long eventTime = downTime + (long) (normalizedDuration * t);
 
                     Object move = motionEventObtainMethod.invoke(null,
                             downTime, eventTime, ACTION_MOVE, (float) x, (float) y, 0);
@@ -545,11 +551,11 @@ public class UiAutomationWrapper {
                     injectInputEventMethod.invoke(uiAutomation, move, true);
                     motionEventRecycleMethod.invoke(move);
 
-                    Thread.sleep(duration / steps);
+                    Thread.sleep(normalizedDuration / steps);
                 }
 
                 Object up = motionEventObtainMethod.invoke(null,
-                        downTime, downTime + duration, ACTION_UP, (float) x2, (float) y2, 0);
+                        downTime, downTime + normalizedDuration, ACTION_UP, (float) x2, (float) y2, 0);
                 motionEventSetSourceMethod.invoke(up, SOURCE_TOUCHSCREEN);
                 boolean result = (Boolean) injectInputEventMethod.invoke(uiAutomation, up, true);
                 motionEventRecycleMethod.invoke(up);
@@ -564,7 +570,7 @@ public class UiAutomationWrapper {
         }
 
         // 后备方案
-        return swipeViaShell(x1, y1, x2, y2, duration);
+        return swipeViaShell(x1, y1, x2, y2, normalizedDuration);
     }
 
     /**
