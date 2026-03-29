@@ -7,6 +7,16 @@
 An experimental Android automation framework designed for repetitive, linear daily tasks.
 Instead of letting the model roam freely, LXB-Framework uses a **Route-Then-Act** pipeline: a pre-built navigation map handles deterministic page routing, then a VLM takes over to handle the actual on-screen work.
 
+## Software Preview & Features
+
+![Software preview](resources/software_en.png)
+
+- **Chat task mode**: type a one-time natural language request and execute immediately.
+  - Example: `Help me order one large oat latte from the coffee app.`
+- **Scheduled task mode**: set a trigger time (one-shot / daily / weekly) and let the daemon execute automatically, even when the screen is off or the app is killed.
+  - Example: `Every weekday at 08:30, place my usual coffee order.`
+- **Playbook fallback**: for apps without a navigation map, write a step-by-step playbook and the pipeline will follow it instead.
+
 ## How It Works
 
 - **Route-Then-Act pipeline**: tasks are split into a deterministic routing phase (map-based, no vision) and a vision-based action phase (VLM handles dynamic UI).
@@ -16,14 +26,6 @@ Instead of letting the model roam freely, LXB-Framework uses a **Route-Then-Act*
 ![Overall architecture](resources/architecture_overall.png)
 
 ![Framework internal architecture](resources/architecture_LXB-Framework.png)
-
-## Features
-
-- **Chat task mode**: type a one-time natural language request and execute immediately.
-  - Example: `Help me order one large oat latte from the coffee app.`
-- **Scheduled task mode**: set a trigger time (one-shot / daily / weekly) and let the daemon execute automatically, even when the screen is off or the app is killed.
-  - Example: `Every weekday at 08:30, place my usual coffee order.`
-- **Playbook fallback**: for apps without a navigation map, write a step-by-step playbook and the pipeline will follow it instead.
 
 ## Requirements
 
