@@ -76,6 +76,14 @@ public final class VisionCommandParser {
 
         List<Instruction> out = new ArrayList<Instruction>();
         for (String line : nonEmpty) {
+            // Special-case DONE: treat everything after op as raw summary text.
+            Instruction done = parseDoneInstruction(line);
+            if (done != null) {
+                validateArity(done.op, done.args);
+                out.add(done);
+                continue;
+            }
+
             List<String> parts = shellSplit(line);
             if (parts.isEmpty()) {
                 continue;
@@ -89,6 +97,38 @@ public final class VisionCommandParser {
             throw new InstructionError("no valid instructions parsed");
         }
         return out;
+    }
+
+    private static Instruction parseDoneInstruction(String line) {
+        if (line == null) {
+            return null;
+        }
+        String trimmed = line.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        int firstWs = -1;
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (Character.isWhitespace(trimmed.charAt(i))) {
+                firstWs = i;
+                break;
+            }
+        }
+
+        String opToken = firstWs >= 0 ? trimmed.substring(0, firstWs) : trimmed;
+        if (!"DONE".equalsIgnoreCase(opToken)) {
+            return null;
+        }
+
+        List<String> args = new ArrayList<String>();
+        if (firstWs >= 0) {
+            String tail = trimmed.substring(firstWs + 1).trim();
+            if (!tail.isEmpty()) {
+                args.add(tail);
+            }
+        }
+        return new Instruction("DONE", args, line);
     }
 
     public static void validateAllowed(List<Instruction> instructions, Set<String> allowedOps) throws InstructionError {
