@@ -875,7 +875,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             if (showProgress) {
-                appUpdateResult.value = "Checking latest release..."
+                appUpdateResult.value = localizeUpdateMessage("Checking latest release...")
             }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -898,20 +898,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }.getOrElse { e -> Pair("Update check failed: ${e.message}", "") }
             }
-            var msg = result.first
+            var rawMsg = result.first
             val url = result.second
             if (openTarget && url.isNotBlank()) {
                 openUrl(url)
             } else if (!openTarget && url.isNotBlank()) {
-                msg = "New version found. Tap \"Check update\" to open download/release page."
+                rawMsg = "New version found. Tap \"Check update\" to open download/release page."
             }
 
-            val isUpToDate = msg.startsWith("Already up to date")
+            val isUpToDate = rawMsg.startsWith("Already up to date")
             val shouldNotify = url.isNotBlank() || !isUpToDate || notifyWhenUpToDate
             if (shouldNotify) {
-                appUpdateResult.value = msg
+                appUpdateResult.value = localizeUpdateMessage(rawMsg)
             }
-            appendLog("[UPDATE] $msg")
+            appendLog("[UPDATE] $rawMsg")
+        }
+    }
+
+    private fun localizeUpdateMessage(raw: String): String {
+        if (uiLang.value != "zh") {
+            return raw
+        }
+        return when {
+            raw == "Checking latest release..." ->
+                "正在检查最新版本..."
+
+            raw == "New version found. Tap \"Check update\" to open download/release page." ->
+                "发现新版本，点击“检查更新”可打开下载/发布页面。"
+
+            raw.startsWith("Already up to date (current=") -> {
+                val m = Regex("""Already up to date \(current=([^,]+), latest=([^)]+)\)\.""")
+                    .find(raw)
+                if (m != null) {
+                    "当前已是最新版本（当前=${m.groupValues[1]}，最新=${m.groupValues[2]}）。"
+                } else {
+                    "当前已是最新版本。"
+                }
+            }
+
+            raw.startsWith("New version found: v") -> {
+                val m = Regex("""New version found: v([^ ]+) \(current=([^)]+)\)\. (Opening APK download|Opening release page)\.\.\.""")
+                    .find(raw)
+                if (m != null) {
+                    val latest = m.groupValues[1]
+                    val current = m.groupValues[2]
+                    val action = m.groupValues[3]
+                    if (action == "Opening APK download") {
+                        "发现新版本：v$latest（当前=$current）。将打开 APK 下载地址..."
+                    } else {
+                        "发现新版本：v$latest（当前=$current）。将打开 Release 页面..."
+                    }
+                } else {
+                    "发现新版本。"
+                }
+            }
+
+            raw.startsWith("Update check failed: ") ->
+                "检查更新失败：${raw.removePrefix("Update check failed: ")}"
+
+            raw == "Invalid update URL." ->
+                "更新地址无效。"
+
+            raw.startsWith("Failed to open browser: ") ->
+                "打开浏览器失败：${raw.removePrefix("Failed to open browser: ")}"
+
+            else -> raw
         }
     }
 
@@ -972,7 +1023,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun openUrl(url: String) {
         val u = url.trim()
         if (u.isBlank()) {
-            appUpdateResult.value = "Invalid update URL."
+            appUpdateResult.value = localizeUpdateMessage("Invalid update URL.")
             return
         }
         runCatching {
@@ -981,7 +1032,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             getApplication<Application>().startActivity(intent)
         }.onFailure { e ->
-            appUpdateResult.value = "Failed to open browser: ${e.message}"
+            appUpdateResult.value = localizeUpdateMessage("Failed to open browser: ${e.message}")
             appendLog("[UPDATE] Failed to open browser: ${e.message}")
         }
     }

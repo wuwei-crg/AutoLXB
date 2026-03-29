@@ -381,6 +381,13 @@ private val ZhMap = mapOf(
     "Refresh Core State" to "刷新 Core 状态",
     "Wireless bootstrap" to "无线 ADB 引导",
     "Wireless ADB bootstrap path (native). Start guide, then submit pairing code from notification." to "无线 ADB 引导路径（原生）。点击开始引导后，在通知栏仅输入配对码。",
+    "Wireless ADB setup steps:" to "无线 ADB 引导步骤：",
+    "1. Ensure Developer options is enabled. If unsure, search online for your phone model." to "1. 确保已打开手机开发者模式；如果不知道如何打开，请根据手机型号上网搜索。",
+    "2. Tap \"Open Developer Options (Start Guide)\"." to "2. 点击“打开开发者选项（开始引导）”。",
+    "3. In Developer options, find Wireless debugging and turn it on." to "3. 在开发者选项中找到“无线调试”并打开。",
+    "4. Tap \"Pair device with pairing code\"." to "4. 点击“使用配对码配对设备”。",
+    "5. After the pairing code appears, enter it in this app's notification input." to "5. 看到配对码后，在本应用通知栏输入框中填入配对码。",
+    "6. Return to the app and check whether core starts automatically. If not, tap \"Start Native\" manually." to "6. 回到应用，观察是否自动启动成功；如果没有，手动点击“原生启动”。",
     "Open Developer Options (Start Guide)" to "打开开发者选项（开始引导）",
     "State" to "状态",
     "Start" to "启动",
@@ -1433,11 +1440,43 @@ fun WirelessBootstrapCard(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(tr("Wireless bootstrap"), style = MaterialTheme.typography.titleSmall)
-            Text(
-                tr("Wireless ADB bootstrap path (native). Start guide, then submit pairing code from notification."),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                fontSize = 12.sp
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    tr("Wireless ADB setup steps:"),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("1. Ensure Developer options is enabled. If unsure, search online for your phone model."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("2. Tap \"Open Developer Options (Start Guide)\"."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("3. In Developer options, find Wireless debugging and turn it on."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("4. Tap \"Pair device with pairing code\"."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("5. After the pairing code appears, enter it in this app's notification input."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    tr("6. Return to the app and check whether core starts automatically. If not, tap \"Start Native\" manually."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+            }
             Text(
                 "${tr("State")}: ${status.state} | ${status.message}",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),

@@ -89,3 +89,7 @@
 
 MIT，见 [LICENSE](LICENSE)。
 
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=wuwei-crg/LXB-Framework&type=Date)](https://star-history.com/#wuwei-crg/LXB-Framework&Date)
+
