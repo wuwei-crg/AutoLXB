@@ -73,6 +73,7 @@ import com.example.lxb_ignition.model.TaskSummary
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
 import com.example.lxb_ignition.ui.theme.LXBIgnitionTheme
+import com.lxb.server.cortex.LlmClient
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -443,7 +444,9 @@ private val ZhMap = mapOf(
     "Current app version" to "当前应用版本",
     "Check latest release" to "检查最新版本",
     "Open releases" to "打开 Releases",
-    "Use OpenAI Chat Completions compatible endpoint. URL should end with /v1 or /v1/chat/completions." to "使用 OpenAI Chat Completions 兼容接口。URL 建议以 /v1 或 /v1/chat/completions 结尾。",
+    "Endpoint is auto-completed to /v1/chat/completions." to "会自动补齐为 /v1/chat/completions 端点。",
+    "Resolved request URL" to "真实调用 URL",
+    "Input API Base URL to preview request endpoint." to "输入 API Base URL 后，这里会实时显示最终请求地址。",
     "lxb-core server" to "lxb-core 服务",
     "TCP port" to "TCP 端口",
     "TCP port listened by lxb-core on device (default 12345)" to "设备端 lxb-core 监听的 TCP 端口（默认 12345）",
@@ -2008,6 +2011,9 @@ fun LlmConfigCard(viewModel: MainViewModel) {
     val llmApiKey by viewModel.llmApiKey.collectAsState()
     val llmModel by viewModel.llmModel.collectAsState()
     val llmTestResult by viewModel.llmTestResult.collectAsState()
+    val resolvedEndpoint = remember(llmBaseUrl) {
+        runCatching { LlmClient.buildEndpointUrl(llmBaseUrl) }.getOrNull().orEmpty()
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -2024,17 +2030,24 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                 singleLine = true,
                 supportingText = {
                     Text(
-                        tr("Use OpenAI Chat Completions compatible endpoint. URL should end with /v1 or /v1/chat/completions."),
+                        tr("Endpoint is auto-completed to /v1/chat/completions."),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         fontSize = 12.sp
                     )
                 }
             )
+            Text(
+                text = "${tr("Resolved request URL")}: " +
+                    if (resolvedEndpoint.isNotBlank()) resolvedEndpoint else tr("Input API Base URL to preview request endpoint."),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                fontSize = 12.sp
+            )
             OutlinedTextField(
                 value = llmApiKey,
                 onValueChange = { viewModel.llmApiKey.value = it },
                 label = { Text(tr("API Key")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

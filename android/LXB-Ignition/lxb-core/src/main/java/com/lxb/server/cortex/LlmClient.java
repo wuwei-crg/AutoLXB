@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public class LlmClient {
@@ -241,23 +242,20 @@ public class LlmClient {
         if (base.isEmpty()) {
             throw new IllegalStateException("LLM api_base_url is empty");
         }
-        String lower = base.toLowerCase();
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (base.isEmpty()) {
+            throw new IllegalStateException("LLM api_base_url is empty");
+        }
+        String lower = base.toLowerCase(Locale.ROOT);
         if (lower.endsWith("/chat/completions")) {
             return base;
         }
-        if (lower.endsWith("/v1/responses")) {
-            int idx = lower.lastIndexOf("/v1/responses");
-            String prefix = base.substring(0, idx);
-            return prefix + "/v1/chat/completions";
+        if (lower.endsWith("/v1")) {
+            return base + "/chat/completions";
         }
-        if (lower.endsWith("/v1") || lower.endsWith("/v1/")) {
-            if (base.endsWith("/")) {
-                return base + "chat/completions";
-            } else {
-                return base + "/chat/completions";
-            }
-        }
-        return base;
+        return base + "/v1/chat/completions";
     }
 
     private static String buildChatPayload(String model, String systemPrompt, String userMessage) {
