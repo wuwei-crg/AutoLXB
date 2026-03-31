@@ -6,6 +6,7 @@ import com.lxb.server.cortex.LlmConfig;
 import java.util.Locale;
 
 public class NotificationTaskRewriter {
+    private static final int NOTIFY_LLM_TIMEOUT_MS = 60_000;
 
     public static class ConditionResult {
         public final boolean match;
@@ -46,8 +47,7 @@ public class NotificationTaskRewriter {
         try {
             LlmConfig cfg = LlmConfig.loadDefault();
             String prompt = buildConditionPrompt(rule.llmCondition, event);
-            int timeout = (int) rule.llmTimeoutMs;
-            String raw = llmClient.chatOnce(cfg, null, prompt, null, 6000, timeout);
+            String raw = llmClient.chatOnce(cfg, null, prompt, null, NOTIFY_LLM_TIMEOUT_MS, NOTIFY_LLM_TIMEOUT_MS);
             String token = normalizeToken(raw);
             if (token.equals(rule.llmYesToken)) {
                 return new ConditionResult(true, raw, "");
@@ -61,7 +61,7 @@ public class NotificationTaskRewriter {
         }
     }
 
-    public RewriteResult rewriteTask(String userRequirement, NotificationEvent event, long timeoutMs) {
+    public RewriteResult rewriteTask(String userRequirement, NotificationEvent event, String preferredPackage) {
         String requirement = userRequirement != null ? userRequirement.trim() : "";
         if (requirement.isEmpty()) {
             return new RewriteResult(false, "", "", "empty_requirement");
@@ -71,9 +71,12 @@ public class NotificationTaskRewriter {
         }
         try {
             LlmConfig cfg = LlmConfig.loadDefault();
-            String prompt = buildRewritePrompt(requirement, event);
-            int timeout = (int) Math.max(500L, timeoutMs);
-            String raw = llmClient.chatOnce(cfg, null, prompt, null, 6000, timeout);
+            String targetPackage = preferredPackage != null ? preferredPackage.trim() : "";
+            if (targetPackage.isEmpty()) {
+                targetPackage = event.packageName != null ? event.packageName.trim() : "";
+            }
+            String prompt = buildRewritePrompt(requirement, event, targetPackage);
+            String raw = llmClient.chatOnce(cfg, null, prompt, null, NOTIFY_LLM_TIMEOUT_MS, NOTIFY_LLM_TIMEOUT_MS);
             String task = normalizeTaskLine(raw);
             if (task.isEmpty()) {
                 return new RewriteResult(false, "", raw, "empty_rewrite_output");
@@ -103,13 +106,21 @@ public class NotificationTaskRewriter {
         return sb.toString();
     }
 
-    private static String buildRewritePrompt(String requirement, NotificationEvent e) {
+    private static String buildRewritePrompt(String requirement, NotificationEvent e, String targetPackage) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are a task rewriter for Android automation.\n");
         sb.append("Given user requirement and one notification, output exactly one Chinese sentence as the final task.\n");
-        sb.append("Do not output JSON. Do not output explanation.\n\n");
+        sb.append("Do not output JSON. Do not output explanation.\n");
+        sb.append("The sentence must be specific and executable.\n");
+        sb.append("Hard constraints:\n");
+        sb.append("1) Must explicitly include the software/app to operate (app name or package id).\n");
+        sb.append("2) Must describe concrete operation path, e.g. \"打开微信，进入XX群聊，回复...\".\n");
+        sb.append("3) Do not use vague words such as 某软件/某应用/某群聊/某人/某消息/某内容.\n");
+        sb.append("4) If notification title/text contains concrete target (group/person), reuse it directly.\n\n");
         sb.append("User requirement:\n");
         sb.append(requirement).append("\n\n");
+        sb.append("Preferred target app package:\n");
+        sb.append(targetPackage != null ? targetPackage : "").append("\n\n");
         sb.append("Notification:\n");
         sb.append("- package: ").append(e.packageName).append("\n");
         sb.append("- title: ").append(e.title).append("\n");
@@ -147,4 +158,3 @@ public class NotificationTaskRewriter {
         return s;
     }
 }
-

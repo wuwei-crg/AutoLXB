@@ -84,10 +84,10 @@ public class NotificationTriggerRule {
         this.llmCondition = llmCondition != null ? llmCondition : "";
         this.llmYesToken = normalizeToken(llmYesToken, "yes");
         this.llmNoToken = normalizeToken(llmNoToken, "no");
-        this.llmTimeoutMs = clampTimeout(llmTimeoutMs, 3000L);
+        this.llmTimeoutMs = clampTimeout(llmTimeoutMs, 60000L);
         this.taskRewriteEnabled = taskRewriteEnabled;
         this.taskRewriteInstruction = taskRewriteInstruction != null ? taskRewriteInstruction : "";
-        this.taskRewriteTimeoutMs = clampTimeout(taskRewriteTimeoutMs, 4000L);
+        this.taskRewriteTimeoutMs = clampTimeout(taskRewriteTimeoutMs, 60000L);
         this.taskRewriteFailPolicy = normalizeFailPolicy(taskRewriteFailPolicy);
         this.cooldownMs = Math.max(0L, cooldownMs);
         this.stopAfterMatched = stopAfterMatched;
@@ -116,11 +116,11 @@ public class NotificationTriggerRule {
         String llmCondition = stringOrEmpty(map.get("llm_condition"));
         String llmYesToken = stringOrEmpty(map.get("llm_yes_token"));
         String llmNoToken = stringOrEmpty(map.get("llm_no_token"));
-        long llmTimeoutMs = toLong(map.get("llm_timeout_ms"), 3000L);
+        long llmTimeoutMs = toLong(map.get("llm_timeout_ms"), 60000L);
 
         boolean taskRewriteEnabled = toBool(map.get("task_rewrite_enabled"), false);
         String taskRewriteInstruction = stringOrEmpty(map.get("task_rewrite_instruction"));
-        long taskRewriteTimeoutMs = toLong(map.get("task_rewrite_timeout_ms"), 4000L);
+        long taskRewriteTimeoutMs = toLong(map.get("task_rewrite_timeout_ms"), 60000L);
         String taskRewriteFailPolicy = stringOrEmpty(map.get("task_rewrite_fail_policy"));
 
         long cooldownMs = toLong(map.get("cooldown_ms"), 60000L);

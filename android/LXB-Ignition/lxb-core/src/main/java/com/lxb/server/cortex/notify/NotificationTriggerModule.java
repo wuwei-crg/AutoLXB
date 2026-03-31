@@ -392,7 +392,11 @@ public class NotificationTriggerModule {
             String rewriteRaw = "";
             if (rule.taskRewriteEnabled) {
                 NotificationTaskRewriter.RewriteResult rewrite =
-                        taskRewriter.rewriteTask(baseTask, event, rule.taskRewriteTimeoutMs);
+                        taskRewriter.rewriteTask(
+                                baseTask,
+                                event,
+                                rule.action != null ? rule.action.packageName : ""
+                        );
                 rewriteRaw = rewrite.raw;
                 if (rewrite.ok) {
                     finalTask = rewrite.finalTask;

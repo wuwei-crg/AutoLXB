@@ -862,10 +862,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyLlmCondition.value = ""
         notifyLlmYesToken.value = "yes"
         notifyLlmNoToken.value = "no"
-        notifyLlmTimeoutMs.value = "3000"
+        notifyLlmTimeoutMs.value = "60000"
         notifyTaskRewriteEnabled.value = true
         notifyTaskRewriteInstruction.value = ""
-        notifyTaskRewriteTimeoutMs.value = "4000"
+        notifyTaskRewriteTimeoutMs.value = "60000"
         notifyTaskRewriteFailPolicy.value = "fallback_raw_task"
         notifyCooldownMs.value = "60"
         notifyStopAfterMatched.value = true
@@ -916,10 +916,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .put("llm_condition", notifyLlmCondition.value.trim())
             .put("llm_yes_token", "yes")
             .put("llm_no_token", "no")
-            .put("llm_timeout_ms", 3000L)
+            .put("llm_timeout_ms", 60000L)
             .put("task_rewrite_enabled", true)
             .put("task_rewrite_instruction", "")
-            .put("task_rewrite_timeout_ms", 4000L)
+            .put("task_rewrite_timeout_ms", 60000L)
             .put("task_rewrite_fail_policy", "fallback_raw_task")
             .put("cooldown_ms", cooldownSec * 1000L)
             .put("stop_after_matched", true)

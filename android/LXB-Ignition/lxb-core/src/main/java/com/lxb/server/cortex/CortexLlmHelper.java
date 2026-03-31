@@ -37,6 +37,10 @@ public final class CortexLlmHelper {
 
         StringBuilder sb = new StringBuilder();
         sb.append("You are an assistant that decomposes a high-level Android user task into a small number of high-level sub_tasks.\n");
+        sb.append("Important execution capability:\n");
+        sb.append("- The downstream VISION_ACT stage already has built-in LLM abilities: understanding, extraction, summarization, reasoning, and rewrite.\n");
+        sb.append("- Do NOT create a sub_task that opens any AI/chat app for summarization/analysis unless the user explicitly requires that specific app.\n");
+        sb.append("- For tasks like \"collect info then summarize\", keep summarization inside the same sub_task flow, not as a separate AI-app sub_task.\n\n");
         sb.append("User task (Chinese or English):\n");
         sb.append(ctx.userTask != null ? ctx.userTask : "").append("\n\n");
         sb.append("Installed apps (JSON array with {\"package\",\"label\"}):\n");
@@ -86,6 +90,7 @@ public final class CortexLlmHelper {
     public static String buildTaskDecomposeSystemPrompt() {
         return "You are an assistant that decomposes a high-level Android user task into a small number of high-level sub_tasks for an automation agent.\n"
                 + "sub_tasks are independent sub-goals (like \"view my followers\" or \"send a link\"), NOT individual button clicks.\n"
+                + "VISION_ACT already has built-in LLM capability (understanding/summarization/reasoning/rewrite), so do not add AI/chat-app sub_tasks unless the user explicitly names that app.\n"
                 + "You MUST output strict JSON with fields: sub_tasks (array) and task_type.\n"
                 + "Do not output markdown, code fences, or any commentary outside the JSON.";
     }
