@@ -17,6 +17,7 @@ import com.example.lxb_ignition.core.DeviceLlmSettings
 import com.example.lxb_ignition.core.MapOperationsController
 import com.example.lxb_ignition.core.TaskRuntimeController
 import com.example.lxb_ignition.map.MapSyncManager
+import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
@@ -226,6 +227,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Tasks tab: recent task list (lightweight snapshot).
     private val _taskList = MutableStateFlow<List<TaskSummary>>(emptyList())
     val taskList: StateFlow<List<TaskSummary>> = _taskList.asStateFlow()
+    private val _installedAppList = MutableStateFlow<List<AppPackageOption>>(emptyList())
+    val installedAppList: StateFlow<List<AppPackageOption>> = _installedAppList.asStateFlow()
 
     private val _scheduleList = MutableStateFlow<List<ScheduleSummary>>(emptyList())
     val scheduleList: StateFlow<List<ScheduleSummary>> = _scheduleList.asStateFlow()
@@ -261,7 +264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val notifyTaskRewriteInstruction = MutableStateFlow("")
     val notifyTaskRewriteTimeoutMs = MutableStateFlow("4000")
     val notifyTaskRewriteFailPolicy = MutableStateFlow("fallback_raw_task")
-    val notifyCooldownMs = MutableStateFlow("60000")
+    val notifyCooldownMs = MutableStateFlow("60")
     val notifyStopAfterMatched = MutableStateFlow(true)
     val notifyActionType = MutableStateFlow("run_task")
     val notifyActionUserTask = MutableStateFlow("")
@@ -647,6 +650,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshInstalledAppSnapshotOnDevice() {
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot refresh installed app snapshot.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    // 1 = user apps only (align with list_app filter).
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_LIST_APPS,
+                        byteArrayOf(1),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseInstalledApps(resp)
+                }
+            }.getOrElse { e ->
+                Pair("Installed app snapshot failed: ${e.message}", emptyList<AppPackageOption>())
+            }
+
+            withContext(Dispatchers.Main) {
+                _installedAppList.value = result.second
+                appendLog("[APPS] ${result.first}")
+                appendSystemMessage(result.first)
+            }
+        }
+    }
+
     fun refreshScheduleListOnDevice() {
         val port = currentLxbPortOrNull() ?: run {
             appendSystemMessage("Invalid lxb-core port, cannot refresh schedule list.")
@@ -791,7 +822,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyEnabled.value = rule.enabled
         notifyPriority.value = rule.priority.toString()
         notifyPackageMode.value = normalizeNotifyPackageMode(rule.packageMode)
-        notifyPackageListRaw.value = rule.packageList.joinToString("\n")
+        notifyPackageListRaw.value = rule.packageList.firstOrNull().orEmpty()
         notifyTextMode.value = normalizeNotifyTextMode(rule.textMode)
         notifyTitlePattern.value = rule.titlePattern
         notifyBodyPattern.value = rule.bodyPattern
@@ -804,7 +835,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyTaskRewriteInstruction.value = rule.taskRewriteInstruction
         notifyTaskRewriteTimeoutMs.value = rule.taskRewriteTimeoutMs.toString()
         notifyTaskRewriteFailPolicy.value = normalizeNotifyRewriteFailPolicy(rule.taskRewriteFailPolicy)
-        notifyCooldownMs.value = rule.cooldownMs.toString()
+        notifyCooldownMs.value = (rule.cooldownMs / 1000L).toString()
         notifyStopAfterMatched.value = rule.stopAfterMatched
         notifyActionType.value = if (rule.actionType.isNotBlank()) rule.actionType else "run_task"
         notifyActionUserTask.value = rule.actionUserTask
@@ -836,7 +867,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyTaskRewriteInstruction.value = ""
         notifyTaskRewriteTimeoutMs.value = "4000"
         notifyTaskRewriteFailPolicy.value = "fallback_raw_task"
-        notifyCooldownMs.value = "0"
+        notifyCooldownMs.value = "60"
         notifyStopAfterMatched.value = true
         notifyActionType.value = "run_task"
         notifyActionUserTask.value = ""
@@ -853,8 +884,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return null
         }
 
-        val packageList = parseNotifyPackageList(notifyPackageListRaw.value)
+        val selectedPackage = notifyPackageListRaw.value.trim()
+        if (selectedPackage.isEmpty()) {
+            appendSystemMessage("Package is required.")
+            return null
+        }
+        val packageList = if (selectedPackage.isEmpty()) emptyList() else listOf(selectedPackage)
         val packageMode = if (packageList.isEmpty()) "any" else "allowlist"
+        val cooldownSec = notifyCooldownMs.value.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 60L
         val action = org.json.JSONObject()
             .put("type", "run_task")
             .put("user_task", actionTask)
@@ -884,22 +921,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .put("task_rewrite_instruction", "")
             .put("task_rewrite_timeout_ms", 4000L)
             .put("task_rewrite_fail_policy", "fallback_raw_task")
-            .put("cooldown_ms", 0L)
+            .put("cooldown_ms", cooldownSec * 1000L)
             .put("stop_after_matched", true)
             .put("action", action)
         if (id.isNotBlank()) {
             rule.put("id", id)
         }
         return rule
-    }
-
-    private fun parseNotifyPackageList(raw: String): List<String> {
-        if (raw.isBlank()) return emptyList()
-        return raw
-            .split(',', '\n', ';')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
     }
 
     private fun normalizeNotifyPackageMode(raw: String?): String {

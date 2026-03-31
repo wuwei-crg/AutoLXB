@@ -11,11 +11,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -60,7 +58,6 @@ public class NotificationTriggerModule {
     private final ConcurrentHashMap<String, Long> ruleLastTriggeredMs = new ConcurrentHashMap<String, Long>();
     private final ConcurrentHashMap<String, Integer> ruleFailStreak = new ConcurrentHashMap<String, Integer>();
     private final ConcurrentHashMap<String, Long> ruleCircuitUntilMs = new ConcurrentHashMap<String, Long>();
-    private final SlidingWindowLimiter globalLimiter = new SlidingWindowLimiter(60_000L, 5);
     private final Object ruleFileLock = new Object();
 
     private final long pollIntervalMs;
@@ -149,7 +146,11 @@ public class NotificationTriggerModule {
                 if (parsed == null || parsed.id.isEmpty()) {
                     return errOut("invalid rule");
                 }
+                if (parsed.packageList == null || parsed.packageList.isEmpty()) {
+                    return errOut("package is required");
+                }
                 Map<String, Object> normalized = toRuleMap(parsed);
+                normalized.put("package_mode", "allowlist");
 
                 boolean updated = false;
                 for (int i = 0; i < rows.size(); i++) {
@@ -322,11 +323,6 @@ public class NotificationTriggerModule {
                     }
 
                     long nowTs = System.currentTimeMillis();
-                    if (!globalLimiter.allow(nowTs)) {
-                        logEvent("notify_rate_limited", e, null, null, "global_rate_limit");
-                        continue;
-                    }
-
                     List<NotificationTriggerRule> candidates = collectCandidateRules(enabledRules, e, nowTs);
                     if (candidates.isEmpty()) {
                         continue;
@@ -459,22 +455,14 @@ public class NotificationTriggerModule {
     private boolean matchPackage(NotificationTriggerRule rule, String pkg) {
         String packageName = pkg != null ? pkg.trim() : "";
         if (packageName.isEmpty()) return false;
-        if ("any".equals(rule.packageMode)) return true;
+        if (rule == null || rule.packageList == null || rule.packageList.isEmpty()) return false;
 
-        boolean inList = false;
         for (String p : rule.packageList) {
             if (packageName.equals(p)) {
-                inList = true;
-                break;
+                return true;
             }
         }
-        if ("allowlist".equals(rule.packageMode)) {
-            return inList;
-        }
-        if ("blocklist".equals(rule.packageMode)) {
-            return !inList;
-        }
-        return true;
+        return false;
     }
 
     private boolean matchText(NotificationTriggerRule rule, NotificationEvent event) {
@@ -927,26 +915,4 @@ public class NotificationTriggerModule {
         }
     }
 
-    private static final class SlidingWindowLimiter {
-        private final long windowMs;
-        private final int maxHits;
-        private final Deque<Long> hits = new ArrayDeque<Long>();
-
-        SlidingWindowLimiter(long windowMs, int maxHits) {
-            this.windowMs = Math.max(1000L, windowMs);
-            this.maxHits = Math.max(1, maxHits);
-        }
-
-        synchronized boolean allow(long nowMs) {
-            long floor = nowMs - windowMs;
-            while (!hits.isEmpty() && hits.peekFirst().longValue() < floor) {
-                hits.pollFirst();
-            }
-            if (hits.size() >= maxHits) {
-                return false;
-            }
-            hits.addLast(Long.valueOf(nowMs));
-            return true;
-        }
-    }
 }

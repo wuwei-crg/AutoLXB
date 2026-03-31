@@ -63,3 +63,8 @@ data class NotificationTriggerRuleSummary(
     val actionUserPlaybook: String,
     val actionUseMap: Boolean?
 )
+
+data class AppPackageOption(
+    val packageName: String,
+    val label: String
+)

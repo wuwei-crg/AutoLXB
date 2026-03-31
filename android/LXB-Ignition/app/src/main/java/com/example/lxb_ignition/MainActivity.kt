@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,9 +21,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,6 +36,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -67,6 +71,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
@@ -367,6 +372,11 @@ private val ZhMap = mapOf(
     "Phase" to "阶段",
     "No task is running." to "当前没有任务在运行。",
     "Refresh All" to "全部刷新",
+    "Select App" to "选择应用",
+    "Search apps" to "搜索应用",
+    "No app found." to "未找到应用。",
+    "Package (select from local snapshot)" to "包名（从本地快照选择）",
+    "Clear" to "清空",
     "No runs yet. Submit a task from Task Session or wait for schedules." to "暂无执行记录。可在任务会话中提交任务，或等待定时任务执行。",
     "Schedules" to "定时任务",
     "Notification Triggers" to "通知触发任务",
@@ -378,7 +388,10 @@ private val ZhMap = mapOf(
     "Rule name" to "规则名称",
     "Task description (what to do after trigger)" to "任务描述（触发后执行什么）",
     "Rule settings" to "规则设置",
+    "Package match (required)" to "Package 匹配（必填）",
     "Package match (optional)" to "Package 匹配（可选）",
+    "Package match (select from local snapshot)" to "Package 匹配（从本地快照选择）",
+    "Trigger interval (seconds)" to "触发间隔（秒）",
     "Title match (optional)" to "标题匹配（可选）",
     "Body match (optional)" to "正文匹配（可选）",
     "LLM condition (optional)" to "LLM 条件（可选）",
@@ -560,6 +573,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val tasks by viewModel.taskList.collectAsState()
     val schedules by viewModel.scheduleList.collectAsState()
     val notifyRules by viewModel.notifyRuleList.collectAsState()
+    val installedApps by viewModel.installedAppList.collectAsState()
     val taskRuntime by viewModel.taskRuntimeUiStatus.collectAsState()
     val scheduleName by viewModel.scheduleName.collectAsState()
     val scheduleTask by viewModel.scheduleTask.collectAsState()
@@ -605,6 +619,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val pageNotifyRuleForm = 5
 
     LaunchedEffect(Unit) {
+        viewModel.refreshInstalledAppSnapshotOnDevice()
         viewModel.refreshScheduleListOnDevice()
         viewModel.refreshNotifyRuleListOnDevice()
         viewModel.refreshTaskListOnDevice()
@@ -626,6 +641,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     Text(tr("Task Manager"), style = MaterialTheme.typography.titleSmall)
                     OutlinedButton(
                         onClick = {
+                            viewModel.refreshInstalledAppSnapshotOnDevice()
                             viewModel.refreshScheduleListOnDevice()
                             viewModel.refreshNotifyRuleListOnDevice()
                             viewModel.refreshTaskListOnDevice()
@@ -949,6 +965,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             val selectedRunAt = scheduleStartAtMs.toLongOrNull()?.takeIf { it > 0L }
                 ?: (System.currentTimeMillis() + 5 * 60_000L)
             var showTimeWheel by rememberSaveable { mutableStateOf(false) }
+            var showSchedulePackagePicker by rememberSaveable { mutableStateOf(false) }
             val isEditing = editingScheduleId.isNotEmpty()
             Column(
                 modifier = modifier
@@ -1109,12 +1126,17 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
-                        OutlinedTextField(
-                            value = schedulePackage,
-                            onValueChange = { viewModel.schedulePackage.value = it },
-                            label = { Text(tr("Package (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
+                        PackageSelectField(
+                            title = tr("Package (select from local snapshot)"),
+                            selectedPackage = schedulePackage,
+                            options = installedApps,
+                            onOpen = {
+                                if (installedApps.isEmpty()) {
+                                    viewModel.refreshInstalledAppSnapshotOnDevice()
+                                }
+                                showSchedulePackagePicker = true
+                            },
+                            onClear = { viewModel.schedulePackage.value = "" }
                         )
                         OutlinedTextField(
                             value = schedulePlaybook,
@@ -1194,10 +1216,21 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     }
                 )
             }
+            if (showSchedulePackagePicker) {
+                PackagePickerDialog(
+                    options = installedApps,
+                    onDismiss = { showSchedulePackagePicker = false },
+                    onSelect = { item ->
+                        viewModel.schedulePackage.value = item.packageName
+                        showSchedulePackagePicker = false
+                    }
+                )
+            }
         }
 
         pageNotifyRuleForm -> {
             val isEditing = editingNotifyRuleId.isNotEmpty()
+            var showNotifyPackagePicker by rememberSaveable { mutableStateOf(false) }
             Column(
                 modifier = modifier
                     .fillMaxSize()
@@ -1266,12 +1299,25 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                 onCheckedChange = { viewModel.notifyEnabled.value = it }
                             )
                         }
+                        PackageSelectField(
+                            title = "${tr("Package match (required)")} - ${tr("Select App")}",
+                            selectedPackage = notifyPackageListRaw,
+                            options = installedApps,
+                            onOpen = {
+                                if (installedApps.isEmpty()) {
+                                    viewModel.refreshInstalledAppSnapshotOnDevice()
+                                }
+                                showNotifyPackagePicker = true
+                            },
+                            onClear = { viewModel.notifyPackageListRaw.value = "" }
+                        )
                         OutlinedTextField(
-                            value = notifyPackageListRaw,
-                            onValueChange = { viewModel.notifyPackageListRaw.value = it },
-                            label = { Text(tr("Package match (optional)")) },
+                            value = notifyCooldownMs,
+                            onValueChange = { viewModel.notifyCooldownMs.value = it },
+                            label = { Text(tr("Trigger interval (seconds)")) },
                             modifier = Modifier.fillMaxWidth(),
-                            maxLines = 3
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
                         OutlinedTextField(
                             value = notifyTitlePattern,
@@ -1336,6 +1382,16 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         }
                     }
                 }
+            }
+            if (showNotifyPackagePicker) {
+                PackagePickerDialog(
+                    options = installedApps,
+                    onDismiss = { showNotifyPackagePicker = false },
+                    onSelect = { item ->
+                        viewModel.notifyPackageListRaw.value = item.packageName
+                        showNotifyPackagePicker = false
+                    }
+                )
             }
         }
     }
@@ -1507,6 +1563,118 @@ fun NotificationRuleRow(
             }
         }
     }
+}
+
+@Composable
+private fun PackageSelectField(
+    title: String,
+    selectedPackage: String,
+    options: List<AppPackageOption>,
+    onOpen: () -> Unit,
+    onClear: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = title,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = onOpen,
+                modifier = Modifier.weight(1f)
+            ) {
+                val display = if (selectedPackage.isBlank()) {
+                    tr("Select App")
+                } else {
+                    formatPackageDisplay(selectedPackage, options)
+                }
+                Text(display, maxLines = 1)
+            }
+            OutlinedButton(
+                onClick = onClear,
+                enabled = selectedPackage.isNotBlank()
+            ) {
+                Text(tr("Clear"), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PackagePickerDialog(
+    options: List<AppPackageOption>,
+    onDismiss: () -> Unit,
+    onSelect: (AppPackageOption) -> Unit
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val filtered = remember(options, query) {
+        val key = query.trim().lowercase(Locale.getDefault())
+        if (key.isEmpty()) {
+            options
+        } else {
+            options.filter { item ->
+                item.packageName.lowercase(Locale.getDefault()).contains(key) ||
+                        item.label.lowercase(Locale.getDefault()).contains(key)
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr("Select App")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(tr("Search apps")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                if (filtered.isEmpty()) {
+                    Text(
+                        text = tr("No app found."),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                    ) {
+                        itemsIndexed(filtered, key = { _, it -> it.packageName }) { index, item ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(item) }
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = formatPackageDisplay(item.packageName, options),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            if (index < filtered.lastIndex) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(tr("Close"))
+            }
+        }
+    )
 }
 
 @Composable
@@ -1712,6 +1880,17 @@ private fun formatTsFull(ms: Long): String {
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
         sdf.format(Date(ms))
     }.getOrElse { "-" }
+}
+
+private fun formatPackageDisplay(packageName: String, options: List<AppPackageOption>): String {
+    if (packageName.isBlank()) return ""
+    val row = options.firstOrNull { it.packageName == packageName }
+    val label = row?.label?.trim().orEmpty()
+    return if (label.isNotEmpty()) {
+        "$label ($packageName)"
+    } else {
+        packageName
+    }
 }
 
 private fun formatWeekdayMask(mask: Int): String {
@@ -2605,6 +2784,12 @@ fun MapSyncConfigCard(viewModel: MainViewModel) {
     val mapTargetPackage by viewModel.mapTargetPackage.collectAsState()
     val mapTargetId by viewModel.mapTargetId.collectAsState()
     val mapSyncResult by viewModel.mapSyncResult.collectAsState()
+    val installedApps by viewModel.installedAppList.collectAsState()
+    var showMapPackagePicker by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshInstalledAppSnapshotOnDevice()
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -2682,16 +2867,22 @@ fun MapSyncConfigCard(viewModel: MainViewModel) {
                     Text(tr("Burn"))
                 }
             }
-            OutlinedTextField(
-                value = mapTargetPackage,
-                onValueChange = { viewModel.mapTargetPackage.value = it },
-                label = { Text(tr("Package name")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = {
-                    Text(tr("Used for pull-by-identifier and active status."))
-                }
+            PackageSelectField(
+                title = tr("Package (select from local snapshot)"),
+                selectedPackage = mapTargetPackage,
+                options = installedApps,
+                onOpen = {
+                    if (installedApps.isEmpty()) {
+                        viewModel.refreshInstalledAppSnapshotOnDevice()
+                    }
+                    showMapPackagePicker = true
+                },
+                onClear = { viewModel.mapTargetPackage.value = "" }
+            )
+            Text(
+                text = tr("Used for pull-by-identifier and active status."),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
             )
             OutlinedTextField(
                 value = mapTargetId,
@@ -2749,5 +2940,15 @@ fun MapSyncConfigCard(viewModel: MainViewModel) {
                 )
             }
         }
+    }
+    if (showMapPackagePicker) {
+        PackagePickerDialog(
+            options = installedApps,
+            onDismiss = { showMapPackagePicker = false },
+            onSelect = { item ->
+                viewModel.mapTargetPackage.value = item.packageName
+                showMapPackagePicker = false
+            }
+        )
     }
 }

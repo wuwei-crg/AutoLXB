@@ -1,5 +1,6 @@
 package com.example.lxb_ignition.core
 
+import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskSummary
@@ -32,6 +33,41 @@ object CoreApiParser {
         } else {
             TaskSubmitParsed("Task submission failed: ${text.take(200)}", "")
         }
+    }
+
+    fun parseInstalledApps(payload: ByteArray): Pair<String, List<AppPackageOption>> {
+        if (payload.isEmpty() || payload.size < 3) {
+            return Pair("Installed app snapshot failed: empty/short response.", emptyList())
+        }
+        val status = payload[0].toInt() and 0xFF
+        val jsonLen = ((payload[1].toInt() and 0xFF) shl 8) or (payload[2].toInt() and 0xFF)
+        val available = payload.size - 3
+        val safeLen = when {
+            jsonLen <= 0 -> available
+            jsonLen > available -> available
+            else -> jsonLen
+        }
+        val text = String(payload, 3, safeLen, Charsets.UTF_8)
+        if (status != 1) {
+            return Pair("Installed app snapshot failed: status=$status.", emptyList())
+        }
+        val arr = runCatching { JSONArray(text) }.getOrNull()
+            ?: return Pair("Installed app snapshot failed: ${text.take(160)}", emptyList())
+        val dedup = linkedMapOf<String, AppPackageOption>()
+        for (i in 0 until arr.length()) {
+            val row = arr.optJSONObject(i) ?: continue
+            val pkg = row.optString("package", "").trim()
+            if (pkg.isEmpty()) continue
+            val label = row.optString("label", row.optString("name", "")).trim()
+            val prev = dedup[pkg]
+            if (prev == null || (prev.label.isBlank() && label.isNotBlank())) {
+                dedup[pkg] = AppPackageOption(packageName = pkg, label = label)
+            }
+        }
+        val items = dedup.values.sortedWith(
+            compareBy<AppPackageOption>({ if (it.label.isBlank()) 1 else 0 }, { it.label.lowercase() }, { it.packageName })
+        )
+        return Pair("Installed app snapshot refreshed: ${items.size} items.", items)
     }
 
     fun parseTaskList(payload: ByteArray): Pair<String, List<TaskSummary>> {
