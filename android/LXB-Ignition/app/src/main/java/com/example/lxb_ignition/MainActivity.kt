@@ -1289,6 +1289,13 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             modifier = Modifier.fillMaxWidth(),
                             maxLines = 4
                         )
+                        OutlinedTextField(
+                            value = notifyActionUserPlaybook,
+                            onValueChange = { viewModel.notifyActionUserPlaybook.value = it },
+                            label = { Text(tr("Action playbook (optional)")) },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 8
+                        )
                         Text(
                             text = tr("Rule settings"),
                             fontSize = 12.sp,
