@@ -22,6 +22,7 @@ import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskSummary
+import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
 import com.example.lxb_ignition.schedule.ScheduleDraft
@@ -44,6 +45,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.LinkedHashMap
 import java.util.concurrent.TimeUnit
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -141,6 +143,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _logLines = MutableStateFlow<List<String>>(emptyList())
     val logLines: StateFlow<List<String>> = _logLines.asStateFlow()
+    private val _traceLines = MutableStateFlow<List<TraceEntry>>(emptyList())
+    val traceLines: StateFlow<List<TraceEntry>> = _traceLines.asStateFlow()
+    private val _traceHasMoreBefore = MutableStateFlow(false)
+    val traceHasMoreBefore: StateFlow<Boolean> = _traceHasMoreBefore.asStateFlow()
+    private val _traceLoadingOlder = MutableStateFlow(false)
+    val traceLoadingOlder: StateFlow<Boolean> = _traceLoadingOlder.asStateFlow()
 
     // Config: lxb-core server
     val lxbPort = MutableStateFlow(
@@ -651,6 +659,167 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runtimeController.syncFromTaskList(result.second)
                 if (!silent) {
                     appendLog("[FSM] ${result.first}")
+                    appendSystemMessage(result.first)
+                }
+            }
+        }
+    }
+
+    fun refreshTraceLogOnDevice(silent: Boolean = false, maxLines: Int = 80) {
+        refreshTraceTailOnDevice(silent = silent, limit = maxLines)
+    }
+
+    fun refreshTraceTailOnDevice(silent: Boolean = false, limit: Int = 80) {
+        val port = currentLxbPortOrNull() ?: run {
+            if (!silent) {
+                appendSystemMessage("Invalid lxb-core port, cannot refresh core trace.")
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val payload = org.json.JSONObject()
+                        .put("mode", "tail")
+                        .put("limit", limit.coerceIn(1, 200))
+                        .toString()
+                        .toByteArray(Charsets.UTF_8)
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TRACE_PULL,
+                        payload,
+                        timeoutMs = 5_000
+                    )
+                    CoreApiParser.parseTraceLines(resp)
+                }
+            }.getOrElse { e ->
+                Pair(
+                    "Trace pull failed: ${e.message}",
+                    com.example.lxb_ignition.model.TracePage(
+                        entries = emptyList(),
+                        hasMoreBefore = false,
+                        hasMoreAfter = false,
+                        oldestSeq = 0L,
+                        newestSeq = 0L
+                    )
+                )
+            }
+
+            withContext(Dispatchers.Main) {
+                _traceLines.value = result.second.entries
+                _traceHasMoreBefore.value = result.second.hasMoreBefore
+                _traceLoadingOlder.value = false
+                if (!silent) {
+                    appendSystemMessage(result.first)
+                }
+            }
+        }
+    }
+
+    fun loadOlderTraceOnDevice(silent: Boolean = true, limit: Int = 80) {
+        if (_traceLoadingOlder.value) return
+        val beforeSeq = _traceLines.value.firstOrNull()?.seq ?: return
+        val port = currentLxbPortOrNull() ?: run {
+            if (!silent) {
+                appendSystemMessage("Invalid lxb-core port, cannot load older trace.")
+            }
+            return
+        }
+        _traceLoadingOlder.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val payload = org.json.JSONObject()
+                        .put("mode", "before")
+                        .put("before_seq", beforeSeq)
+                        .put("limit", limit.coerceIn(1, 200))
+                        .toString()
+                        .toByteArray(Charsets.UTF_8)
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TRACE_PULL,
+                        payload,
+                        timeoutMs = 5_000
+                    )
+                    CoreApiParser.parseTraceLines(resp)
+                }
+            }.getOrElse { e ->
+                Pair(
+                    "Trace pull failed: ${e.message}",
+                    com.example.lxb_ignition.model.TracePage(
+                        entries = emptyList(),
+                        hasMoreBefore = false,
+                        hasMoreAfter = false,
+                        oldestSeq = 0L,
+                        newestSeq = 0L
+                    )
+                )
+            }
+
+            withContext(Dispatchers.Main) {
+                val merged = LinkedHashMap<Long, TraceEntry>()
+                result.second.entries.forEach { merged[it.seq] = it }
+                _traceLines.value.forEach { merged[it.seq] = it }
+                _traceLines.value = merged.values.sortedBy { it.seq }
+                _traceHasMoreBefore.value = result.second.hasMoreBefore
+                _traceLoadingOlder.value = false
+                if (!silent) {
+                    appendSystemMessage(result.first)
+                }
+            }
+        }
+    }
+
+    fun pollNewerTraceOnDevice(silent: Boolean = true, limit: Int = 80) {
+        val currentNewest = _traceLines.value.lastOrNull()?.seq ?: 0L
+        if (currentNewest <= 0L) {
+            refreshTraceTailOnDevice(silent = silent, limit = limit)
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            if (!silent) {
+                appendSystemMessage("Invalid lxb-core port, cannot refresh core trace.")
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val payload = org.json.JSONObject()
+                        .put("mode", "after")
+                        .put("after_seq", currentNewest)
+                        .put("limit", limit.coerceIn(1, 200))
+                        .toString()
+                        .toByteArray(Charsets.UTF_8)
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TRACE_PULL,
+                        payload,
+                        timeoutMs = 5_000
+                    )
+                    CoreApiParser.parseTraceLines(resp)
+                }
+            }.getOrElse { e ->
+                Pair(
+                    "Trace pull failed: ${e.message}",
+                    com.example.lxb_ignition.model.TracePage(
+                        entries = emptyList(),
+                        hasMoreBefore = false,
+                        hasMoreAfter = false,
+                        oldestSeq = currentNewest,
+                        newestSeq = currentNewest
+                    )
+                )
+            }
+
+            withContext(Dispatchers.Main) {
+                if (result.second.entries.isNotEmpty()) {
+                    val merged = LinkedHashMap<Long, TraceEntry>()
+                    _traceLines.value.forEach { merged[it.seq] = it }
+                    result.second.entries.forEach { merged[it.seq] = it }
+                    _traceLines.value = merged.values.sortedBy { it.seq }
+                }
+                if (_traceLines.value.isEmpty()) {
+                    _traceHasMoreBefore.value = result.second.hasMoreBefore
+                }
+                if (!silent) {
                     appendSystemMessage(result.first)
                 }
             }

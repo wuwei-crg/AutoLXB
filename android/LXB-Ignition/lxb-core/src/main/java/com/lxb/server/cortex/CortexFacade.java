@@ -186,14 +186,56 @@ public class CortexFacade {
     }
 
     public byte[] handleTracePull(byte[] payload) {
-        // payload: max_lines[2B] (optional, default 200)
-        int max = 200;
-        if (payload != null && payload.length >= 2) {
-            ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
-            max = Math.max(1, Math.min(1000, buf.getShort() & 0xFFFF));
+        try {
+            int limit = 80;
+            String mode = "tail";
+            long beforeSeq = 0L;
+            long afterSeq = 0L;
+
+            if (payload != null && payload.length > 0) {
+                String text = new String(payload, StandardCharsets.UTF_8).trim();
+                if (!text.isEmpty() && text.charAt(0) == '{') {
+                    Map<String, Object> req = Json.parseObject(text);
+                    mode = stringOrEmpty(req.get("mode"));
+                    if (mode.isEmpty()) mode = "tail";
+                    limit = Math.max(1, Math.min(200, toInt(req.get("limit"), 80)));
+                    beforeSeq = toLong(req.get("before_seq"), 0L);
+                    afterSeq = toLong(req.get("after_seq"), 0L);
+                } else if (payload.length >= 2) {
+                    ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+                    limit = Math.max(1, Math.min(1000, buf.getShort() & 0xFFFF));
+                }
+            }
+
+            TraceLogger.PullPage page;
+            if ("before".equalsIgnoreCase(mode)) {
+                page = trace.pullBefore(beforeSeq, limit);
+            } else if ("after".equalsIgnoreCase(mode)) {
+                page = trace.pullAfter(afterSeq, limit);
+            } else {
+                page = trace.pullTail(limit);
+            }
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("mode", mode);
+            out.put("limit", limit);
+            out.put("has_more_before", page.hasMoreBefore);
+            out.put("has_more_after", page.hasMoreAfter);
+            out.put("oldest_seq", page.oldestSeq);
+            out.put("newest_seq", page.newestSeq);
+            java.util.List<Object> items = new java.util.ArrayList<>();
+            for (TraceLogger.PullItem item : page.items) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("seq", item.seq);
+                row.put("line", item.line);
+                items.add(row);
+            }
+            out.put("items", items);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
         }
-        String data = trace.dumpLastLines(max);
-        return ok(data);
     }
 
     /**

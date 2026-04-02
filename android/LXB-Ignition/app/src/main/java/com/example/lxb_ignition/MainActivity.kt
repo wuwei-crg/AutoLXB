@@ -76,6 +76,8 @@ import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskSummary
+import com.example.lxb_ignition.model.TraceEntry
+import com.example.lxb_ignition.model.TraceMetaItem
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
 import com.example.lxb_ignition.ui.theme.LXBIgnitionTheme
@@ -361,6 +363,13 @@ private val ZhMap = mapOf(
     "Tasks" to "任务",
     "Config" to "配置",
     "Logs" to "日志",
+    "Core Trace" to "Core 追踪",
+    "Trace Details" to "追踪详情",
+    "Load older traces..." to "正在加载更早的追踪...",
+    "No trace details." to "没有更多追踪详情。",
+    "Key Fields" to "关键信息",
+    "All Fields" to "完整字段",
+    "Raw Trace" to "原始追踪",
     "Task Session" to "任务会话",
     "Describe what you want to do" to "描述你想执行的任务",
     "Run" to "运行",
@@ -515,7 +524,7 @@ private val ZhMap = mapOf(
     "Current app version" to "当前应用版本",
     "Check latest release" to "检查最新版本",
     "Open releases" to "打开 Releases",
-    "Endpoint is auto-completed to /v1/chat/completions." to "会自动补齐为 /v1/chat/completions 端点。",
+    "Endpoint is auto-completed to /chat/completions." to "会自动补齐为 /chat/completions 端点。",
     "Resolved request URL" to "真实调用 URL",
     "Input API Base URL to preview request endpoint." to "输入 API Base URL 后，这里会实时显示最终请求地址。",
     "lxb-core server" to "lxb-core 服务",
@@ -2290,34 +2299,171 @@ fun ConfigTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
 
 // Tab 3: Logs
 
+private data class TracePrependAnchor(
+    val count: Int,
+    val index: Int,
+    val offset: Int,
+    val oldestSeq: Long
+)
+
 @Composable
 fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
-    val logLines by viewModel.logLines.collectAsState()
+    val traceLines by viewModel.traceLines.collectAsState()
+    val traceHasMoreBefore by viewModel.traceHasMoreBefore.collectAsState()
+    val traceLoadingOlder by viewModel.traceLoadingOlder.collectAsState()
+    val listState = rememberLazyListState()
+    var selectedTrace by remember { mutableStateOf<TraceEntry?>(null) }
+    var initialScrollDone by rememberSaveable { mutableStateOf(false) }
+    var prependAnchor by remember { mutableStateOf<TracePrependAnchor?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshTraceTailOnDevice(silent = true, limit = 80)
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            viewModel.pollNewerTraceOnDevice(silent = true, limit = 80)
+            delay(2000L)
+        }
+    }
+
+    LaunchedEffect(traceLines.size) {
+        if (!initialScrollDone && traceLines.isNotEmpty()) {
+            listState.scrollToItem(traceLines.lastIndex)
+            initialScrollDone = true
+            return@LaunchedEffect
+        }
+        val layout = listState.layoutInfo
+        val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+        val isNearBottom = lastVisible >= traceLines.lastIndex - 2
+        if (isNearBottom && traceLines.isNotEmpty()) {
+            listState.animateScrollToItem(traceLines.lastIndex)
+        }
+    }
+
+    LaunchedEffect(traceLines.size, traceLines.firstOrNull()?.seq, traceLoadingOlder) {
+        val anchor = prependAnchor ?: return@LaunchedEffect
+        val newOldestSeq = traceLines.firstOrNull()?.seq ?: 0L
+        if (newOldestSeq < anchor.oldestSeq && traceLines.size > anchor.count) {
+            val delta = traceLines.size - anchor.count
+            listState.scrollToItem((anchor.index + delta).coerceAtLeast(0), anchor.offset)
+            prependAnchor = null
+        } else if (!traceLoadingOlder) {
+            prependAnchor = null
+        }
+    }
+
+    LaunchedEffect(listState.firstVisibleItemIndex, traceLines.size, traceHasMoreBefore, traceLoadingOlder) {
+        if (traceLines.isEmpty()) return@LaunchedEffect
+        if (traceHasMoreBefore && !traceLoadingOlder && listState.firstVisibleItemIndex <= 6) {
+            prependAnchor = TracePrependAnchor(
+                count = traceLines.size,
+                index = listState.firstVisibleItemIndex,
+                offset = listState.firstVisibleItemScrollOffset,
+                oldestSeq = traceLines.firstOrNull()?.seq ?: 0L
+            )
+            viewModel.loadOlderTraceOnDevice(silent = true, limit = 80)
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        LogPanel(logLines = logLines, modifier = Modifier.fillMaxSize())
+        LogPanel(
+            traceLines = traceLines,
+            listState = listState,
+            showLoadingOlder = traceLoadingOlder || (traceHasMoreBefore && listState.firstVisibleItemIndex <= 6),
+            onOpenTrace = { selectedTrace = it },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    val detail = selectedTrace
+    if (detail != null) {
+        AlertDialog(
+            onDismissRequest = { selectedTrace = null },
+            title = { Text(tr("Trace Details")) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(detail.event, style = MaterialTheme.typography.titleSmall)
+                            if (detail.summary.isNotBlank()) {
+                                Text(detail.summary, fontSize = 12.sp)
+                            }
+                            if (detail.timestamp.isNotBlank()) {
+                                Text("ts: ${detail.timestamp}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (detail.taskId.isNotBlank()) {
+                                Text("task_id: ${detail.taskId}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    if (detail.meta.isNotEmpty()) {
+                        TraceDetailSection(
+                            title = tr("Key Fields"),
+                            items = detail.meta
+                        )
+                    }
+                    if (detail.fields.isNotEmpty()) {
+                        TraceDetailSection(
+                            title = tr("All Fields"),
+                            items = detail.fields
+                        )
+                    } else if (detail.detail.isNotBlank()) {
+                        Card {
+                            Text(
+                                detail.detail,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    } else {
+                        Text(tr("No trace details."), fontSize = 11.sp)
+                    }
+                    Card(colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.04f))) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(tr("Raw Trace"), style = MaterialTheme.typography.labelMedium)
+                            Text(detail.rawLine, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                OutlinedButton(onClick = { selectedTrace = null }) {
+                    Text(tr("Close"))
+                }
+            }
+        )
     }
 }
 
 @Composable
-fun LogPanel(logLines: List<String>, modifier: Modifier = Modifier) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(logLines.size) {
-        if (logLines.isNotEmpty()) {
-            listState.animateScrollToItem(logLines.size - 1)
-        }
-    }
+fun LogPanel(
+    traceLines: List<TraceEntry>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    showLoadingOlder: Boolean,
+    onOpenTrace: (TraceEntry) -> Unit,
+    modifier: Modifier = Modifier
+) {
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .padding(8.dp)
                 .fillMaxSize()
         ) {
-            Text(tr("Logs"), style = MaterialTheme.typography.titleSmall)
+            Text(tr("Core Trace"), style = MaterialTheme.typography.titleSmall)
             Spacer(modifier = Modifier.height(4.dp))
             LazyColumn(
                 state = listState,
@@ -2325,17 +2471,106 @@ fun LogPanel(logLines: List<String>, modifier: Modifier = Modifier) {
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.05f))
             ) {
-                items(logLines) { line ->
+                if (showLoadingOlder) {
+                    item(key = "loading_older") {
+                        Text(
+                            text = tr("Load older traces..."),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                items(traceLines, key = { if (it.seq > 0L) it.seq else it.rawLine.hashCode().toLong() }) { entry ->
+                    TraceCard(entry = entry, onClick = { onOpenTrace(entry) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TraceCard(entry: TraceEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val container = when {
+        entry.isError -> scheme.errorContainer
+        entry.event.startsWith("notify_") -> scheme.secondaryContainer
+        entry.event == "fsm_state_enter" -> scheme.primaryContainer
+        else -> scheme.surface
+    }
+    val content = when {
+        entry.isError -> scheme.onErrorContainer
+        entry.event.startsWith("notify_") -> scheme.onSecondaryContainer
+        entry.event == "fsm_state_enter" -> scheme.onPrimaryContainer
+        else -> scheme.onSurface
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = container),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = entry.event,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = content
+                )
+                if (entry.timestamp.isNotBlank()) {
                     Text(
-                        text = line,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = when {
-                            line.startsWith("[ERR]") -> Color(0xFFF44336)
-                            line.startsWith("[LXB]") -> Color(0xFF2196F3)
-                            else -> MaterialTheme.colorScheme.onSurface
-                        },
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        text = entry.timestamp.takeLast(12),
+                        fontSize = 10.sp,
+                        color = content.copy(alpha = 0.75f)
+                    )
+                }
+            }
+            if (entry.summary.isNotBlank()) {
+                Text(
+                    text = entry.summary,
+                    fontSize = 11.sp,
+                    color = content.copy(alpha = 0.92f),
+                    maxLines = 2
+                )
+            }
+            if (entry.taskId.isNotBlank()) {
+                Text(
+                    text = "task=${entry.taskId.take(8)}...",
+                    fontSize = 10.sp,
+                    color = content.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TraceDetailSection(title: String, items: List<TraceMetaItem>) {
+    if (items.isEmpty()) return
+    Card {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            items.forEach { item ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = item.label,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = item.value,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -2698,7 +2933,7 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                 singleLine = true,
                 supportingText = {
                     Text(
-                        tr("Endpoint is auto-completed to /v1/chat/completions."),
+                        tr("Endpoint is auto-completed to /chat/completions."),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         fontSize = 12.sp
                     )

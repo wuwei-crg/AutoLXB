@@ -22,8 +22,51 @@ import java.util.Map;
  */
 public class TraceLogger {
 
-    private final ArrayDeque<String> ring;
+    public static final class PullItem {
+        public final long seq;
+        public final String line;
+
+        public PullItem(long seq, String line) {
+            this.seq = seq;
+            this.line = line != null ? line : "";
+        }
+    }
+
+    public static final class PullPage {
+        public final List<PullItem> items;
+        public final boolean hasMoreBefore;
+        public final boolean hasMoreAfter;
+        public final long oldestSeq;
+        public final long newestSeq;
+
+        public PullPage(
+                List<PullItem> items,
+                boolean hasMoreBefore,
+                boolean hasMoreAfter,
+                long oldestSeq,
+                long newestSeq
+        ) {
+            this.items = items != null ? items : new ArrayList<PullItem>();
+            this.hasMoreBefore = hasMoreBefore;
+            this.hasMoreAfter = hasMoreAfter;
+            this.oldestSeq = oldestSeq;
+            this.newestSeq = newestSeq;
+        }
+    }
+
+    private static final class TraceRecord {
+        final long seq;
+        final String line;
+
+        TraceRecord(long seq, String line) {
+            this.seq = seq;
+            this.line = line != null ? line : "";
+        }
+    }
+
+    private final ArrayDeque<TraceRecord> ring;
     private final int capacity;
+    private long nextSeq = 1L;
     private final SimpleDateFormat tsFmt =
             new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
 
@@ -90,62 +133,71 @@ public class TraceLogger {
         while (ring.size() >= capacity) {
             ring.pollFirst();
         }
-        ring.addLast(line);
+        ring.addLast(new TraceRecord(nextSeq++, line));
     }
 
-    public synchronized String dumpLastLines(int maxLines) {
-        int n = Math.max(1, Math.min(maxLines, capacity));
-        int skip = Math.max(0, ring.size() - n);
-
-        // Frame payload has an upper bound; keep response safely under that limit.
-        // Use UTF-8 byte size (not char count) to avoid underestimating non-ASCII lines.
-        final int maxBytes = 60000;
-
-        List<String> lines = new ArrayList<>(n);
-        int i = 0;
-        for (String line : ring) {
-            if (i++ < skip) {
-                continue;
-            }
-            lines.add(line);
+    public synchronized PullPage pullTail(int limit) {
+        int n = normalizeLimit(limit);
+        List<PullItem> all = snapshotAll();
+        if (all.isEmpty()) {
+            return new PullPage(new ArrayList<PullItem>(), false, false, 0L, 0L);
         }
+        int start = Math.max(0, all.size() - n);
+        List<PullItem> items = new ArrayList<>(all.subList(start, all.size()));
+        return buildPage(items, start > 0, false);
+    }
 
-        int totalBytes = 0;
-        for (String line : lines) {
-            totalBytes += utf8Length(line) + 1; // '\n'
-        }
-
-        int droppedHead = 0;
-        while (totalBytes > maxBytes && !lines.isEmpty()) {
-            String dropped = lines.remove(0);
-            totalBytes -= utf8Length(dropped) + 1;
-            droppedHead += 1;
-        }
-
-        String marker = null;
-        if (droppedHead > 0) {
-            Map<String, Object> markerObj = new LinkedHashMap<>();
-            markerObj.put("event", "trace_truncated");
-            markerObj.put("reason", "trace_dump_exceeds_limit");
-            markerObj.put("drop_head_lines", droppedHead);
-            markerObj.put("kept_tail_lines", lines.size());
-            marker = Json.stringify(markerObj);
-            int markerBytes = utf8Length(marker) + 1;
-            while (!lines.isEmpty() && totalBytes + markerBytes > maxBytes) {
-                String dropped = lines.remove(0);
-                totalBytes -= utf8Length(dropped) + 1;
+    public synchronized PullPage pullBefore(long beforeSeq, int limit) {
+        int n = normalizeLimit(limit);
+        List<PullItem> matched = new ArrayList<>();
+        for (TraceRecord record : ring) {
+            if (record.seq < beforeSeq) {
+                matched.add(new PullItem(record.seq, record.line));
             }
         }
-
-        StringBuilder sb = new StringBuilder();
-        if (marker != null) {
-            sb.append(marker).append('\n');
+        if (matched.isEmpty()) {
+            return new PullPage(new ArrayList<PullItem>(), false, false, 0L, 0L);
         }
-        for (String line : lines) {
-            sb.append(line).append('\n');
-        }
+        int start = Math.max(0, matched.size() - n);
+        List<PullItem> items = new ArrayList<>(matched.subList(start, matched.size()));
+        return buildPage(items, start > 0, false);
+    }
 
-        return sb.toString();
+    public synchronized PullPage pullAfter(long afterSeq, int limit) {
+        int n = normalizeLimit(limit);
+        List<PullItem> matched = new ArrayList<>();
+        for (TraceRecord record : ring) {
+            if (record.seq > afterSeq) {
+                matched.add(new PullItem(record.seq, record.line));
+            }
+        }
+        if (matched.isEmpty()) {
+            return new PullPage(new ArrayList<PullItem>(), false, false, 0L, 0L);
+        }
+        boolean hasMoreAfter = matched.size() > n;
+        List<PullItem> items = new ArrayList<>(matched.subList(0, Math.min(n, matched.size())));
+        return buildPage(items, false, hasMoreAfter);
+    }
+
+    private PullPage buildPage(List<PullItem> items, boolean hasMoreBefore, boolean hasMoreAfter) {
+        if (items == null || items.isEmpty()) {
+            return new PullPage(new ArrayList<PullItem>(), false, false, 0L, 0L);
+        }
+        long oldestSeq = items.get(0).seq;
+        long newestSeq = items.get(items.size() - 1).seq;
+        return new PullPage(items, hasMoreBefore, hasMoreAfter, oldestSeq, newestSeq);
+    }
+
+    private int normalizeLimit(int limit) {
+        return Math.max(1, Math.min(limit, capacity));
+    }
+
+    private List<PullItem> snapshotAll() {
+        List<PullItem> out = new ArrayList<>(ring.size());
+        for (TraceRecord record : ring) {
+            out.add(new PullItem(record.seq, record.line));
+        }
+        return out;
     }
 
     private static int utf8Length(String s) {

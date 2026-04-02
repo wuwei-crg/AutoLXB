@@ -71,3 +71,29 @@ data class AppPackageOption(
     val packageName: String,
     val label: String
 )
+
+data class TraceMetaItem(
+    val label: String,
+    val value: String
+)
+
+data class TracePage(
+    val entries: List<TraceEntry>,
+    val hasMoreBefore: Boolean,
+    val hasMoreAfter: Boolean,
+    val oldestSeq: Long,
+    val newestSeq: Long
+)
+
+data class TraceEntry(
+    val seq: Long,
+    val rawLine: String,
+    val timestamp: String,
+    val event: String,
+    val taskId: String,
+    val summary: String,
+    val detail: String,
+    val isError: Boolean,
+    val meta: List<TraceMetaItem>,
+    val fields: List<TraceMetaItem>
+)
