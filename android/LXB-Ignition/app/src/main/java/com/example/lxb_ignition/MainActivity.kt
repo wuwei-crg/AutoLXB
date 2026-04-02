@@ -854,6 +854,13 @@ private val ZhMap = mapOf(
     "Config" to "配置",
     "Logs" to "日志",
     "Core Trace" to "Core 追踪",
+    "Export" to "导出",
+    "Exporting..." to "导出中...",
+    "Exporting trace..." to "正在导出追踪...",
+    "Trace exported" to "追踪已导出",
+    "Trace export failed" to "追踪导出失败",
+    "No trace to export." to "没有可导出的追踪。",
+    "Saved to" to "已保存到",
     "Trace Details" to "追踪详情",
     "Load older traces..." to "正在加载更早的追踪...",
     "No trace details." to "没有更多追踪详情。",
@@ -2681,6 +2688,7 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val traceLines by viewModel.traceLines.collectAsState()
     val traceHasMoreBefore by viewModel.traceHasMoreBefore.collectAsState()
     val traceLoadingOlder by viewModel.traceLoadingOlder.collectAsState()
+    val traceExportUiState by viewModel.traceExportUiState.collectAsState()
     val listState = rememberLazyListState()
     var selectedTrace by remember { mutableStateOf<TraceEntry?>(null) }
     var initialScrollDone by rememberSaveable { mutableStateOf(false) }
@@ -2745,6 +2753,8 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             traceLines = traceLines,
             listState = listState,
             showLoadingOlder = traceLoadingOlder || (traceHasMoreBefore && listState.firstVisibleItemIndex <= 6),
+            traceExportUiState = traceExportUiState,
+            onExportTrace = { viewModel.exportAllTraceToDevice() },
             onOpenTrace = { selectedTrace = it },
             modifier = Modifier.fillMaxSize()
         )
@@ -2824,6 +2834,8 @@ fun LogPanel(
     traceLines: List<TraceEntry>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     showLoadingOlder: Boolean,
+    traceExportUiState: MainViewModel.TraceExportUiState,
+    onExportTrace: () -> Unit,
     onOpenTrace: (TraceEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2833,7 +2845,59 @@ fun LogPanel(
                 .padding(8.dp)
                 .fillMaxSize()
         ) {
-            Text(tr("Core Trace"), style = MaterialTheme.typography.titleSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(tr("Core Trace"), style = MaterialTheme.typography.titleSmall)
+                OutlinedButton(
+                    onClick = onExportTrace,
+                    enabled = !traceExportUiState.exporting
+                ) {
+                    Text(
+                        text = tr(if (traceExportUiState.exporting) "Exporting..." else "Export"),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+            when {
+                traceExportUiState.exporting -> {
+                    Text(
+                        text = tr("Exporting trace..."),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                traceExportUiState.status == "success" -> {
+                    Text(
+                        text = "${tr("Trace exported")}: ${tr("Saved to")} ${traceExportUiState.savedPath}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                traceExportUiState.status == "empty" -> {
+                    Text(
+                        text = tr("No trace to export."),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                traceExportUiState.status == "failure" -> {
+                    Text(
+                        text = "${tr("Trace export failed")}: ${traceExportUiState.error}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             LazyColumn(
                 state = listState,

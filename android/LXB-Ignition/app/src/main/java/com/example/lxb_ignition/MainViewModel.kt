@@ -1,12 +1,15 @@
 package com.example.lxb_ignition
 
 import android.app.Application
+import android.content.ContentValues
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -23,6 +26,7 @@ import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskSummary
+import com.example.lxb_ignition.model.TracePage
 import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
@@ -46,10 +50,22 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.LinkedHashMap
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    data class TraceExportUiState(
+        val exporting: Boolean = false,
+        val status: String = "idle",
+        val savedPath: String = "",
+        val lineCount: Int = 0,
+        val error: String = ""
+    )
 
     companion object {
         private const val PREFS_NAME = "lxb_config"
@@ -150,6 +166,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val traceHasMoreBefore: StateFlow<Boolean> = _traceHasMoreBefore.asStateFlow()
     private val _traceLoadingOlder = MutableStateFlow(false)
     val traceLoadingOlder: StateFlow<Boolean> = _traceLoadingOlder.asStateFlow()
+    private val _traceExportUiState = MutableStateFlow(TraceExportUiState())
+    val traceExportUiState: StateFlow<TraceExportUiState> = _traceExportUiState.asStateFlow()
 
     // Config: lxb-core server
     val lxbPort = MutableStateFlow(
@@ -695,32 +713,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("mode", "tail")
-                        .put("limit", limit.coerceIn(1, 200))
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_TRACE_PULL,
-                        payload,
-                        timeoutMs = 5_000
-                    )
-                    CoreApiParser.parseTraceLines(resp)
-                }
-            }.getOrElse { e ->
-                Pair(
-                    "Trace pull failed: ${e.message}",
-                    com.example.lxb_ignition.model.TracePage(
-                        entries = emptyList(),
-                        hasMoreBefore = false,
-                        hasMoreAfter = false,
-                        oldestSeq = 0L,
-                        newestSeq = 0L
-                    )
-                )
-            }
+            val result = pullTracePage(
+                port = port,
+                mode = "tail",
+                limit = limit
+            )
 
             withContext(Dispatchers.Main) {
                 _traceLines.value = result.second.entries
@@ -744,33 +741,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _traceLoadingOlder.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("mode", "before")
-                        .put("before_seq", beforeSeq)
-                        .put("limit", limit.coerceIn(1, 200))
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_TRACE_PULL,
-                        payload,
-                        timeoutMs = 5_000
-                    )
-                    CoreApiParser.parseTraceLines(resp)
-                }
-            }.getOrElse { e ->
-                Pair(
-                    "Trace pull failed: ${e.message}",
-                    com.example.lxb_ignition.model.TracePage(
-                        entries = emptyList(),
-                        hasMoreBefore = false,
-                        hasMoreAfter = false,
-                        oldestSeq = 0L,
-                        newestSeq = 0L
-                    )
-                )
-            }
+            val result = pullTracePage(
+                port = port,
+                mode = "before",
+                limit = limit,
+                beforeSeq = beforeSeq
+            )
 
             withContext(Dispatchers.Main) {
                 val merged = LinkedHashMap<Long, TraceEntry>()
@@ -799,33 +775,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("mode", "after")
-                        .put("after_seq", currentNewest)
-                        .put("limit", limit.coerceIn(1, 200))
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_TRACE_PULL,
-                        payload,
-                        timeoutMs = 5_000
-                    )
-                    CoreApiParser.parseTraceLines(resp)
-                }
-            }.getOrElse { e ->
-                Pair(
-                    "Trace pull failed: ${e.message}",
-                    com.example.lxb_ignition.model.TracePage(
-                        entries = emptyList(),
-                        hasMoreBefore = false,
-                        hasMoreAfter = false,
-                        oldestSeq = currentNewest,
-                        newestSeq = currentNewest
-                    )
-                )
-            }
+            val result = pullTracePage(
+                port = port,
+                mode = "after",
+                limit = limit,
+                afterSeq = currentNewest
+            )
 
             withContext(Dispatchers.Main) {
                 if (result.second.entries.isNotEmpty()) {
@@ -840,6 +795,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!silent) {
                     appendSystemMessage(result.first)
                 }
+            }
+        }
+    }
+
+    fun exportAllTraceToDevice() {
+        if (_traceExportUiState.value.exporting) return
+        val port = currentLxbPortOrNull() ?: run {
+            _traceExportUiState.value = TraceExportUiState(
+                exporting = false,
+                status = "failure",
+                error = "Invalid lxb-core port"
+            )
+            return
+        }
+        _traceExportUiState.value = TraceExportUiState(exporting = true, status = "exporting")
+        viewModelScope.launch(Dispatchers.IO) {
+            val outcome = runCatching {
+                val entries = pullAllTraceEntries(port = port, limit = 200)
+                if (entries.isEmpty()) {
+                    return@runCatching TraceExportUiState(
+                        exporting = false,
+                        status = "empty"
+                    )
+                }
+                val savedPath = writeTraceExportFile(entries)
+                TraceExportUiState(
+                    exporting = false,
+                    status = "success",
+                    savedPath = savedPath,
+                    lineCount = entries.size
+                )
+            }.getOrElse { e ->
+                TraceExportUiState(
+                    exporting = false,
+                    status = "failure",
+                    error = e.message ?: e.javaClass.simpleName
+                )
+            }
+            withContext(Dispatchers.Main) {
+                _traceExportUiState.value = outcome
+            }
+            when (outcome.status) {
+                "success" -> appendLog("[TRACE] Exported ${outcome.lineCount} lines to ${outcome.savedPath}")
+                "empty" -> appendLog("[TRACE] Export skipped: no cached trace available.")
+                "failure" -> appendLog("[TRACE] Export failed: ${outcome.error}")
             }
         }
     }
@@ -1720,5 +1720,128 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun unregisterWirelessBootstrapReceiver() {
         val app = getApplication<Application>()
         runCatching { app.unregisterReceiver(wirelessBootstrapReceiver) }
+    }
+
+    private fun pullTracePage(
+        port: Int,
+        mode: String,
+        limit: Int,
+        beforeSeq: Long? = null,
+        afterSeq: Long? = null,
+        throwOnFailure: Boolean = false
+    ): Pair<String, TracePage> {
+        val request = {
+            coreClientGateway.withClient(port = port) { client ->
+                val payloadObj = org.json.JSONObject()
+                    .put("mode", mode)
+                    .put("limit", limit.coerceIn(1, 200))
+                if (beforeSeq != null) {
+                    payloadObj.put("before_seq", beforeSeq)
+                }
+                if (afterSeq != null) {
+                    payloadObj.put("after_seq", afterSeq)
+                }
+                val resp = client.sendCommand(
+                    CommandIds.CMD_CORTEX_TRACE_PULL,
+                    payloadObj.toString().toByteArray(Charsets.UTF_8),
+                    timeoutMs = 5_000
+                )
+                CoreApiParser.parseTraceLines(resp)
+            }
+        }
+        if (throwOnFailure) {
+            return request()
+        }
+        return runCatching {
+            request()
+        }.getOrElse { e ->
+            val seq = beforeSeq ?: afterSeq ?: 0L
+            Pair(
+                "Trace pull failed: ${e.message}",
+                TracePage(
+                    entries = emptyList(),
+                    hasMoreBefore = false,
+                    hasMoreAfter = false,
+                    oldestSeq = seq,
+                    newestSeq = seq
+                )
+            )
+        }
+    }
+
+    private fun pullAllTraceEntries(port: Int, limit: Int): List<TraceEntry> {
+        val merged = LinkedHashMap<Long, TraceEntry>()
+        var page = pullTracePage(
+            port = port,
+            mode = "tail",
+            limit = limit,
+            throwOnFailure = true
+        ).second
+        page.entries.forEach { merged[it.seq] = it }
+        var oldestSeq = page.entries.firstOrNull()?.seq ?: page.oldestSeq
+        var guard = 0
+        while (page.hasMoreBefore && oldestSeq > 0L && guard < 2048) {
+            val nextPage = pullTracePage(
+                port = port,
+                mode = "before",
+                limit = limit,
+                beforeSeq = oldestSeq,
+                throwOnFailure = true
+            ).second
+            val nextOldestSeq = nextPage.entries.firstOrNull()?.seq ?: nextPage.oldestSeq
+            if (nextPage.entries.isEmpty() || nextOldestSeq <= 0L || nextOldestSeq >= oldestSeq) {
+                break
+            }
+            nextPage.entries.forEach { merged[it.seq] = it }
+            page = nextPage
+            oldestSeq = nextOldestSeq
+            guard += 1
+        }
+        return merged.values.sortedBy { it.seq }
+    }
+
+    private fun writeTraceExportFile(entries: List<TraceEntry>): String {
+        val app = getApplication<Application>()
+        val resolver = app.contentResolver
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val fileName = "lxb-trace-$stamp.jsonl"
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/LXB"
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "application/x-ndjson")
+            put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        if (uri != null) {
+            try {
+                val stream = resolver.openOutputStream(uri, "w")
+                    ?: throw IllegalStateException("Cannot open export file stream.")
+                stream.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    entries.forEach { entry ->
+                        writer.append(entry.rawLine)
+                        writer.append('\n')
+                    }
+                }
+                val publish = ContentValues().apply {
+                    put(MediaStore.Downloads.IS_PENDING, 0)
+                }
+                resolver.update(uri, publish, null, null)
+                return "Downloads/LXB/$fileName"
+            } catch (e: Exception) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw e
+            }
+        }
+
+        val fallbackDir = File(app.getExternalFilesDir(null), "exports").apply { mkdirs() }
+        val fallbackFile = File(fallbackDir, fileName)
+        fallbackFile.bufferedWriter(Charsets.UTF_8).use { writer ->
+            entries.forEach { entry ->
+                writer.append(entry.rawLine)
+                writer.append('\n')
+            }
+        }
+        return fallbackFile.absolutePath
     }
 }
