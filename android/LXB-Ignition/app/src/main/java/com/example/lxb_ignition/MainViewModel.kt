@@ -56,6 +56,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.LinkedHashMap
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -77,6 +78,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val usingNow: Boolean = false
     )
 
+    data class LlmProfile(
+        val id: String,
+        val name: String,
+        val apiBaseUrl: String,
+        val apiKey: String,
+        val model: String,
+        val updatedAt: Long
+    )
+
     companion object {
         private const val PREFS_NAME = "lxb_config"
         private const val KEY_LXB_PORT = "lxb_port"
@@ -87,6 +97,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_LLM_BASE_URL = "llm_base_url"
         private const val KEY_LLM_API_KEY = "llm_api_key"
         private const val KEY_LLM_MODEL = "llm_model"
+        private const val KEY_LLM_PROFILES_JSON = "llm_profiles_json"
+        private const val KEY_ACTIVE_LLM_PROFILE_ID = "active_llm_profile_id"
         private const val KEY_AUTO_UNLOCK_BEFORE_ROUTE = "auto_unlock_before_route"
         private const val KEY_AUTO_LOCK_AFTER_TASK = "auto_lock_after_task"
         private const val KEY_UNLOCK_PIN = "unlock_pin"
@@ -197,6 +209,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val llmBaseUrl = MutableStateFlow(prefs.getString(KEY_LLM_BASE_URL, "") ?: "")
     val llmApiKey = MutableStateFlow(prefs.getString(KEY_LLM_API_KEY, "") ?: "")
     val llmModel = MutableStateFlow(prefs.getString(KEY_LLM_MODEL, "") ?: "")
+    val llmProfileDraftName = MutableStateFlow("")
     val autoUnlockBeforeRoute = MutableStateFlow(prefs.getBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, true))
     val autoLockAfterTask = MutableStateFlow(prefs.getBoolean(KEY_AUTO_LOCK_AFTER_TASK, true))
     val unlockPin = MutableStateFlow(prefs.getString(KEY_UNLOCK_PIN, "") ?: "")
@@ -217,12 +230,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val mapTargetPackage = MutableStateFlow("")
     val mapTargetId = MutableStateFlow("")
     val llmTestResult = MutableStateFlow("")
+    val llmProfileResult = MutableStateFlow("")
     val coreConfigResult = MutableStateFlow("")
     val mapSyncResult = MutableStateFlow("")
     val appUpdateResult = MutableStateFlow("")
     val uiLang = MutableStateFlow(normalizeUiLang(prefs.getString(KEY_UI_LANG, "en")))
     val touchMode = MutableStateFlow(normalizeTouchMode(prefs.getString(KEY_TOUCH_MODE, TOUCH_MODE_SHELL)))
     val taskDndMode = MutableStateFlow(normalizeTaskDndMode(prefs.getString(KEY_TASK_DND_MODE, TASK_DND_MODE_NONE)))
+    private val _llmProfiles = MutableStateFlow<List<LlmProfile>>(emptyList())
+    val llmProfiles: StateFlow<List<LlmProfile>> = _llmProfiles.asStateFlow()
+    private val _activeLlmProfileId = MutableStateFlow(prefs.getString(KEY_ACTIVE_LLM_PROFILE_ID, "") ?: "")
+    val activeLlmProfileId: StateFlow<String> = _activeLlmProfileId.asStateFlow()
 
     // Control tab
     val requirement = MutableStateFlow("")
@@ -376,6 +394,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshRootAvailability()
         refreshWirelessDebuggingEnabled()
         refreshAdbKeyboardStatus()
+        loadLlmProfilesFromPrefs()
     }
 
     fun startServerWithNative() {
@@ -1383,6 +1402,147 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun loadLlmProfilesFromPrefs() {
+        val raw = prefs.getString(KEY_LLM_PROFILES_JSON, "") ?: ""
+        val list = runCatching {
+            val arr = org.json.JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id", "").trim()
+                    val name = obj.optString("name", "").trim()
+                    if (id.isEmpty() || name.isEmpty()) continue
+                    add(
+                        LlmProfile(
+                            id = id,
+                            name = name,
+                            apiBaseUrl = obj.optString("api_base_url", ""),
+                            apiKey = obj.optString("api_key", ""),
+                            model = obj.optString("model", ""),
+                            updatedAt = obj.optLong("updated_at", 0L)
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+        _llmProfiles.value = list.sortedByDescending { it.updatedAt }
+        if (_activeLlmProfileId.value.isNotBlank() && list.none { it.id == _activeLlmProfileId.value }) {
+            _activeLlmProfileId.value = ""
+            prefs.edit().remove(KEY_ACTIVE_LLM_PROFILE_ID).apply()
+        }
+        val active = list.firstOrNull { it.id == _activeLlmProfileId.value }
+        if (active != null && llmProfileDraftName.value.isBlank()) {
+            llmProfileDraftName.value = active.name
+        }
+    }
+
+    private fun persistLlmProfiles(list: List<LlmProfile>) {
+        val arr = org.json.JSONArray()
+        list.forEach { profile ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("id", profile.id)
+                    .put("name", profile.name)
+                    .put("api_base_url", profile.apiBaseUrl)
+                    .put("api_key", profile.apiKey)
+                    .put("model", profile.model)
+                    .put("updated_at", profile.updatedAt)
+            )
+        }
+        prefs.edit().putString(KEY_LLM_PROFILES_JSON, arr.toString()).apply()
+        _llmProfiles.value = list.sortedByDescending { it.updatedAt }
+    }
+
+    private fun persistActiveLlmProfileId(profileId: String) {
+        _activeLlmProfileId.value = profileId
+        prefs.edit().putString(KEY_ACTIVE_LLM_PROFILE_ID, profileId).apply()
+    }
+
+    fun saveCurrentLlmAsNewProfile() {
+        val name = llmProfileDraftName.value.trim()
+        if (name.isEmpty()) {
+            llmProfileResult.value = localizeLlmProfileMessage("Please enter a config name first.")
+            return
+        }
+        val now = System.currentTimeMillis()
+        val next = _llmProfiles.value.toMutableList().apply {
+            add(
+                0,
+                LlmProfile(
+                    id = UUID.randomUUID().toString(),
+                    name = name,
+                    apiBaseUrl = llmBaseUrl.value.trim(),
+                    apiKey = llmApiKey.value,
+                    model = llmModel.value.trim(),
+                    updatedAt = now
+                )
+            )
+        }
+        persistLlmProfiles(next)
+        val created = next.first()
+        persistActiveLlmProfileId(created.id)
+        saveConfig()
+        llmProfileResult.value = localizeLlmProfileMessage("Saved new LLM config: ${created.name}")
+    }
+
+    fun updateSelectedLlmProfile() {
+        val activeId = _activeLlmProfileId.value.trim()
+        if (activeId.isEmpty()) {
+            llmProfileResult.value = localizeLlmProfileMessage("Please select a saved config first.")
+            return
+        }
+        val current = _llmProfiles.value
+        val idx = current.indexOfFirst { it.id == activeId }
+        if (idx < 0) {
+            llmProfileResult.value = localizeLlmProfileMessage("Selected config was not found.")
+            persistActiveLlmProfileId("")
+            return
+        }
+        val existing = current[idx]
+        val updated = existing.copy(
+            name = llmProfileDraftName.value.trim().ifBlank { existing.name },
+            apiBaseUrl = llmBaseUrl.value.trim(),
+            apiKey = llmApiKey.value,
+            model = llmModel.value.trim(),
+            updatedAt = System.currentTimeMillis()
+        )
+        val next = current.toMutableList()
+        next[idx] = updated
+        persistLlmProfiles(next)
+        persistActiveLlmProfileId(updated.id)
+        llmProfileDraftName.value = updated.name
+        saveConfig()
+        llmProfileResult.value = localizeLlmProfileMessage("Updated LLM config: ${updated.name}")
+    }
+
+    fun applyLlmProfile(profileId: String) {
+        val profile = _llmProfiles.value.firstOrNull { it.id == profileId }
+        if (profile == null) {
+            llmProfileResult.value = localizeLlmProfileMessage("Selected config was not found.")
+            return
+        }
+        llmBaseUrl.value = profile.apiBaseUrl
+        llmApiKey.value = profile.apiKey
+        llmModel.value = profile.model
+        llmProfileDraftName.value = profile.name
+        persistActiveLlmProfileId(profile.id)
+        saveConfig()
+        llmProfileResult.value = localizeLlmProfileMessage("Loaded LLM config: ${profile.name}")
+    }
+
+    fun deleteLlmProfile(profileId: String) {
+        val profile = _llmProfiles.value.firstOrNull { it.id == profileId } ?: return
+        val next = _llmProfiles.value.filterNot { it.id == profileId }
+        persistLlmProfiles(next)
+        if (_activeLlmProfileId.value == profileId) {
+            persistActiveLlmProfileId("")
+        }
+        if (llmProfileDraftName.value.trim() == profile.name) {
+            llmProfileDraftName.value = ""
+        }
+        llmProfileResult.value = localizeLlmProfileMessage("Deleted LLM config: ${profile.name}")
+    }
+
     private suspend fun syncDeviceLlmConfigFile(): Result<String> {
         return withContext(Dispatchers.IO) {
             deviceConfigSyncer.sync(
@@ -1594,6 +1754,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun localizeLlmProfileMessage(raw: String): String {
+        if (uiLang.value != "zh") {
+            return raw
+        }
+        return when {
+            raw == "Please enter a config name first." ->
+                "请先输入配置名称。"
+            raw == "Please select a saved config first." ->
+                "请先选择一套已保存配置。"
+            raw == "Selected config was not found." ->
+                "当前选中的配置不存在。"
+            raw.startsWith("Saved new LLM config: ") ->
+                "已保存新的 LLM 配置：" + raw.removePrefix("Saved new LLM config: ")
+            raw.startsWith("Updated LLM config: ") ->
+                "已更新 LLM 配置：" + raw.removePrefix("Updated LLM config: ")
+            raw.startsWith("Loaded LLM config: ") ->
+                "已加载 LLM 配置：" + raw.removePrefix("Loaded LLM config: ")
+            raw.startsWith("Deleted LLM config: ") ->
+                "已删除 LLM 配置：" + raw.removePrefix("Deleted LLM config: ")
+            else -> raw
+        }
+    }
+
     fun openLatestReleasePage() {
         openUrl(RELEASE_WEB_LATEST) { msg ->
             appUpdateResult.value = localizeUpdateMessage(msg)
@@ -1699,6 +1882,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putString(KEY_LLM_BASE_URL, llmBaseUrl.value)
             .putString(KEY_LLM_API_KEY, llmApiKey.value)
             .putString(KEY_LLM_MODEL, llmModel.value)
+            .putString(KEY_ACTIVE_LLM_PROFILE_ID, _activeLlmProfileId.value)
             .putBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, autoUnlockBeforeRoute.value)
             .putBoolean(KEY_AUTO_LOCK_AFTER_TASK, autoLockAfterTask.value)
             .putString(KEY_UNLOCK_PIN, unlockPin.value)

@@ -1100,6 +1100,20 @@ private val ZhMap = mapOf(
     "Test LLM & sync to device" to "测试 LLM 并同步到设备",
     "Save only" to "仅保存",
     "Save all config only" to "仅保存（保存所有配置）",
+    "Saved local configs" to "本地已保存配置",
+    "Config name" to "配置名称",
+    "Save as new" to "另存为新配置",
+    "Update selected" to "更新当前选中配置",
+    "No saved LLM configs yet." to "还没有保存过 LLM 配置。",
+    "Use this config" to "使用这套配置",
+    "Selected config" to "当前选中配置",
+    "Please enter a config name first." to "请先输入配置名称。",
+    "Please select a saved config first." to "请先选择一套已保存配置。",
+    "Selected config was not found." to "当前选中的配置不存在。",
+    "Saved new LLM config: " to "已保存新的 LLM 配置：",
+    "Updated LLM config: " to "已更新 LLM 配置：",
+    "Loaded LLM config: " to "已加载 LLM 配置：",
+    "Deleted LLM config: " to "已删除 LLM 配置：",
     "Auto unlock before route" to "路由前自动解锁",
     "Check screen state and unlock before app launch/routing." to "在应用启动/路由前检查屏幕状态并执行解锁。",
     "Auto lock after task" to "任务后自动锁屏",
@@ -3421,79 +3435,191 @@ fun LlmConfigCard(viewModel: MainViewModel) {
     val llmApiKey by viewModel.llmApiKey.collectAsState()
     val llmModel by viewModel.llmModel.collectAsState()
     val llmTestResult by viewModel.llmTestResult.collectAsState()
+    val llmProfileDraftName by viewModel.llmProfileDraftName.collectAsState()
+    val llmProfiles by viewModel.llmProfiles.collectAsState()
+    val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsState()
+    val llmProfileResult by viewModel.llmProfileResult.collectAsState()
     val resolvedEndpoint = remember(llmBaseUrl) {
         runCatching { LlmClient.buildEndpointUrl(llmBaseUrl) }.getOrNull().orEmpty()
     }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(tr("LLM config (device-side)"), style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(
-                value = llmBaseUrl,
-                onValueChange = { viewModel.llmBaseUrl.value = it },
-                label = { Text(tr("API Base URL")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = {
-                    Text(
-                        tr("Endpoint is auto-completed to /chat/completions."),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        fontSize = 12.sp
-                    )
-                }
-            )
-            Text(
-                text = "${tr("Resolved request URL")}: " +
-                    if (resolvedEndpoint.isNotBlank()) resolvedEndpoint else tr("Input API Base URL to preview request endpoint."),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
-                fontSize = 12.sp
-            )
-            OutlinedTextField(
-                value = llmApiKey,
-                onValueChange = { viewModel.llmApiKey.value = it },
-                label = { Text(tr("API Key")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = llmModel,
-                onValueChange = { viewModel.llmModel.value = it },
-                label = { Text(tr("Model")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = { Text(tr("e.g. gpt-4o-mini, qwen-plus")) }
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { viewModel.testLlmAndSyncConfig() },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(tr("Test LLM & sync to device"))
-                }
-                OutlinedButton(
-                    onClick = { viewModel.saveConfig() },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(tr("Save only"))
-                }
-            }
-            if (llmTestResult.isNotEmpty()) {
-                Text(
-                    text = llmTestResult,
-                    fontSize = 12.sp,
-                    color = if (llmTestResult.startsWith("LLM ")) {
-                        Color(0xFF4CAF50)
-                    } else {
-                        Color(0xFFFF9800)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(tr("LLM config (device-side)"), style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = llmBaseUrl,
+                    onValueChange = { viewModel.llmBaseUrl.value = it },
+                    label = { Text(tr("API Base URL")) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    supportingText = {
+                        Text(
+                            tr("Endpoint is auto-completed to /chat/completions."),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
                     }
                 )
+                Text(
+                    text = "${tr("Resolved request URL")}: " +
+                        if (resolvedEndpoint.isNotBlank()) resolvedEndpoint else tr("Input API Base URL to preview request endpoint."),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                    fontSize = 12.sp
+                )
+                OutlinedTextField(
+                    value = llmApiKey,
+                    onValueChange = { viewModel.llmApiKey.value = it },
+                    label = { Text(tr("API Key")) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = llmModel,
+                    onValueChange = { viewModel.llmModel.value = it },
+                    label = { Text(tr("Model")) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    supportingText = { Text(tr("e.g. gpt-4o-mini, qwen-plus")) }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.testLlmAndSyncConfig() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(tr("Test LLM & sync to device"))
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.saveConfig() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(tr("Save only"))
+                    }
+                }
+                if (llmTestResult.isNotEmpty()) {
+                    Text(
+                        text = llmTestResult,
+                        fontSize = 12.sp,
+                        color = if (llmTestResult.startsWith("LLM ")) {
+                            Color(0xFF4CAF50)
+                        } else {
+                            Color(0xFFFF9800)
+                        }
+                    )
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(tr("Saved local configs"), style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = llmProfileDraftName,
+                    onValueChange = { viewModel.llmProfileDraftName.value = it },
+                    label = { Text(tr("Config name")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.saveCurrentLlmAsNewProfile() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(tr("Save as new"))
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.updateSelectedLlmProfile() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(tr("Update selected"))
+                    }
+                }
+                if (llmProfileResult.isNotEmpty()) {
+                    Text(
+                        text = llmProfileResult,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+                    )
+                }
+                if (llmProfiles.isEmpty()) {
+                    Text(
+                        text = tr("No saved LLM configs yet."),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        llmProfiles.forEach { profile ->
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (profile.id == activeLlmProfileId) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = profile.name,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (profile.id == activeLlmProfileId) {
+                                        Text(
+                                            text = tr("Selected config"),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    if (profile.model.isNotBlank()) {
+                                        Text(
+                                            text = profile.model,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+                                        )
+                                    }
+                                    if (profile.apiBaseUrl.isNotBlank()) {
+                                        Text(
+                                            text = profile.apiBaseUrl,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { viewModel.applyLlmProfile(profile.id) },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(tr("Use this config"))
+                                        }
+                                        OutlinedButton(
+                                            onClick = { viewModel.deleteLlmProfile(profile.id) },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(tr("Delete"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
