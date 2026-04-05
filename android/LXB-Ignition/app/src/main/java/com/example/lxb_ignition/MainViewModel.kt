@@ -326,6 +326,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val scheduleRepeatWeekdays = MutableStateFlow(0b0011111) // Mon-Fri
     val schedulePackage = MutableStateFlow("")
     val schedulePlaybook = MutableStateFlow("")
+    val scheduleEnabled = MutableStateFlow(true)
     val scheduleRecordEnabled = MutableStateFlow(false)
 
     // Tasks tab: notification trigger form
@@ -1259,6 +1260,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             task = scheduleTask.value,
             packageName = schedulePackage.value,
             playbook = schedulePlaybook.value,
+            enabled = scheduleEnabled.value,
             recordEnabled = scheduleRecordEnabled.value,
             runAtRaw = scheduleStartAtMs.value,
             repeatModeRaw = scheduleRepeatMode.value,
@@ -1393,6 +1395,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scheduleRepeatWeekdays.value = schedule.repeatWeekdays
         schedulePackage.value = schedule.packageName
         schedulePlaybook.value = schedule.userPlaybook
+        scheduleEnabled.value = schedule.enabled
         scheduleRecordEnabled.value = schedule.recordEnabled
     }
 
@@ -1404,7 +1407,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scheduleRepeatWeekdays.value = 0b0011111
         schedulePackage.value = ""
         schedulePlaybook.value = ""
+        scheduleEnabled.value = true
         scheduleRecordEnabled.value = false
+    }
+
+    fun toggleScheduleEnabledOnDevice(schedule: ScheduleSummary, enabled: Boolean) {
+        val sid = schedule.scheduleId.trim()
+        if (sid.isEmpty()) {
+            appendSystemMessage("schedule_id is empty.")
+            return
+        }
+        if (enabled && schedule.repeatMode == REPEAT_ONCE && schedule.runAtMs <= System.currentTimeMillis()) {
+            appendSystemMessage("One-shot schedule in the past cannot be enabled again.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot update schedule.")
+            return
+        }
+        val draft = ScheduleDraft(
+            name = schedule.name,
+            task = schedule.userTask,
+            packageName = schedule.packageName,
+            playbook = schedule.userPlaybook,
+            enabled = enabled,
+            recordEnabled = schedule.recordEnabled,
+            runAt = schedule.runAtMs,
+            repeatMode = schedule.repeatMode.ifBlank { REPEAT_ONCE },
+            repeatWeekdays = schedule.repeatWeekdays
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_SCHEDULE_UPDATE,
+                        buildScheduleUpsertPayload(draft = draft, scheduleId = sid),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseScheduleUpdate(resp, sid)
+                }
+            }.getOrElse { e -> "Update schedule failed: ${e.message}" }
+
+            withContext(Dispatchers.Main) {
+                appendLog("[SCHEDULE] $result")
+                appendSystemMessage(result)
+                if (result.startsWith("Schedule updated")) {
+                    _scheduleList.value = _scheduleList.value.map {
+                        if (it.scheduleId == sid) it.copy(enabled = enabled) else it
+                    }
+                    refreshScheduleListOnDevice()
+                }
+            }
+        }
+    }
+
+    private fun buildNotifyRulePayload(rule: NotificationTriggerRuleSummary, enabled: Boolean): org.json.JSONObject {
+        val action = org.json.JSONObject()
+            .put("type", if (rule.actionType.isNotBlank()) rule.actionType else "run_task")
+            .put("user_task", rule.actionUserTask)
+            .put("package", rule.actionPackage)
+            .put("user_playbook", rule.actionUserPlaybook)
+            .put("record_enabled", rule.actionRecordEnabled)
+        when (rule.actionUseMap) {
+            true -> action.put("use_map", true)
+            false -> action.put("use_map", false)
+            null -> {}
+        }
+        return org.json.JSONObject()
+            .put("id", rule.id)
+            .put("name", rule.name)
+            .put("enabled", enabled)
+            .put("priority", rule.priority)
+            .put("package_mode", normalizeNotifyPackageMode(rule.packageMode))
+            .put("package_list", org.json.JSONArray(rule.packageList))
+            .put("text_mode", normalizeNotifyTextMode(rule.textMode))
+            .put("title_pattern", rule.titlePattern)
+            .put("body_pattern", rule.bodyPattern)
+            .put("llm_condition_enabled", rule.llmConditionEnabled)
+            .put("llm_condition", rule.llmCondition)
+            .put("llm_yes_token", if (rule.llmYesToken.isNotBlank()) rule.llmYesToken else "yes")
+            .put("llm_no_token", if (rule.llmNoToken.isNotBlank()) rule.llmNoToken else "no")
+            .put("llm_timeout_ms", rule.llmTimeoutMs)
+            .put("task_rewrite_enabled", rule.taskRewriteEnabled)
+            .put("task_rewrite_instruction", rule.taskRewriteInstruction)
+            .put("task_rewrite_timeout_ms", rule.taskRewriteTimeoutMs)
+            .put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(rule.taskRewriteFailPolicy))
+            .put("cooldown_ms", rule.cooldownMs)
+            .put("active_time_start", rule.activeTimeStart)
+            .put("active_time_end", rule.activeTimeEnd)
+            .put("stop_after_matched", rule.stopAfterMatched)
+            .put("action", action)
+    }
+
+    fun toggleNotifyRuleEnabledOnDevice(rule: NotificationTriggerRuleSummary, enabled: Boolean) {
+        val rid = rule.id.trim()
+        if (rid.isEmpty()) {
+            appendSystemMessage("rule_id is empty.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot upsert notify rule.")
+            return
+        }
+        val payloadRule = buildNotifyRulePayload(rule, enabled)
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val payload = org.json.JSONObject()
+                        .put("action", "upsert_rule")
+                        .put("rule", payloadRule)
+                        .toString()
+                        .toByteArray(Charsets.UTF_8)
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_NOTIFY,
+                        payload,
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseNotifyRuleUpsert(resp)
+                }
+            }.getOrElse { e -> Pair("Upsert notify rule failed: ${e.message}", "") }
+
+            withContext(Dispatchers.Main) {
+                appendLog("[NOTIFY] ${result.first}")
+                appendSystemMessage(result.first)
+                if (result.first.startsWith("Notify rule updated")) {
+                    _notifyRuleList.value = _notifyRuleList.value.map {
+                        if (it.id == rid) it.copy(enabled = enabled) else it
+                    }
+                    refreshNotifyRuleListOnDevice()
+                }
+            }
+        }
     }
 
     // ----- LLM config and test -----

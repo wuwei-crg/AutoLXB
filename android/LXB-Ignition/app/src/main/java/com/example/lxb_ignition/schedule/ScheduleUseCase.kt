@@ -5,6 +5,7 @@ data class ScheduleFormInput(
     val task: String,
     val packageName: String,
     val playbook: String,
+    val enabled: Boolean,
     val recordEnabled: Boolean,
     val runAtRaw: String,
     val repeatModeRaw: String,
@@ -16,6 +17,7 @@ data class ScheduleDraft(
     val task: String,
     val packageName: String,
     val playbook: String,
+    val enabled: Boolean,
     val recordEnabled: Boolean,
     val runAt: Long,
     val repeatMode: String,
@@ -53,6 +55,7 @@ object ScheduleUseCase {
             task = task,
             packageName = input.packageName.trim(),
             playbook = input.playbook.trim(),
+            enabled = input.enabled,
             recordEnabled = input.recordEnabled,
             runAt = runAt,
             repeatMode = repeatMode,
@@ -77,6 +80,7 @@ object ScheduleUseCase {
             .put("repeat_weekdays", draft.repeatWeekdays)
             .put("repeat_daily", draft.repeatMode == repeatDaily) // backward compatibility
             .put("user_playbook", draft.playbook)
+            .put("enabled", draft.enabled)
             .put("record_enabled", draft.recordEnabled)
         if (!scheduleId.isNullOrBlank()) {
             payload.put("schedule_id", scheduleId)

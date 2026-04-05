@@ -1430,6 +1430,9 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             items(schedules, key = { it.scheduleId }) { schedule ->
                                 ScheduleRow(
                                     schedule = schedule,
+                                    onToggleEnabled = { checked ->
+                                        viewModel.toggleScheduleEnabledOnDevice(schedule, checked)
+                                    },
                                     onEdit = {
                                         editingScheduleId = schedule.scheduleId
                                         viewModel.loadScheduleForm(schedule)
@@ -1518,6 +1521,9 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             items(notifyRules, key = { it.id }) { rule ->
                                 NotificationRuleRow(
                                     rule = rule,
+                                    onToggleEnabled = { checked ->
+                                        viewModel.toggleNotifyRuleEnabledOnDevice(rule, checked)
+                                    },
                                     onEdit = {
                                         editingNotifyRuleId = rule.id
                                         viewModel.loadNotifyRuleForm(rule)
@@ -1955,20 +1961,6 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = tr("Enable rule"),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Switch(
-                                checked = notifyEnabled,
-                                onCheckedChange = { viewModel.notifyEnabled.value = it }
-                            )
-                        }
                         PackageSelectField(
                             title = "${tr("Package match (required)")} - ${tr("Select App")}",
                             selectedPackage = notifyPackageListRaw,
@@ -2152,6 +2144,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
 @Composable
 fun ScheduleRow(
     schedule: ScheduleSummary,
+    onToggleEnabled: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -2184,19 +2177,29 @@ fun ScheduleRow(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "${tr("ID")}=${schedule.scheduleId.take(8)}...",
                     fontSize = 10.sp,
                     color = scheme.onSurface.copy(alpha = 0.6f)
                 )
-                OutlinedButton(
-                    onClick = onDelete,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(30.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(tr("Delete"), fontSize = 11.sp, color = scheme.error)
+                    Switch(
+                        checked = schedule.enabled,
+                        onCheckedChange = onToggleEnabled
+                    )
+                    OutlinedButton(
+                        onClick = onDelete,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(tr("Delete"), fontSize = 11.sp, color = scheme.error)
+                    }
                 }
             }
         }
@@ -2206,6 +2209,7 @@ fun ScheduleRow(
 @Composable
 fun NotificationRuleRow(
     rule: NotificationTriggerRuleSummary,
+    onToggleEnabled: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -2254,19 +2258,29 @@ fun NotificationRuleRow(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "${tr("ID")}=${rule.id.take(8)}...",
                     fontSize = 10.sp,
                     color = scheme.onSurface.copy(alpha = 0.6f)
                 )
-                OutlinedButton(
-                    onClick = onDelete,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.height(30.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(tr("Delete"), fontSize = 11.sp, color = scheme.error)
+                    Switch(
+                        checked = rule.enabled,
+                        onCheckedChange = onToggleEnabled
+                    )
+                    OutlinedButton(
+                        onClick = onDelete,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(tr("Delete"), fontSize = 11.sp, color = scheme.error)
+                    }
                 }
             }
         }

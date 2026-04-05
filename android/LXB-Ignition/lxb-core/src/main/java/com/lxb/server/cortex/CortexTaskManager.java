@@ -356,6 +356,7 @@ public class CortexTaskManager {
             String repeatModeRaw,
             int repeatWeekdays,
             String userPlaybook,
+            Boolean enabled,
             boolean recordEnabled
     ) {
         if (scheduleId == null || scheduleId.trim().isEmpty()) {
@@ -401,7 +402,12 @@ public class CortexTaskManager {
             def.hourOfDay = c.get(Calendar.HOUR_OF_DAY);
             def.minuteOfHour = c.get(Calendar.MINUTE);
             def.nextRunAt = firstRunAt;
-            def.enabled = true;
+            def.enabled = enabled != null ? enabled.booleanValue() : def.enabled;
+            if (!def.enabled) {
+                if ("once".equals(def.repeatMode)) {
+                    def.nextRunAt = 0L;
+                }
+            }
         }
         saveSchedulesToDisk();
         return snapshotSchedule(def);

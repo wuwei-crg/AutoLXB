@@ -721,6 +721,7 @@ public class CortexFacade {
      *   "repeat_mode": "once|daily|weekly",
      *   "repeat_weekdays": 31,           // Mon bit0 ... Sun bit6
      *   "user_playbook": "optional",
+     *   "enabled": true,                 // optional, default keep current / true
      *   "record_enabled": false          // optional
      * }
      */
@@ -757,6 +758,7 @@ public class CortexFacade {
                 repeatMode = repeatDaily ? "daily" : "once";
             }
             String userPlaybook = stringOrEmpty(req.get("user_playbook"));
+            Boolean enabled = req.containsKey("enabled") ? Boolean.valueOf(toBool(req.get("enabled"), true)) : null;
             boolean recordEnabled = toBool(req.get("record_enabled"), false);
 
             Map<String, Object> schedule = taskManager.updateScheduledTask(
@@ -772,6 +774,7 @@ public class CortexFacade {
                     repeatMode,
                     repeatWeekdays,
                     userPlaybook,
+                    enabled,
                     recordEnabled
             );
             if (schedule == null) {
