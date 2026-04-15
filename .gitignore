@@ -161,6 +161,7 @@ examples/screenshot*.png
 
 # Claude Code
 .claude/
+.omx/
 
 # Temporary files
 *.tmp
