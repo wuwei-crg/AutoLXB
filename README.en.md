@@ -41,9 +41,6 @@ The Route-Then-Act pipeline is supported by several cooperating parts:
 - **`app_process` daemon**: `lxb-core` runs as a shell-level background process outside the normal Android app lifecycle, which makes it suitable for always-on runtime, schedules, and notification triggers
 - **Device-side separation**: the `AutoLXB` app handles startup, configuration, task management, and logs; `lxb-core` handles local automation execution
 
-![Overall architecture](resources/architecture_overall.png)
-
-![Framework internal architecture](resources/architecture_LXB-Framework.png)
 
 ## Current Product Shape
 
@@ -78,14 +75,14 @@ Before starting, make sure:
 
 ## Quick Start
 
-### Option 1: Non-root device (`Wireless ADB`)
+### 1. Install and prepare your phone
 
 1. Install the latest APK from [Releases](https://github.com/wuwei-crg/LXB-Framework/releases)
-2. Enable the required developer settings on the phone:
+2. Enable Developer Options and make sure these settings are enabled:
    - `USB debugging`
-   - `Wireless debugging`
    - **USB debugging must stay enabled, otherwise process keepalive may fail**
-3. Some ROMs need extra adjustments:
+   - non-root devices also need `Wireless debugging`
+3. Some Chinese Android ROMs need extra adjustments:
 
    | ROM | Action |
    |-----|--------|
@@ -93,20 +90,44 @@ Before starting, make sure:
    | ColorOS (OPPO / OnePlus) | disable `Permission monitoring` |
    | Flyme (Meizu) | disable `Flyme payment protection` |
 
-4. Open `AutoLXB` and tap **ADB startup**
-5. Complete the guide once:
-   - open Developer Options
-   - enable Wireless debugging
-   - open `Pair device with pairing code`
-   - enter the 6-digit code through the app notification
-6. After the first pairing, later startups usually do not need re-pairing as long as Wireless debugging is enabled
+4. Set the battery policy of `AutoLXB` to **Unrestricted** to prevent background tasks from being killed by the system
 
-### Option 2: Rooted device (`Root startup`)
+### 2. Start AutoLXB Core
 
-1. Install the APK
-2. Tap **Root startup** on the home page
-3. Confirm root permission can be granted
-4. The app starts `lxb-core` directly through `su`
+- **Rooted device**: tap **Root startup** on the home page and confirm `su` permission can be granted
+- **Non-root device**: tap **ADB startup** and complete Wireless ADB pairing once
+- After pairing, later startups usually only require Wireless debugging to stay enabled. You usually do not need to pair again every time
+
+### 3. Configure the model
+
+Open `Config -> Device-side LLM Config`, then fill in:
+
+- `API Base URL`
+- `API Key`
+- `Model`
+
+Use a model with **image understanding capability**. After saving, run the test to make sure the model can process images and return a valid result.
+
+### 4. Create an automated task
+
+AutoLXB is designed for repeatable, linear, triggerable phone tasks. Prefer these two task types:
+
+- **Scheduled tasks**: run a task at a specific time or repeatedly, such as daily check-in
+- **Notification-triggered tasks**: listen to notifications from a selected app and run a task when conditions match, such as replying after a specific group message arrives
+
+Write task descriptions as concretely as possible, for example:
+
+```text
+Open an app, enter the check-in page, and complete the check-in
+Open WeChat, enter a specific group chat, and reply to the person who just sent a message
+Open a delivery app, enter the order page, and check the rider location
+```
+
+If you are not sure whether a task description is stable, run it once as a **Quick task** first. After it works, save the same description as a scheduled task or notification-triggered task.
+
+### 5. Optional: save a task route
+
+For tasks that run repeatedly, enable task routes. After a run, you can review the captured route, keep useful steps, and move noisy actions out of the route. Future runs will prefer the saved route before falling back to visual execution.
 
 ## Recommended First Configuration Pass
 
