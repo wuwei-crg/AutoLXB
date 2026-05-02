@@ -932,7 +932,17 @@ public class CortexFacade {
                 String targetTaskKeyHash = stringOrEmpty(req.get("target_route_id"));
                 String targetPackageName = stringOrEmpty(req.get("target_package_name"));
                 String bundleJson = stringOrEmpty(req.get("bundle_json"));
-                out = taskManager.importPortableTaskMap(targetTaskKeyHash, targetPackageName, bundleJson);
+                out = taskManager.importPortableTaskMap(
+                        targetTaskKeyHash,
+                        targetPackageName,
+                        bundleJson,
+                        source,
+                        sourceId,
+                        packageName,
+                        userTask,
+                        userPlaybook,
+                        mode
+                );
             } else if ("set_mode".equals(action)) {
                 out = taskManager.setTaskMapMode(source, sourceId, mode, taskId);
             } else {

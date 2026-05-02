@@ -45,10 +45,11 @@ public final class PortableTaskRouteCodec {
         bundle.put("schema", PORTABLE_SCHEMA);
 
         Map<String, Object> taskInfo = buildTaskInfo(map, record);
-        // The portable asset contract is task_info + segments only. It must not
-        // carry schedule metadata, run timestamps, or duplicated legacy source_task
-        // data; imported routes become new local task assets.
+        // The portable asset contract is task_info + route behavior + segments only.
+        // It must not carry schedule metadata, run timestamps, or duplicated legacy
+        // source_task data; imported routes become new local task assets.
         bundle.put("task_info", taskInfo);
+        bundle.put("finish_after_replay", map.finishAfterReplay);
 
         List<Object> segmentRows = new ArrayList<Object>();
         for (TaskMap.Segment segment : map.segments) {
@@ -110,6 +111,7 @@ public final class PortableTaskRouteCodec {
         map.createdFromTaskId = stringOrEmpty(sourceTask.get("task_id"));
         map.createdAtMs = System.currentTimeMillis();
         map.mode = "manual";
+        map.finishAfterReplay = toBoolean(bundle.get("finish_after_replay"), false);
         map.lastReplayStatus = "unused";
 
         ImportResult result = new ImportResult();
@@ -260,7 +262,6 @@ public final class PortableTaskRouteCodec {
 
     private static Map<String, Object> buildTaskInfo(TaskMap map, TaskRouteRecord record) {
         Map<String, Object> task = new LinkedHashMap<String, Object>();
-        task.put("task_id", stringOrEmpty(record != null ? record.taskId : map != null ? map.createdFromTaskId : ""));
         task.put("user_task", firstNonBlank(
                 stringOrEmpty(record != null ? record.rootTask : ""),
                 firstSegmentDescription(map)
@@ -277,7 +278,6 @@ public final class PortableTaskRouteCodec {
                 stringOrEmpty(record != null ? record.taskMapMode : ""),
                 stringOrEmpty(map != null ? map.mode : "")
         ));
-        task.put("route_id", stringOrEmpty(map != null ? map.taskKeyHash : ""));
         return task;
     }
 
@@ -447,6 +447,23 @@ public final class PortableTaskRouteCodec {
 
     private static String normalizeOp(String op) {
         return stringOrEmpty(op).toUpperCase(Locale.ROOT);
+    }
+
+    private static boolean toBoolean(Object v, boolean def) {
+        if (v instanceof Boolean) {
+            return ((Boolean) v).booleanValue();
+        }
+        if (v == null) {
+            return def;
+        }
+        String s = String.valueOf(v).trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(s) || "1".equals(s) || "yes".equals(s) || "on".equals(s)) {
+            return true;
+        }
+        if ("false".equals(s) || "0".equals(s) || "no".equals(s) || "off".equals(s)) {
+            return false;
+        }
+        return def;
     }
 
     private static String stringOrEmpty(Object o) {

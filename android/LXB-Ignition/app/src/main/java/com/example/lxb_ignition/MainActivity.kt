@@ -1621,6 +1621,12 @@ private val ZhMap = mapOf(
     "Trace export failed" to "追踪导出失败",
     "No trace to export." to "没有可导出的追踪。",
     "Saved to" to "已保存到",
+    "Import Portable Task" to "导入便携任务",
+    "Import" to "导入",
+    "Export Portable Task" to "导出便携任务",
+    "Exporting portable task..." to "正在导出便携任务...",
+    "Portable task exported" to "便携任务已导出",
+    "Portable task export failed" to "便携任务导出失败",
     "Trace Details" to "追踪详情",
     "Load older traces..." to "正在加载更早的追踪...",
     "No trace details." to "没有更多追踪详情。",
@@ -2177,6 +2183,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val taskMapDetail by viewModel.taskMapDetail.collectAsState()
     val taskMapDetailLoading by viewModel.taskMapDetailLoading.collectAsState()
     val taskMapSaving by viewModel.taskMapSaving.collectAsState()
+    val portableTaskExportUiState by viewModel.portableTaskExportUiState.collectAsState()
     val schedules by viewModel.scheduleList.collectAsState()
     val notifyRules by viewModel.notifyRuleList.collectAsState()
     val installedApps by viewModel.installedAppList.collectAsState()
@@ -2225,16 +2232,13 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val portableImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        val target = routeEditorTarget
-        if (uri != null && target != null) {
-            viewModel.importPortableTaskMapFromUri(
-                targetPackageName = target.packageName,
+        if (uri != null) {
+            viewModel.importPortableTaskFromUri(
                 uri = uri
-            ) { importedTaskId ->
+            ) {
+                viewModel.refreshScheduleListOnDevice()
+                viewModel.refreshNotifyRuleListOnDevice()
                 viewModel.refreshTaskListOnDevice(silent = true)
-                if (importedTaskId.isNotBlank()) {
-                    viewModel.loadTaskMapDetailByQuery(taskId = importedTaskId)
-                }
             }
         }
     }
@@ -2311,10 +2315,22 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onClick = { page = pageQuickTask }
                 )
 
-                SheetHeader(
-                    title = tr("Automation"),
-                    subtitle = tr("Build repeatable workflows after you are comfortable with direct tasks.")
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SheetHeader(
+                        title = tr("Automation"),
+                        subtitle = tr("Build repeatable workflows after you are comfortable with direct tasks.")
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    OutlinedButton(
+                        onClick = { portableImportLauncher.launch(arrayOf("application/json", "text/plain")) }
+                    ) {
+                        Text(tr("Import"))
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -2323,7 +2339,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         title = tr("Schedules"),
                         description = tr("Manage scheduled tasks and create new ones."),
                         meta = "${schedules.size} ${tr("items")}",
-                        glyph = "⏰",
+                        glyph = "\u23F0",
                         onClick = { page = pageScheduleList },
                         modifier = Modifier.weight(1f)
                     )
@@ -2331,7 +2347,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         title = tr("Notification Triggers"),
                         description = tr("Manage notification-triggered tasks and create new ones."),
                         meta = "${notifyRules.size} ${tr("items")}",
-                        glyph = "✉",
+                        glyph = "\u2709",
                         onClick = { page = pageNotifyRuleList },
                         modifier = Modifier.weight(1f)
                     )
@@ -2794,21 +2810,54 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             )
                         }
                         if (isEditing) {
-                            OutlinedButton(
-                                onClick = {
-                                    routeEditorTarget = RouteEditorTarget(
-                                        title = if (scheduleName.isNotBlank()) scheduleName else scheduleTask,
-                                        source = "schedule",
-                                        sourceId = editingScheduleId,
-                                        packageName = schedulePackage,
-                                        mode = scheduleTaskMapMode
-                                    )
-                                    page = pageTaskRouteEditor
-                                },
-                                modifier = Modifier.fillMaxWidth()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(tr("Open task route editor"))
+                                OutlinedButton(
+                                    onClick = {
+                                        routeEditorTarget = RouteEditorTarget(
+                                            title = if (scheduleName.isNotBlank()) scheduleName else scheduleTask,
+                                            source = "schedule",
+                                            sourceId = editingScheduleId,
+                                            packageName = schedulePackage,
+                                            userTask = scheduleTask,
+                                            userPlaybook = schedulePlaybook,
+                                            mode = scheduleTaskMapMode
+                                        )
+                                        page = pageTaskRouteEditor
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Open task route editor"))
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.exportPortableTaskMapByKey(
+                                            routeId = "",
+                                            source = "schedule",
+                                            sourceId = editingScheduleId,
+                                            packageName = schedulePackage,
+                                            userTask = scheduleTask,
+                                            userPlaybook = schedulePlaybook,
+                                            mode = scheduleTaskMapMode,
+                                            taskName = scheduleName,
+                                            taskConfig = org.json.JSONObject()
+                                                .put("type", "schedule")
+                                                .put("name", scheduleName)
+                                                .put("user_task", scheduleTask)
+                                                .put("package_name", schedulePackage)
+                                                .put("user_playbook", schedulePlaybook)
+                                                .put("task_map_mode", scheduleTaskMapMode)
+                                        )
+                                    },
+                                    enabled = !taskMapSaving,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Export Portable Task"))
+                                }
                             }
+                            PortableTaskExportStatus(exportUiState = portableTaskExportUiState)
                         } else {
                             Text(
                                 text = tr("Task route editing is available after the task config has been saved once."),
@@ -3082,21 +3131,66 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             )
                         }
                         if (isEditing) {
-                            OutlinedButton(
-                                onClick = {
-                                    routeEditorTarget = RouteEditorTarget(
-                                        title = if (notifyName.isNotBlank()) notifyName else notifyActionUserTask,
-                                        source = "notify_trigger",
-                                        sourceId = editingNotifyRuleId,
-                                        packageName = notifyActionPackage,
-                                        mode = notifyActionTaskMapMode
-                                    )
-                                    page = pageTaskRouteEditor
-                                },
-                                modifier = Modifier.fillMaxWidth()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(tr("Open task route editor"))
+                                OutlinedButton(
+                                    onClick = {
+                                        routeEditorTarget = RouteEditorTarget(
+                                            title = if (notifyName.isNotBlank()) notifyName else notifyActionUserTask,
+                                            source = "notify_trigger",
+                                            sourceId = editingNotifyRuleId,
+                                            packageName = notifyActionPackage,
+                                            userTask = notifyActionUserTask,
+                                            userPlaybook = notifyActionUserPlaybook,
+                                            mode = notifyActionTaskMapMode
+                                        )
+                                        page = pageTaskRouteEditor
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Open task route editor"))
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.exportPortableTaskMapByKey(
+                                            routeId = "",
+                                            source = "notify_trigger",
+                                            sourceId = editingNotifyRuleId,
+                                            packageName = notifyActionPackage,
+                                            userTask = notifyActionUserTask,
+                                            userPlaybook = notifyActionUserPlaybook,
+                                            mode = notifyActionTaskMapMode,
+                                            taskName = notifyName,
+                                            taskConfig = org.json.JSONObject()
+                                                .put("type", "notify_trigger")
+                                                .put("name", notifyName)
+                                                .put("user_task", notifyActionUserTask)
+                                                .put("package_name", notifyActionPackage)
+                                                .put("user_playbook", notifyActionUserPlaybook)
+                                                .put("task_map_mode", notifyActionTaskMapMode)
+                                                .put("package_mode", notifyPackageMode)
+                                                .put("package_list", org.json.JSONArray().put(notifyPackageListRaw))
+                                                .put("text_mode", notifyTextMode)
+                                                .put("title_pattern", notifyTitlePattern)
+                                                .put("body_pattern", notifyBodyPattern)
+                                                .put("llm_condition_enabled", notifyLlmConditionEnabled)
+                                                .put("llm_condition", notifyLlmCondition)
+                                                .put("task_rewrite_enabled", notifyTaskRewriteEnabled)
+                                                .put("task_rewrite_instruction", notifyTaskRewriteInstruction)
+                                                .put("task_rewrite_fail_policy", notifyTaskRewriteFailPolicy)
+                                                .put("stop_after_matched", notifyStopAfterMatched)
+                                                .put("action_use_map", notifyActionUseMapMode)
+                                        )
+                                    },
+                                    enabled = !taskMapSaving,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr("Export Portable Task"))
+                                }
                             }
+                            PortableTaskExportStatus(exportUiState = portableTaskExportUiState)
                         } else {
                             Text(
                                 text = tr("Task route editing is available after the task config has been saved once."),
@@ -3243,20 +3337,6 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                 mode = target.mode
                             )
                         }
-                    },
-                    onExportPortable = {
-                        viewModel.exportPortableTaskMapByKey(
-                            routeId = taskMapDetail?.routeId.orEmpty(),
-                            source = target.source,
-                            sourceId = target.sourceId,
-                            packageName = target.packageName,
-                            userTask = target.userTask,
-                            userPlaybook = target.userPlaybook,
-                            mode = target.mode
-                        )
-                    },
-                    onImportPortable = {
-                        portableImportLauncher.launch(arrayOf("application/json", "text/plain"))
                     }
                 )
             }
@@ -3347,6 +3427,43 @@ private fun TaskDetailDialog(
 }
 
 @Composable
+private fun PortableTaskExportStatus(exportUiState: MainViewModel.PortableTaskExportUiState) {
+    when {
+        exportUiState.exporting -> {
+            StatusNotice(
+                text = tr("Exporting portable task..."),
+                accentColor = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        exportUiState.status == "success" -> {
+            StatusNotice(
+                text = buildString {
+                    append(tr("Portable task exported"))
+                    append(": ")
+                    append(tr("Saved to"))
+                    append(" ")
+                    append(exportUiState.savedPath)
+                    append(" (locator=")
+                    append(exportUiState.locatorStepCount)
+                    append(", semantic=")
+                    append(exportUiState.semanticStepCount)
+                    append(")")
+                },
+                accentColor = AppSuccess
+            )
+        }
+
+        exportUiState.status == "failure" -> {
+            StatusNotice(
+                text = "${tr("Portable task export failed")}: ${exportUiState.error}",
+                accentColor = AppError
+            )
+        }
+    }
+}
+
+@Composable
 private fun TaskRouteEditorPage(
     modifier: Modifier = Modifier,
     routeDetail: TaskMapDetail?,
@@ -3354,9 +3471,7 @@ private fun TaskRouteEditorPage(
     saving: Boolean,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
-    onSaveManualTaskMap: (List<String>, Boolean) -> Unit,
-    onExportPortable: () -> Unit,
-    onImportPortable: () -> Unit
+    onSaveManualTaskMap: (List<String>, Boolean) -> Unit
 ) {
     val scrollState = rememberScrollState()
     val editableRecord = routeDetail?.latestAttemptRecord ?: routeDetail?.latestSuccessRecord
@@ -3375,30 +3490,12 @@ private fun TaskRouteEditorPage(
     ) {
         PageHeaderBlock(
             title = tr("Route Editor"),
-            subtitle = tr("Review the latest captured path, delete noisy actions, save the useful route, then export or import a portable route bundle."),
+            subtitle = tr("Review the latest captured path, delete noisy actions, and save only the useful route."),
             glyph = "⇄",
             onBack = onBack,
             primaryActionLabel = tr("Refresh"),
             onPrimaryAction = onRefresh
         )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedButton(
-                onClick = onExportPortable,
-                enabled = !saving && routeDetail?.hasMap == true
-            ) {
-                Text(tr("Export Portable Route"))
-            }
-            OutlinedButton(
-                onClick = onImportPortable,
-                enabled = !saving
-            ) {
-                Text(tr("Import Portable Route"))
-            }
-        }
 
         SurfacePanel(
             modifier = Modifier.fillMaxWidth(),

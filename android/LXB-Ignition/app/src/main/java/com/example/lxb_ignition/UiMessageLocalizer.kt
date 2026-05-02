@@ -43,6 +43,25 @@ object UiMessageLocalizer {
             text.startsWith("Map sync failed: ") -> "地图同步失败: " + text.removePrefix("Map sync failed: ")
             text.startsWith("Pull stable map failed: ") -> "拉取 Stable 地图失败: " + text.removePrefix("Pull stable map failed: ")
             text.startsWith("Pull candidate map failed: ") -> "拉取 Candidate 地图失败: " + text.removePrefix("Pull candidate map failed: ")
+            text == "Route ID is empty." -> "任务路线 ID 为空。"
+            text == "Task identity is empty." -> "任务标识为空。"
+            text.startsWith("Portable task exported to ") -> "便携任务已导出到 " + text.removePrefix("Portable task exported to ")
+            text.startsWith("Portable task export failed: ") -> "便携任务导出失败: " + text.removePrefix("Portable task export failed: ")
+            text.startsWith("Portable task imported as new task ") -> "便携任务已导入为新任务 " + text.removePrefix("Portable task imported as new task ")
+            text.startsWith("Portable schedule task created: ") -> "便携定时任务已创建: " + text.removePrefix("Portable schedule task created: ")
+            text.startsWith("Portable notification task created: ") -> "便携通知触发任务已创建: " + text.removePrefix("Portable notification task created: ")
+            text.startsWith("Portable task import failed: Invalid portable task JSON.") -> "????????: ??????? JSON?"
+            text.startsWith("Portable task import failed: Unsupported portable task schema: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task schema: ")
+            text.startsWith("Portable task import failed: Unsupported portable task type: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task type: ")
+            text.startsWith("Portable task import failed: Portable task route segments are missing.") -> "????????: ?????? segments?"
+            text.startsWith("Portable task import failed: Portable task_info is missing.") -> "????????: ???? task_info?"
+            text.startsWith("Portable task import failed: Portable task_config is missing.") -> "????????: ???? task_config?"
+            text.startsWith("Portable task import failed: Portable task user_task is missing.") -> "????????: ???????? user_task?"
+            text.startsWith("Portable task import failed: Portable notification trigger package_list is missing.") -> "????????: ???????????? package_list?"
+            text.startsWith("Portable task import failed: Portable notification trigger condition is missing.") -> "????????: ?????????????"
+            text.startsWith("Portable task import failed: Cannot open portable task file.") -> "????????: ??????????"
+            text.startsWith("Portable task import failed: Import portable route failed: ") -> "????????: ??????: " + text.removePrefix("Portable task import failed: Import portable route failed: ")
+            text.startsWith("Portable task import failed: ") -> "便携任务导入失败: " + text.removePrefix("Portable task import failed: ")
             else -> text
         }
     }

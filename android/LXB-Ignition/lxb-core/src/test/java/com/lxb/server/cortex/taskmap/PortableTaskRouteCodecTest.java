@@ -14,6 +14,7 @@ public class PortableTaskRouteCodecTest {
     @Test
     public void export_locatorBackedTap_preservesExistingLocatorPayload() {
         TaskMap map = baseMap();
+        map.finishAfterReplay = true;
         TaskMap.Step step = tapStep("s0001", "a0001");
         step.locator.put("resource_id", "discover_tab");
         step.locator.put("class", "TextView");
@@ -38,14 +39,15 @@ public class PortableTaskRouteCodecTest {
         Map<String, Object> stepRow = firstStep(exported.bundle);
 
         Map<String, Object> taskInfo = (Map<String, Object>) exported.bundle.get("task_info");
-        Assert.assertEquals("task-1", taskInfo.get("task_id"));
         Assert.assertEquals("??", taskInfo.get("user_task"));
         Assert.assertEquals("com.demo", taskInfo.get("package_name"));
-        Assert.assertEquals("hash", taskInfo.get("route_id"));
+        Assert.assertEquals(Boolean.TRUE, exported.bundle.get("finish_after_replay"));
         Assert.assertFalse("portable bundle must not carry export/run timestamps", exported.bundle.containsKey("created_at_ms"));
         Assert.assertFalse("portable bundle must not duplicate task_info as source_task", exported.bundle.containsKey("source_task"));
         Assert.assertFalse("portable task_info must not carry timestamps", taskInfo.containsKey("created_at_ms"));
         Assert.assertFalse("portable task_info must not carry schedule/source ids", taskInfo.containsKey("source_id"));
+        Assert.assertFalse("portable task_info must not carry source task ids", taskInfo.containsKey("task_id"));
+        Assert.assertFalse("portable task_info must not carry route ids", taskInfo.containsKey("route_id"));
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_SCHEMA, exported.bundle.get("schema"));
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_LOCAL_LOCATOR, stepRow.get("portable_kind"));
         Assert.assertEquals("discover_tab", ((Map<String, Object>) stepRow.get("locator")).get("resource_id"));
@@ -89,6 +91,7 @@ public class PortableTaskRouteCodecTest {
     public void import_semanticTap_containsNoExecutableLocalFields() {
         String bundleJson = "{"
                 + "\"schema\":\"task_route_asset.v1\","
+                + "\"finish_after_replay\":true,"
                 + "\"bundle_id\":\"b1\","
                 + "\"created_at_ms\":1,"
                 + "\"task_info\":{\"task_id\":\"source-task\",\"route_id\":\"source\",\"package_name\":\"com.demo\",\"package_label\":\"Demo\",\"user_task\":\"post\"},"
@@ -105,6 +108,7 @@ public class PortableTaskRouteCodecTest {
         TaskMap.Step step = imported.map.segments.get(0).steps.get(0);
 
         Assert.assertEquals("target-hash", imported.map.taskKeyHash);
+        Assert.assertTrue(imported.map.finishAfterReplay);
         Assert.assertEquals("source-task", imported.taskInfo.get("task_id"));
         Assert.assertEquals("post", imported.taskInfo.get("user_task"));
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);

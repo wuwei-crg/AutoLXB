@@ -1289,11 +1289,28 @@ public class CortexTaskManager {
     public Map<String, Object> importPortableTaskMap(
             String targetTaskKeyHash,
             String targetPackageName,
-            String bundleJson
+            String bundleJson,
+            String source,
+            String sourceId,
+            String packageName,
+            String userTask,
+            String userPlaybook,
+            String taskMapMode
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String normalizedKey = stringOrEmpty(targetTaskKeyHash);
-        String normalizedPackage = stringOrEmpty(targetPackageName);
+        String normalizedKey = resolveTaskKeyHash(
+                targetTaskKeyHash,
+                "",
+                source,
+                sourceId,
+                packageName,
+                userTask,
+                userPlaybook,
+                taskMapMode
+        );
+        String normalizedSource = stringOrEmpty(source);
+        String normalizedSourceId = stringOrEmpty(sourceId);
+        String normalizedPackage = firstNonEmpty(stringOrEmpty(targetPackageName), stringOrEmpty(packageName));
         if (bundleJson == null || bundleJson.trim().isEmpty()) {
             out.put("ok", false);
             out.put("err", "portable_bundle_missing");
@@ -1308,13 +1325,18 @@ public class CortexTaskManager {
                     normalizedPackage,
                     bundleJson
             );
+            if (imported.map != null && !normalizedSource.isEmpty() && !normalizedSourceId.isEmpty()) {
+                imported.map.source = normalizedSource;
+                imported.map.sourceId = normalizedSourceId;
+                imported.map.mode = normalizeTaskMapMode(taskMapMode);
+            }
             if (imported.map == null || !imported.map.isUsable()) {
                 out.put("ok", false);
                 out.put("err", "portable_import_unusable_map");
                 return out;
             }
             boolean saved = taskMapStore.saveMap(imported.map);
-            if (saved) {
+            if (saved && (normalizedSource.isEmpty() || normalizedSourceId.isEmpty())) {
                 registerImportedTaskRoute(normalizedKey, imported, normalizedPackage);
             }
             out.put("ok", saved);

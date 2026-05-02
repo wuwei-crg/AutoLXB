@@ -40,6 +40,7 @@ import com.example.lxb_ignition.schedule.ScheduleDraft
 import com.example.lxb_ignition.schedule.ScheduleFormInput
 import com.example.lxb_ignition.schedule.ScheduleUseCase
 import com.example.lxb_ignition.service.CoreClientGateway
+import com.example.lxb_ignition.service.LocalLinkClient
 import com.example.lxb_ignition.service.WirelessAdbBootstrapService
 import com.lxb.server.cortex.LlmClient
 import com.lxb.server.protocol.CommandIds
@@ -76,6 +77,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val error: String = ""
     )
 
+    data class PortableTaskExportUiState(
+        val exporting: Boolean = false,
+        val status: String = "idle",
+        val savedPath: String = "",
+        val locatorStepCount: Int = 0,
+        val semanticStepCount: Int = 0,
+        val error: String = ""
+    )
+
     data class AdbKeyboardUiState(
         val checked: Boolean = false,
         val installed: Boolean = false,
@@ -97,6 +107,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private data class VisionProbeChallenge(
         val answer: String,
         val imagePng: ByteArray
+    )
+
+    private data class PortableTaskImportBundle(
+        val taskType: String,
+        val taskInfo: org.json.JSONObject,
+        val routeBundleJson: String,
+        val routeBundle: org.json.JSONObject,
+        val taskConfig: org.json.JSONObject
     )
 
     companion object {
@@ -216,6 +234,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val traceLoadingOlder: StateFlow<Boolean> = _traceLoadingOlder.asStateFlow()
     private val _traceExportUiState = MutableStateFlow(TraceExportUiState())
     val traceExportUiState: StateFlow<TraceExportUiState> = _traceExportUiState.asStateFlow()
+    private val _portableTaskExportUiState = MutableStateFlow(PortableTaskExportUiState())
+    val portableTaskExportUiState: StateFlow<PortableTaskExportUiState> =
+        _portableTaskExportUiState.asStateFlow()
     private val _adbKeyboardUiState = MutableStateFlow(AdbKeyboardUiState())
     val adbKeyboardUiState: StateFlow<AdbKeyboardUiState> = _adbKeyboardUiState.asStateFlow()
 
@@ -837,6 +858,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _taskMapDetailLoading.value = false
         _taskMapSaving.value = false
         _taskMapDetail.value = null
+        _portableTaskExportUiState.value = PortableTaskExportUiState()
     }
 
     fun loadTaskMapDetail(task: TaskSummary) {
@@ -1006,27 +1028,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         packageName: String = "",
         userTask: String = "",
         userPlaybook: String = "",
-        mode: String = ""
+        mode: String = "",
+        taskName: String = "",
+        taskConfig: org.json.JSONObject? = null
     ) {
         val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot export portable task route.")
+            _portableTaskExportUiState.value = PortableTaskExportUiState(
+                exporting = false,
+                status = "failure",
+                error = "Invalid lxb-core port"
+            )
+            appendSystemMessage("Invalid lxb-core port, cannot export portable task.")
             return
         }
         val requestRouteId = routeId.trim()
-        if (requestRouteId.isEmpty() && taskId.trim().isEmpty()) {
-            appendSystemMessage("Route ID is empty.")
+        val requestTaskId = taskId.trim()
+        val requestSource = source.trim()
+        val requestSourceId = sourceId.trim()
+        if (requestRouteId.isEmpty() && requestTaskId.isEmpty() && (requestSource.isEmpty() || requestSourceId.isEmpty())) {
+            _portableTaskExportUiState.value = PortableTaskExportUiState(
+                exporting = false,
+                status = "failure",
+                error = "Task identity is empty."
+            )
+            appendSystemMessage("Task identity is empty.")
             return
         }
         _taskMapSaving.value = true
+        _portableTaskExportUiState.value = PortableTaskExportUiState(
+            exporting = true,
+            status = "exporting"
+        )
         viewModelScope.launch(Dispatchers.IO) {
-            val msg = runCatching {
+            val outcome = runCatching {
                 coreClientGateway.withClient(port = port) { client ->
                     val payload = org.json.JSONObject()
                         .put("action", "export_portable")
-                        .put("task_id", taskId.trim())
+                        .put("task_id", requestTaskId)
                         .put("route_id", requestRouteId)
-                        .put("source", source.trim())
-                        .put("source_id", sourceId.trim())
+                        .put("source", requestSource)
+                        .put("source_id", requestSourceId)
                         .put("package_name", packageName.trim())
                         .put("user_task", userTask.trim())
                         .put("user_playbook", userPlaybook.trim())
@@ -1043,21 +1084,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (obj != null && obj.optBoolean("ok", false)) {
                         val bundleJson = obj.optString("bundle_json", "")
                         if (bundleJson.isBlank()) {
-                            "Portable route export failed: empty bundle."
+                            PortableTaskExportUiState(
+                                exporting = false,
+                                status = "failure",
+                                error = "empty bundle"
+                            )
                         } else {
-                            val path = writePortableTaskRouteExportFile(bundleJson)
+                            val portableTaskJson = buildPortableTaskExportJson(
+                                routeBundleJson = bundleJson,
+                                taskType = requestSource,
+                                taskName = taskName,
+                                packageName = packageName,
+                                userTask = userTask,
+                                userPlaybook = userPlaybook,
+                                mode = mode,
+                                taskConfig = taskConfig
+                            )
+                            val path = writePortableTaskExportFile(portableTaskJson)
                             val locatorCount = obj.optInt("locator_step_count", 0)
                             val semanticCount = obj.optInt("semantic_step_count", 0)
-                            "Portable route exported to $path (locator=$locatorCount, semantic=$semanticCount)."
+                            PortableTaskExportUiState(
+                                exporting = false,
+                                status = "success",
+                                savedPath = path,
+                                locatorStepCount = locatorCount,
+                                semanticStepCount = semanticCount
+                            )
                         }
                     } else {
-                        "Portable route export failed: ${text.take(220)}"
+                        PortableTaskExportUiState(
+                            exporting = false,
+                            status = "failure",
+                            error = text.take(220)
+                        )
                     }
                 }
-            }.getOrElse { e -> "Portable route export failed: ${e.message}" }
+            }.getOrElse { e ->
+                PortableTaskExportUiState(
+                    exporting = false,
+                    status = "failure",
+                    error = e.message ?: e.javaClass.simpleName
+                )
+            }
+            val msg = when (outcome.status) {
+                "success" -> "Portable task exported to ${outcome.savedPath} (locator=${outcome.locatorStepCount}, semantic=${outcome.semanticStepCount})."
+                else -> "Portable task export failed: ${outcome.error}"
+            }
+            withContext(Dispatchers.Main) {
+                _taskMapSaving.value = false
+                _portableTaskExportUiState.value = outcome
+                appendSystemMessage(msg)
+            }
+        }
+    }
+
+    fun importPortableTaskFromUri(
+        uri: Uri,
+        onImported: ((String) -> Unit)? = null
+    ) {
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot import portable task.")
+            return
+        }
+        _taskMapSaving.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = runCatching {
+                val portableJson = readPortableTaskBundle(uri)
+                val portable = parsePortableTaskExport(portableJson)
+                coreClientGateway.withClient(port = port) { client ->
+                    when (portable.taskType) {
+                        "schedule" -> importPortableScheduleTask(client, portable)
+                        "notify_trigger" -> importPortableNotifyTriggerTask(client, portable)
+                        else -> throw IllegalArgumentException("Unsupported portable task type: ${portable.taskType}")
+                    }
+                }
+            }.getOrElse { e -> "Portable task import failed: ${e.message ?: e.javaClass.simpleName}" }
             withContext(Dispatchers.Main) {
                 _taskMapSaving.value = false
                 appendSystemMessage(msg)
+                if (!msg.startsWith("Portable task import failed")) {
+                    val importedId = msg.substringAfter("created: ", "").substringBefore(" ").trim()
+                    onImported?.invoke(importedId)
+                }
             }
         }
     }
@@ -1067,48 +1175,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         uri: Uri,
         onImported: ((String) -> Unit)? = null
     ) {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot import portable task route.")
-            return
-        }
-        _taskMapSaving.value = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val msg = runCatching {
-                val bundleJson = readPortableRouteBundle(uri)
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "import_portable")
-                        .put("target_route_id", "")
-                        .put("target_package_name", targetPackageName.trim())
-                        .put("bundle_json", bundleJson)
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_TASK_MAP,
-                        payload,
-                        timeoutMs = 8_000
-                    )
-                    val text = resp.toString(Charsets.UTF_8)
-                    val obj = runCatching { org.json.JSONObject(text) }.getOrNull()
-                    if (obj != null && obj.optBoolean("ok", false)) {
-                        val pending = obj.optInt("pending_adaptation_count", 0)
-                        val executable = obj.optInt("materialized_count", 0)
-                        val importedTaskId = obj.optString("task_id", obj.optString("route_id", ""))
-                        "Portable route imported as new task $importedTaskId (pending_adaptation=$pending, executable=$executable)."
-                    } else {
-                        "Portable route import failed: ${text.take(220)}"
-                    }
-                }
-            }.getOrElse { e -> "Portable route import failed: ${e.message}" }
-            withContext(Dispatchers.Main) {
-                _taskMapSaving.value = false
-                appendSystemMessage(msg)
-                if (!msg.startsWith("Portable route import failed")) {
-                    val importedTaskId = Regex("new task ([^ ]+)").find(msg)?.groupValues?.getOrNull(1).orEmpty()
-                    onImported?.invoke(importedTaskId)
-                }
-            }
-        }
+        importPortableTaskFromUri(uri = uri, onImported = onImported)
     }
 
     fun deleteTaskMapByQuery(
@@ -2655,6 +2722,293 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return merged.values.sortedBy { it.seq }
     }
 
+    private fun buildPortableTaskExportJson(
+        routeBundleJson: String,
+        taskType: String,
+        taskName: String,
+        packageName: String,
+        userTask: String,
+        userPlaybook: String,
+        mode: String,
+        taskConfig: org.json.JSONObject?
+    ): String {
+        val bundle = org.json.JSONObject(routeBundleJson)
+        val normalizedType = normalizePortableTaskType(taskType)
+        if (normalizedType.isEmpty()) {
+            throw IllegalArgumentException("Unsupported portable task type: $taskType")
+        }
+        val taskInfo = bundle.optJSONObject("task_info") ?: org.json.JSONObject().also {
+            bundle.put("task_info", it)
+        }
+        bundle.put("task_type", normalizedType)
+        taskInfo.remove("task_id")
+        taskInfo.remove("route_id")
+        taskInfo.remove("source")
+        taskInfo.remove("source_id")
+        taskInfo.remove("created_at")
+        taskInfo.remove("created_at_ms")
+        taskInfo.remove("run_at")
+        taskInfo.remove("next_run_at")
+        if (taskName.isNotBlank()) taskInfo.put("name", taskName.trim())
+        if (userTask.isNotBlank()) taskInfo.put("user_task", userTask.trim())
+        if (packageName.isNotBlank()) taskInfo.put("package_name", packageName.trim())
+        if (userPlaybook.isNotBlank()) taskInfo.put("user_playbook", userPlaybook.trim())
+        taskInfo.put("task_map_mode", normalizeTaskMapMode(mode.ifBlank { TASK_MAP_MODE_MANUAL }))
+        val cleanConfig = cleanPortableTaskConfig(normalizedType, taskConfig, taskInfo)
+        bundle.put("task_config", cleanConfig)
+        return bundle.toString(2)
+    }
+
+    private fun cleanPortableTaskConfig(
+        taskType: String,
+        raw: org.json.JSONObject?,
+        taskInfo: org.json.JSONObject
+    ): org.json.JSONObject {
+        val config = org.json.JSONObject()
+        config.put("type", taskType)
+        config.put("name", raw?.optString("name", "")?.trim().orEmpty().ifBlank { taskInfo.optString("name", "") })
+        config.put("user_task", raw?.optString("user_task", "")?.trim().orEmpty().ifBlank { taskInfo.optString("user_task", "") })
+        config.put("package_name", raw?.optString("package_name", "")?.trim().orEmpty().ifBlank { taskInfo.optString("package_name", "") })
+        config.put("user_playbook", raw?.optString("user_playbook", "")?.trim().orEmpty().ifBlank { taskInfo.optString("user_playbook", "") })
+        config.put("task_map_mode", normalizeTaskMapMode(raw?.optString("task_map_mode", "")?.ifBlank { taskInfo.optString("task_map_mode", "") }))
+        if (taskType == "notify_trigger") {
+            val packageList = raw?.optJSONArray("package_list") ?: org.json.JSONArray().put(config.optString("package_name", ""))
+            config.put("package_mode", normalizeNotifyPackageMode(raw?.optString("package_mode", "allowlist")))
+            config.put("package_list", packageList)
+            config.put("text_mode", normalizeNotifyTextMode(raw?.optString("text_mode", "contains")))
+            config.put("title_pattern", raw?.optString("title_pattern", "")?.trim().orEmpty())
+            config.put("body_pattern", raw?.optString("body_pattern", "")?.trim().orEmpty())
+            config.put("llm_condition_enabled", raw?.optBoolean("llm_condition_enabled", false) ?: false)
+            config.put("llm_condition", raw?.optString("llm_condition", "")?.trim().orEmpty())
+            config.put("task_rewrite_enabled", raw?.optBoolean("task_rewrite_enabled", true) ?: true)
+            config.put("task_rewrite_instruction", raw?.optString("task_rewrite_instruction", "")?.trim().orEmpty())
+            config.put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(raw?.optString("task_rewrite_fail_policy", "fallback_raw_task")))
+            config.put("stop_after_matched", raw?.optBoolean("stop_after_matched", true) ?: true)
+            config.put("action_use_map", normalizeNotifyActionUseMap(raw?.optString("action_use_map", NOTIFY_ACTION_USE_MAP_TRUE)))
+        }
+        return config
+    }
+
+    private fun parsePortableTaskExport(portableJson: String): PortableTaskImportBundle {
+        val obj = runCatching { org.json.JSONObject(portableJson) }.getOrElse {
+            throw IllegalArgumentException("Invalid portable task JSON.")
+        }
+        if (obj.optString("schema", "") != "task_route_asset.v1") {
+            throw IllegalArgumentException("Unsupported portable task schema: ${obj.optString("schema", "")}")
+        }
+        val taskType = normalizePortableTaskType(obj.optString("task_type", ""))
+        if (taskType.isEmpty()) {
+            throw IllegalArgumentException("Unsupported portable task type: ${obj.optString("task_type", "")}")
+        }
+        if (!obj.has("segments") || obj.optJSONArray("segments") == null) {
+            throw IllegalArgumentException("Portable task route segments are missing.")
+        }
+        val taskInfo = obj.optJSONObject("task_info") ?: throw IllegalArgumentException("Portable task_info is missing.")
+        val taskConfig = obj.optJSONObject("task_config") ?: throw IllegalArgumentException("Portable task_config is missing.")
+        val userTask = taskConfig.optString("user_task", taskInfo.optString("user_task", "")).trim()
+        if (userTask.isEmpty()) {
+            throw IllegalArgumentException("Portable task user_task is missing.")
+        }
+        if (taskType == "notify_trigger") {
+            val packages = taskConfig.optJSONArray("package_list")
+            val title = taskConfig.optString("title_pattern", "").trim()
+            val body = taskConfig.optString("body_pattern", "").trim()
+            val llmEnabled = taskConfig.optBoolean("llm_condition_enabled", false)
+            val llmCondition = taskConfig.optString("llm_condition", "").trim()
+            if (packages == null || packages.length() <= 0) {
+                throw IllegalArgumentException("Portable notification trigger package_list is missing.")
+            }
+            if (title.isEmpty() && body.isEmpty() && (!llmEnabled || llmCondition.isEmpty())) {
+                throw IllegalArgumentException("Portable notification trigger condition is missing.")
+            }
+        }
+        return PortableTaskImportBundle(
+            taskType = taskType,
+            taskInfo = taskInfo,
+            routeBundleJson = obj.toString(),
+            routeBundle = obj,
+            taskConfig = taskConfig
+        )
+    }
+
+    private fun importPortableScheduleTask(
+        client: LocalLinkClient,
+        portable: PortableTaskImportBundle
+    ): String {
+        val config = portable.taskConfig
+        val taskInfo = portable.taskInfo
+        val userTask = config.optString("user_task", taskInfo.optString("user_task", "")).trim()
+        val packageName = config.optString("package_name", taskInfo.optString("package_name", "")).trim()
+        val playbook = config.optString("user_playbook", taskInfo.optString("user_playbook", "")).trim()
+        val taskMapMode = normalizeTaskMapMode(config.optString("task_map_mode", TASK_MAP_MODE_MANUAL)).let {
+            if (it == TASK_MAP_MODE_OFF) TASK_MAP_MODE_MANUAL else it
+        }
+        val runAt = System.currentTimeMillis() + 5 * 60_000L
+        val draft = ScheduleDraft(
+            name = config.optString("name", taskInfo.optString("name", "")).trim().ifBlank { "Imported task" },
+            task = userTask,
+            packageName = packageName,
+            playbook = playbook,
+            enabled = false,
+            recordEnabled = false,
+            taskMapMode = taskMapMode,
+            runAt = runAt,
+            repeatMode = REPEAT_ONCE,
+            repeatWeekdays = 0b0011111
+        )
+        val addResp = client.sendCommand(
+            CommandIds.CMD_CORTEX_SCHEDULE_ADD,
+            buildScheduleUpsertPayload(draft = draft),
+            timeoutMs = 6_000
+        )
+        val addText = addResp.toString(Charsets.UTF_8)
+        val addObj = org.json.JSONObject(addText)
+        if (!addObj.optBoolean("ok", false)) {
+            throw IllegalStateException("Create imported schedule failed: ${addText.take(220)}")
+        }
+        val scheduleId = addObj.optJSONObject("schedule")?.optString("schedule_id", "").orEmpty()
+        if (scheduleId.isBlank()) {
+            throw IllegalStateException("Create imported schedule failed: schedule_id missing")
+        }
+        val disableResp = client.sendCommand(
+            CommandIds.CMD_CORTEX_SCHEDULE_UPDATE,
+            buildScheduleUpsertPayload(draft = draft, scheduleId = scheduleId),
+            timeoutMs = 6_000
+        )
+        val disableText = disableResp.toString(Charsets.UTF_8)
+        val disableObj = org.json.JSONObject(disableText)
+        if (!disableObj.optBoolean("ok", false)) {
+            throw IllegalStateException("Disable imported schedule failed: ${disableText.take(220)}")
+        }
+        val routeResult = importPortableRouteIntoTask(
+            client = client,
+            portable = portable,
+            targetRouteId = "schedule:$scheduleId",
+            source = "schedule",
+            sourceId = scheduleId,
+            packageName = packageName
+        )
+        return "Portable schedule task created: $scheduleId (route=${routeResult.first}, pending_adaptation=${routeResult.second}, executable=${routeResult.third})."
+    }
+
+    private fun importPortableNotifyTriggerTask(
+        client: LocalLinkClient,
+        portable: PortableTaskImportBundle
+    ): String {
+        val config = portable.taskConfig
+        val taskInfo = portable.taskInfo
+        val userTask = config.optString("user_task", taskInfo.optString("user_task", "")).trim()
+        val packageName = config.optString("package_name", taskInfo.optString("package_name", "")).trim()
+        val taskMapMode = normalizeTaskMapMode(config.optString("task_map_mode", TASK_MAP_MODE_MANUAL)).let {
+            if (it == TASK_MAP_MODE_OFF) TASK_MAP_MODE_MANUAL else it
+        }
+        val packageList = config.optJSONArray("package_list") ?: org.json.JSONArray().put(packageName)
+        val action = org.json.JSONObject()
+            .put("type", "run_task")
+            .put("user_task", userTask)
+            .put("package", packageName)
+            .put("user_playbook", config.optString("user_playbook", taskInfo.optString("user_playbook", "")).trim())
+            .put("record_enabled", false)
+            .put("task_map_mode", taskMapMode)
+        when (normalizeNotifyActionUseMap(config.optString("action_use_map", NOTIFY_ACTION_USE_MAP_TRUE))) {
+            NOTIFY_ACTION_USE_MAP_TRUE -> action.put("use_map", true)
+            NOTIFY_ACTION_USE_MAP_FALSE -> action.put("use_map", false)
+        }
+        val rule = org.json.JSONObject()
+            .put("name", config.optString("name", taskInfo.optString("name", "")).trim().ifBlank { "Imported notification task" })
+            .put("enabled", false)
+            .put("priority", 100)
+            .put("package_mode", normalizeNotifyPackageMode(config.optString("package_mode", "allowlist")))
+            .put("package_list", packageList)
+            .put("text_mode", normalizeNotifyTextMode(config.optString("text_mode", "contains")))
+            .put("title_pattern", config.optString("title_pattern", "").trim())
+            .put("body_pattern", config.optString("body_pattern", "").trim())
+            .put("llm_condition_enabled", config.optBoolean("llm_condition_enabled", false))
+            .put("llm_condition", config.optString("llm_condition", "").trim())
+            .put("llm_yes_token", "yes")
+            .put("llm_no_token", "no")
+            .put("llm_timeout_ms", 60000L)
+            .put("task_rewrite_enabled", config.optBoolean("task_rewrite_enabled", true))
+            .put("task_rewrite_instruction", config.optString("task_rewrite_instruction", "").trim())
+            .put("task_rewrite_timeout_ms", 60000L)
+            .put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(config.optString("task_rewrite_fail_policy", "fallback_raw_task")))
+            .put("cooldown_ms", 60_000L)
+            .put("active_time_start", "")
+            .put("active_time_end", "")
+            .put("stop_after_matched", config.optBoolean("stop_after_matched", true))
+            .put("action", action)
+        val resp = client.sendCommand(
+            CommandIds.CMD_CORTEX_NOTIFY,
+            org.json.JSONObject()
+                .put("action", "upsert_rule")
+                .put("rule", rule)
+                .toString()
+                .toByteArray(Charsets.UTF_8),
+            timeoutMs = 6_000
+        )
+        val text = resp.toString(Charsets.UTF_8)
+        val obj = org.json.JSONObject(text)
+        if (!obj.optBoolean("ok", false)) {
+            throw IllegalStateException("Create imported notification trigger failed: ${text.take(220)}")
+        }
+        val ruleId = obj.optJSONObject("rule")?.optString("id", "").orEmpty()
+        if (ruleId.isBlank()) {
+            throw IllegalStateException("Create imported notification trigger failed: rule id missing")
+        }
+        val routeResult = importPortableRouteIntoTask(
+            client = client,
+            portable = portable,
+            targetRouteId = "notify:$ruleId",
+            source = "notify_trigger",
+            sourceId = ruleId,
+            packageName = packageName
+        )
+        return "Portable notification task created: $ruleId (route=${routeResult.first}, pending_adaptation=${routeResult.second}, executable=${routeResult.third})."
+    }
+
+    private fun importPortableRouteIntoTask(
+        client: LocalLinkClient,
+        portable: PortableTaskImportBundle,
+        targetRouteId: String,
+        source: String,
+        sourceId: String,
+        packageName: String
+    ): Triple<String, Int, Int> {
+        val payload = org.json.JSONObject()
+            .put("action", "import_portable")
+            .put("target_route_id", targetRouteId)
+            .put("target_package_name", packageName.trim())
+            .put("source", source)
+            .put("source_id", sourceId)
+            .put("package_name", packageName.trim())
+            .put("bundle_json", portable.routeBundleJson)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        val resp = client.sendCommand(
+            CommandIds.CMD_CORTEX_TASK_MAP,
+            payload,
+            timeoutMs = 8_000
+        )
+        val text = resp.toString(Charsets.UTF_8)
+        val obj = org.json.JSONObject(text)
+        if (!obj.optBoolean("ok", false)) {
+            throw IllegalStateException("Import portable route failed: ${text.take(220)}")
+        }
+        return Triple(
+            obj.optString("route_id", targetRouteId),
+            obj.optInt("pending_adaptation_count", 0),
+            obj.optInt("materialized_count", 0)
+        )
+    }
+
+    private fun normalizePortableTaskType(raw: String?): String {
+        return when (raw?.trim()?.lowercase()) {
+            "schedule", "scheduled_task" -> "schedule"
+            "notify_trigger", "notification_trigger", "notification" -> "notify_trigger"
+            else -> ""
+        }
+    }
+
     private fun writeTraceExportFile(entries: List<TraceEntry>): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
@@ -2700,12 +3054,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return fallbackFile.absolutePath
     }
 
-    private fun writePortableTaskRouteExportFile(bundleJson: String): String {
+    private fun writePortableTaskExportFile(bundleJson: String): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val fileName = "lxb-route-portable-$stamp.json"
-        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/LXB/Routes"
+        val fileName = "lxb-task-portable-$stamp.json"
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/LXB/Tasks"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, "application/json")
@@ -2724,24 +3078,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     put(MediaStore.Downloads.IS_PENDING, 0)
                 }
                 resolver.update(uri, publish, null, null)
-                return "Downloads/LXB/Routes/$fileName"
+                return "Downloads/LXB/Tasks/$fileName"
             } catch (e: Exception) {
                 runCatching { resolver.delete(uri, null, null) }
                 throw e
             }
         }
 
-        val fallbackDir = File(app.getExternalFilesDir(null), "routes").apply { mkdirs() }
+        val fallbackDir = File(app.getExternalFilesDir(null), "tasks").apply { mkdirs() }
         val fallbackFile = File(fallbackDir, fileName)
         fallbackFile.writeText(bundleJson, Charsets.UTF_8)
         return fallbackFile.absolutePath
     }
 
-    private fun readPortableRouteBundle(uri: Uri): String {
+    private fun readPortableTaskBundle(uri: Uri): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
         val stream = resolver.openInputStream(uri)
-            ?: throw IllegalStateException("Cannot open portable route file.")
+            ?: throw IllegalStateException("Cannot open portable task file.")
         return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 }
