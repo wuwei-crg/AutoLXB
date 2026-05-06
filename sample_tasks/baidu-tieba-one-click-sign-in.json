@@ -1,0 +1,153 @@
+{
+  "schema": "task_route_asset.v1",
+  "task_info": {
+    "user_task": "打开百度贴吧，帮我一键签到",
+    "package_name": "com.baidu.tieba",
+    "package_label": "百度贴吧",
+    "task_map_mode": "off",
+    "name": "百度贴吧一键签到",
+    "user_playbook": "打开贴吧后，点击进吧，点击右上角一键签到，然后进入签到页面进行一键批量签到"
+  },
+  "finish_after_replay": true,
+  "segments": [
+    {
+      "segment_id": "seg0001",
+      "sub_task_id": "1",
+      "sub_task_index": 0,
+      "sub_task_description": "打开百度贴吧，帮我一键签到",
+      "success_criteria": "",
+      "package_name": "com.baidu.tieba",
+      "package_label": "百度贴吧",
+      "inputs": [],
+      "outputs": [],
+      "steps": [
+        {
+          "step_id": "s0001",
+          "source_action_id": "a0001",
+          "op": "TAP",
+          "args": [
+            "300",
+            "950"
+          ],
+          "expected": "The 'Followed' forums page should open, likely showing a list of followed bars and a sign-in option.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "进吧",
+            "class": "FrameLayout",
+            "bounds_hint": [
+              256,
+              2579,
+              512,
+              2720
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              384,
+              2632
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap on '进吧' (Followed) in the bottom navigation bar.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The app is on the main recommendation page.",
+            "expected_after_tap": "The 'Followed' forums page should open, likely showing a list of followed bars and a sign-in option.",
+            "source_observation": "The app is on the main recommendation page.",
+            "source_command": "TAP 300 950",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0002",
+          "source_action_id": "a0002",
+          "op": "TAP",
+          "args": [
+            "885",
+            "70"
+          ],
+          "expected": "A sign-in status page or a confirmation for batch sign-in should appear.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "一键签到",
+            "class": "TextView",
+            "bounds_hint": [
+              1059,
+              146,
+              1244,
+              240
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              1132,
+              194
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap '一键签到' (One-click sign-in) button.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The current page is the 'Followed' section of Baidu Tieba with the 'One-click sign-in' button visible.",
+            "expected_after_tap": "A sign-in status page or a confirmation for batch sign-in should appear.",
+            "source_observation": "The current page is the 'Followed' section of Baidu Tieba with the 'One-click sign-in' button visible.",
+            "source_command": "TAP 885 70",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0003",
+          "source_action_id": "a0003",
+          "op": "TAP",
+          "args": [
+            "750",
+            "425"
+          ],
+          "expected": "A progress animation or a confirmation that the sign-in process has started\/completed should appear.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "批量吧签到",
+            "class": "TextView",
+            "bounds_hint": [
+              809,
+              1127,
+              1059,
+              1196
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              959,
+              1178
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap '批量吧签到' (Batch sign-in) button to start the sign-in process.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The current page shows options for batch signing in to 86 forums.",
+            "expected_after_tap": "A progress animation or a confirmation that the sign-in process has started\/completed should appear.",
+            "source_observation": "The current page shows options for batch signing in to 86 forums.",
+            "source_command": "TAP 750 425",
+            "descriptor_quality": "strong"
+          }
+        }
+      ]
+    }
+  ],
+  "task_type": "schedule",
+  "task_config": {
+    "type": "schedule",
+    "name": "百度贴吧一键签到",
+    "user_task": "打开百度贴吧，帮我一键签到",
+    "package_name": "com.baidu.tieba",
+    "user_playbook": "打开贴吧后，点击进吧，点击右上角一键签到，然后进入签到页面进行一键批量签到",
+    "task_map_mode": "off"
+  }
+}

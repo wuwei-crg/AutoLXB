@@ -1,0 +1,254 @@
+{
+  "schema": "task_route_asset.v1",
+  "task_info": {
+    "user_task": "打开bilibili，给我发一条动态，内容为test，标题为test",
+    "package_name": "tv.danmaku.bili",
+    "package_label": "哔哩哔哩",
+    "task_map_mode": "off",
+    "name": "bilibili发送动态",
+    "user_playbook": "打开bilibili后，点击下方加号，进入后点击发图文，开始编辑动态，最后发布"
+  },
+  "finish_after_replay": true,
+  "segments": [
+    {
+      "segment_id": "seg0001",
+      "sub_task_id": "1",
+      "sub_task_index": 0,
+      "sub_task_description": "打开bilibili，给我发一条动态，内容为test，标题为test",
+      "success_criteria": "",
+      "package_name": "tv.danmaku.bili",
+      "package_label": "哔哩哔哩",
+      "inputs": [],
+      "outputs": [],
+      "steps": [
+        {
+          "step_id": "s0001",
+          "source_action_id": "a0001",
+          "op": "TAP",
+          "args": [
+            "500",
+            "945"
+          ],
+          "expected": "A menu should appear with options for different types of posts, including \"发图文\" (Post picture\/text).",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "发布内容,5之3,标签",
+            "content_desc": "发布内容,5之3,标签",
+            "class": "FrameLayout",
+            "bounds_hint": [
+              512,
+              2503,
+              768,
+              2720
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              640,
+              2619
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the plus button at the bottom center.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The home page of Bilibili is visible with a creation button at the bottom.",
+            "expected_after_tap": "A menu should appear with options for different types of posts, including \"发图文\" (Post picture\/text).",
+            "source_observation": "The home page of Bilibili is visible with a creation button at the bottom.",
+            "source_command": "TAP 500 945",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0002",
+          "source_action_id": "a0002",
+          "op": "TAP",
+          "args": [
+            "844",
+            "955"
+          ],
+          "expected": "The dynamic post creation\/editing screen should open.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "resource_id": "cp_tab_text",
+            "text": "发图文",
+            "class": "TextView",
+            "bounds_hint": [
+              1029,
+              2620,
+              1167,
+              2682
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              1079,
+              2646
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap \"发图文\" to start creating a picture\/text post.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The posting menu is open, and \"发图文\" (Post picture\/text) is visible at the bottom right.",
+            "expected_after_tap": "The dynamic post creation\/editing screen should open.",
+            "source_observation": "The posting menu is open, and \"发图文\" (Post picture\/text) is visible at the bottom right.",
+            "source_command": "TAP 844 955",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0003",
+          "source_action_id": "a0003",
+          "op": "TAP",
+          "args": [
+            "384",
+            "248"
+          ],
+          "expected": "The title input field should be focused, and the keyboard might appear.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "resource_id": "et_publish_title",
+            "text": "好的标题更容易获得支持，选填20字",
+            "class": "EditText",
+            "bounds_hint": [
+              39,
+              646,
+              1241,
+              733
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              491,
+              687
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the title input field to focus it.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The dynamic post editor is open with title and content input fields visible.",
+            "expected_after_tap": "The title input field should be focused, and the keyboard might appear.",
+            "source_observation": "The dynamic post editor is open with title and content input fields visible.",
+            "source_command": "TAP 384 248",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0004",
+          "source_action_id": "a0004",
+          "op": "INPUT",
+          "args": [
+            "test"
+          ],
+          "expected": "The title field should now contain the text \"test\"."
+        },
+        {
+          "step_id": "s0005",
+          "source_action_id": "a0005",
+          "op": "TAP",
+          "args": [
+            "232",
+            "284"
+          ],
+          "expected": "The content input field should be focused, and the cursor should appear there.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "resource_id": "following_edit",
+            "text": "分享我的哔哩哔哩动态",
+            "class": "EditText",
+            "bounds_hint": [
+              0,
+              733,
+              1280,
+              1091
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              297,
+              787
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the content input field to focus it.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The title \"test\" has been successfully entered, and the editor is ready for content input.",
+            "expected_after_tap": "The content input field should be focused, and the cursor should appear there.",
+            "source_observation": "The title \"test\" has been successfully entered, and the editor is ready for content input.",
+            "source_command": "TAP 232 284",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0006",
+          "source_action_id": "a0006",
+          "op": "INPUT",
+          "args": [
+            "test"
+          ],
+          "expected": "The content field should now contain the text \"test\"."
+        },
+        {
+          "step_id": "s0007",
+          "source_action_id": "a0007",
+          "op": "TAP",
+          "args": [
+            "903",
+            "85"
+          ],
+          "expected": "The post should be submitted, and the screen should transition back to the main app or a success page.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "resource_id": "publish_bt",
+            "text": "发布",
+            "class": "TextView",
+            "bounds_hint": [
+              1072,
+              198,
+              1241,
+              289
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              1155,
+              236
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the \"发布\" (Publish) button at the top right to finish posting.",
+            "target_name": "发布",
+            "target_role": "button",
+            "visual_hint": "发布",
+            "page_context": "The dynamic post editor is filled with \"test\" for both title and content, and the \"发布\" button is visible.",
+            "expected_after_tap": "The post should be submitted, and the screen should transition back to the main app or a success page.",
+            "source_observation": "The dynamic post editor is filled with \"test\" for both title and content, and the \"发布\" button is visible.",
+            "source_command": "TAP 903 85",
+            "descriptor_quality": "strong"
+          }
+        }
+      ]
+    }
+  ],
+  "task_type": "schedule",
+  "task_config": {
+    "type": "schedule",
+    "name": "bilibili发送动态",
+    "user_task": "打开bilibili，给我发一条动态，内容为test，标题为test",
+    "package_name": "tv.danmaku.bili",
+    "user_playbook": "打开bilibili后，点击下方加号，进入后点击发图文，开始编辑动态，最后发布",
+    "task_map_mode": "off"
+  }
+}

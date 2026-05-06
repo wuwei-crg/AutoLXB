@@ -87,6 +87,14 @@ AutoLXB 适合“重复、线性、可触发”的任务。建议优先使用下
 
 对于经常重复执行的任务，可以开启任务路线。任务执行后，在路线编辑页保留有用步骤、删除无关动作，然后点击 **手动保存路线**。后续执行会优先按该任务路线跳转，减少视觉模型调用和不确定性。
 
+## 示例任务
+
+[`sample_tasks`](sample_tasks/) 目录提供了几份可直接在 AutoLXB 任务页导入的便携任务示例：
+
+- `baidu-tieba-one-click-sign-in.json`：百度贴吧一键签到定时任务。
+- `bilibili-text-post.json`：Bilibili 图文动态发布定时任务。
+- `luckin-coconut-latte-order.json`：瑞幸咖啡生椰拿铁下单路线示例。
+
 ## 环境要求
 
 开始前请确认：

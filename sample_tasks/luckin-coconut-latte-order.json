@@ -1,0 +1,435 @@
+{
+  "schema": "task_route_asset.v1",
+  "task_info": {
+    "user_task": "打开瑞幸咖啡，帮我点一杯生椰拿铁",
+    "package_name": "com.lucky.luckyclient",
+    "package_label": "瑞幸咖啡",
+    "task_map_mode": "manual",
+    "name": "点生椰拿铁",
+    "user_playbook": "进入瑞幸咖啡后，点击菜单，搜索（注意一定要搜索）生椰拿铁，帮我点一杯，要求超大杯，温度热，选择堂食，最后帮我付款"
+  },
+  "finish_after_replay": true,
+  "segments": [
+    {
+      "segment_id": "seg0001",
+      "sub_task_id": "1",
+      "sub_task_index": 0,
+      "sub_task_description": "打开瑞幸咖啡，帮我点一杯生椰拿铁",
+      "success_criteria": "",
+      "package_name": "com.lucky.luckyclient",
+      "package_label": "瑞幸咖啡",
+      "inputs": [],
+      "outputs": [],
+      "steps": [
+        {
+          "step_id": "s0001",
+          "source_action_id": "a0001",
+          "op": "TAP",
+          "args": [
+            "300",
+            "950"
+          ],
+          "expected": "The app should navigate to the menu page where I can search for drinks.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "菜单",
+            "class": "LinearLayout",
+            "bounds_hint": [
+              256,
+              2549,
+              512,
+              2720
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              384,
+              2632
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap on the '菜单' (Menu) button to view the list of drinks.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The app is on the homepage, and the 'Menu' button is visible at the bottom.",
+            "expected_after_tap": "The app should navigate to the menu page where I can search for drinks.",
+            "source_observation": "The app is on the homepage, and the 'Menu' button is visible at the bottom.",
+            "source_command": "TAP 300 950",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0002",
+          "source_action_id": "a0002",
+          "op": "TAP",
+          "args": [
+            "480",
+            "80"
+          ],
+          "expected": "The search input field should become active, and the keyboard should appear.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "resource_id": "search_view",
+            "text": "搜搜您想喝的饮品",
+            "class": "TextView",
+            "bounds_hint": [
+              377,
+              175,
+              1241,
+              279
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              614,
+              222
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap on the search bar to search for '生椰拿铁'.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The menu page is open with a search bar at the top.",
+            "expected_after_tap": "The search input field should become active, and the keyboard should appear.",
+            "source_observation": "The menu page is open with a search bar at the top.",
+            "source_command": "TAP 480 80",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0003",
+          "source_action_id": "a0003",
+          "op": "INPUT",
+          "args": [
+            "生椰拿铁"
+          ],
+          "expected": "The text '生椰拿铁' should be entered into the search input field."
+        },
+        {
+          "step_id": "s0004",
+          "source_action_id": "a0004",
+          "op": "TAP",
+          "args": [
+            "865",
+            "159"
+          ],
+          "expected": "The app should display a list of products matching '生椰拿铁'.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "搜索",
+            "class": "TextView",
+            "bounds_hint": [
+              1064,
+              409,
+              1150,
+              467
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              1106,
+              441
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the search button to see results for '生椰拿铁'.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The app is ready to perform a search for '生椰拿铁'.",
+            "expected_after_tap": "The app should display a list of products matching '生椰拿铁'.",
+            "source_observation": "The app is ready to perform a search for '生椰拿铁'.",
+            "source_command": "TAP 865 159",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0005",
+          "source_action_id": "a0005",
+          "op": "TAP",
+          "args": [
+            "425",
+            "222"
+          ],
+          "expected": "The product detail\/customization page for '生椰拿铁' should open.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "生椰拿铁（首创）",
+            "class": "TextView",
+            "bounds_hint": [
+              391,
+              585,
+              1280,
+              647
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              544,
+              615
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap on '生椰拿铁（首创）' to open the customization options.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The app displays search results for '生椰拿铁', with the primary item at the top.",
+            "expected_after_tap": "The product detail\/customization page for '生椰拿铁' should open.",
+            "source_observation": "The app displays search results for '生椰拿铁', with the primary item at the top.",
+            "source_command": "TAP 425 222",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0006",
+          "source_action_id": "a0006",
+          "op": "TAP",
+          "args": [
+            "542",
+            "400"
+          ],
+          "expected": "The '超大杯' option should be highlighted\/selected.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "超大杯+¥3",
+            "class": "TextView",
+            "bounds_hint": [
+              566,
+              1066,
+              753,
+              1122
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              693,
+              1108
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Select '超大杯' (Extra Large Cup).",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "Customization page for Coconut Latte is open with default options selected.",
+            "expected_after_tap": "The '超大杯' option should be highlighted\/selected.",
+            "source_observation": "Customization page for Coconut Latte is open with default options selected.",
+            "source_command": "TAP 542 400",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0007",
+          "source_action_id": "a0007",
+          "op": "TAP",
+          "args": [
+            "474",
+            "496"
+          ],
+          "expected": "The '热' (Hot) option should be highlighted\/selected.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "热",
+            "class": "TextView",
+            "bounds_hint": [
+              587,
+              1358,
+              626,
+              1413
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              606,
+              1374
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap on the '热' (Hot) option for temperature.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "Customization page for Coconut Latte with 'Extra Large' selected; need to select 'Hot' temperature next.",
+            "expected_after_tap": "The '热' (Hot) option should be highlighted\/selected.",
+            "source_observation": "Customization page for Coconut Latte with 'Extra Large' selected; need to select 'Hot' temperature next.",
+            "source_command": "TAP 474 496",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0008",
+          "source_action_id": "a0008",
+          "op": "TAP",
+          "args": [
+            "741",
+            "936"
+          ],
+          "expected": "The app should navigate to the order settlement\/confirmation page.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "立即购买",
+            "class": "TextView",
+            "bounds_hint": [
+              659,
+              2562,
+              1238,
+              2624
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              948,
+              2594
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap '立即购买' to proceed to checkout.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "The customization for Coconut Latte is set to Extra Large and Hot; ready to proceed to purchase.",
+            "expected_after_tap": "The app should navigate to the order settlement\/confirmation page.",
+            "source_observation": "The customization for Coconut Latte is set to Extra Large and Hot; ready to proceed to purchase.",
+            "source_command": "TAP 741 936",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0009",
+          "source_action_id": "a0009",
+          "op": "TAP",
+          "args": [
+            "500",
+            "868"
+          ],
+          "expected": "The upsell popup should disappear, revealing the full order confirmation page.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "class": "ViewGroup",
+            "bounds_hint": [
+              599,
+              2354,
+              681,
+              2436
+            ],
+            "locator_peer_count": 4,
+            "locator_identity_mode": "self_no_text",
+            "fallback_point": [
+              640,
+              2405
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Close the upsell popup by tapping the 'X' button.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The app is on the order confirmation page, but an upsell popup is blocking the main interface.",
+            "expected_after_tap": "The upsell popup should disappear, revealing the full order confirmation page.",
+            "source_observation": "The app is on the order confirmation page, but an upsell popup is blocking the main interface.",
+            "source_command": "TAP 500 868",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0010",
+          "source_action_id": "a0010",
+          "op": "TAP",
+          "args": [
+            "782",
+            "947"
+          ],
+          "expected": "The order should be placed, and a success or order status screen should appear.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "已优惠¥18.1",
+            "class": "TextView",
+            "bounds_hint": [
+              271,
+              2630,
+              1202,
+              2675
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              1000,
+              2624
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap the '免密支付' (Password-free Payment) button to complete the order.",
+            "target_name": "",
+            "target_role": "button",
+            "visual_hint": "",
+            "page_context": "The app is on the final order confirmation page with the correct item and options selected.",
+            "expected_after_tap": "The order should be placed, and a success or order status screen should appear.",
+            "source_observation": "The app is on the final order confirmation page with the correct item and options selected.",
+            "source_command": "TAP 782 947",
+            "descriptor_quality": "strong"
+          }
+        },
+        {
+          "step_id": "s0011",
+          "source_action_id": "a0011",
+          "op": "TAP",
+          "args": [
+            "683",
+            "624"
+          ],
+          "expected": "The store confirmation popup should close, allowing the final payment to be processed.",
+          "portable_kind": "local_locator",
+          "locator": {
+            "text": "确定门店",
+            "class": "TextView",
+            "bounds_hint": [
+              750,
+              1674,
+              1001,
+              1789
+            ],
+            "locator_peer_count": 1,
+            "locator_identity_mode": "self_no_text+text",
+            "fallback_point": [
+              874,
+              1729
+            ]
+          },
+          "semantic_descriptor": {
+            "version": 1,
+            "instruction": "Tap '确定门店' (Confirm Store) to acknowledge the pickup location.",
+            "target_name": "",
+            "target_role": "unknown",
+            "visual_hint": "",
+            "page_context": "A store confirmation popup is blocking the final payment action.",
+            "expected_after_tap": "The store confirmation popup should close, allowing the final payment to be processed.",
+            "source_observation": "A store confirmation popup is blocking the final payment action.",
+            "source_command": "TAP 683 624",
+            "descriptor_quality": "strong"
+          }
+        }
+      ]
+    }
+  ],
+  "task_type": "schedule",
+  "task_config": {
+    "type": "schedule",
+    "name": "点生椰拿铁",
+    "user_task": "打开瑞幸咖啡，帮我点一杯生椰拿铁",
+    "package_name": "com.lucky.luckyclient",
+    "user_playbook": "进入瑞幸咖啡后，点击菜单，搜索（注意一定要搜索）生椰拿铁，帮我点一杯，要求超大杯，温度热，选择堂食，最后帮我付款",
+    "task_map_mode": "manual"
+  }
+}

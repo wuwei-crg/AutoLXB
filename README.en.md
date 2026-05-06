@@ -87,6 +87,14 @@ If you are not sure whether a task description is stable, run it once as a **Qui
 
 For repeated tasks, enable task routes. After a run, open the route editor, keep useful steps, delete unrelated actions, and tap **Save route manually**. Future runs prefer this route before using the vision model, reducing model calls and uncertainty.
 
+## Sample Tasks
+
+The [`sample_tasks`](sample_tasks/) directory contains portable task examples that can be imported from the AutoLXB Tasks page:
+
+- `baidu-tieba-one-click-sign-in.json`: scheduled Baidu Tieba one-click sign-in.
+- `bilibili-text-post.json`: scheduled Bilibili text post creation.
+- `luckin-coconut-latte-order.json`: scheduled Luckin Coffee Coconut Latte order route.
+
 ## Requirements
 
 Before starting, make sure:
