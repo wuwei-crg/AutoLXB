@@ -29,14 +29,14 @@ class TraceEventMapperTest {
     @Test
     fun map_failureEvent_setsStopRuntime() {
         val obj = JSONObject()
-            .put("event", "fsm_route_plan_failed")
-            .put("reason", "no node")
+            .put("event", "fsm_app_enter_failed")
+            .put("reason", "launch failed")
             .put("task_id", "tid-2")
 
         val mapped = TraceEventMapper.map(obj)
 
         assertNotNull(mapped)
-        assertTrue(mapped?.messages?.joinToString(" ")?.contains("Route planning failed") == true)
+        assertTrue(mapped?.messages?.joinToString(" ")?.contains("APP_ENTER failed") == true)
         assertEquals("FAILED", mapped?.runtimeUpdate?.phase)
         assertTrue(mapped?.runtimeUpdate?.stopAfter == true)
     }
@@ -59,4 +59,93 @@ class TraceEventMapperTest {
         assertTrue(mapped?.messages?.isEmpty() == true)
         assertNull(mapped?.runtimeUpdate)
     }
+
+
+    @Test
+    fun map_fsmStateEnter_devicePrepare() {
+        val obj = JSONObject()
+            .put("event", "fsm_state_enter")
+            .put("state", "DEVICE_PREPARE")
+            .put("task_id", "tid-device")
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.any { it.contains("DEVICE_PREPARE") } == true)
+        assertEquals("DEVICE_PREPARE", mapped?.runtimeUpdate?.phase)
+    }
+
+    @Test
+    fun map_fsmStateEnter_appEnter() {
+        val obj = JSONObject()
+            .put("event", "fsm_state_enter")
+            .put("state", "APP_ENTER")
+            .put("task_id", "tid-app")
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.any { it.contains("APP_ENTER") } == true)
+        assertEquals("APP_ENTER", mapped?.runtimeUpdate?.phase)
+    }
+
+    @Test
+    fun map_fsmStateEnter_scriptAct() {
+        val obj = JSONObject()
+            .put("event", "fsm_state_enter")
+            .put("state", "SCRIPT_ACT")
+            .put("task_id", "tid-script")
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.any { it.contains("SCRIPT_ACT") } == true)
+        assertEquals("SCRIPT_ACT", mapped?.runtimeUpdate?.phase)
+    }
+
+    @Test
+    fun map_scriptActResult_replayed() {
+        val obj = JSONObject()
+            .put("event", "fsm_script_act_result")
+            .put("task_id", "tid-script")
+            .put("result", "REPLAYED")
+            .put("steps", 2)
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.joinToString(" ")?.contains("REPLAYED") == true)
+        assertEquals("SCRIPT_ACT", mapped?.runtimeUpdate?.phase)
+    }
+
+    @Test
+    fun map_scriptActResult_doneStopsRuntime() {
+        val obj = JSONObject()
+            .put("event", "fsm_script_act_result")
+            .put("task_id", "tid-script")
+            .put("result", "DONE")
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.joinToString(" ")?.contains("DONE") == true)
+        assertEquals("DONE", mapped?.runtimeUpdate?.phase)
+        assertTrue(mapped?.runtimeUpdate?.stopAfter == true)
+    }
+
+    @Test
+    fun map_scriptActResult_fallbackVision() {
+        val obj = JSONObject()
+            .put("event", "fsm_script_act_result")
+            .put("task_id", "tid-script")
+            .put("result", "FALLBACK_VISION")
+            .put("reason", "semantic_adaptation_failed")
+
+        val mapped = TraceEventMapper.map(obj)
+
+        assertNotNull(mapped)
+        assertTrue(mapped?.messages?.joinToString(" ")?.contains("FALLBACK_VISION") == true)
+        assertEquals("VISION_ACT", mapped?.runtimeUpdate?.phase)
+    }
+
 }

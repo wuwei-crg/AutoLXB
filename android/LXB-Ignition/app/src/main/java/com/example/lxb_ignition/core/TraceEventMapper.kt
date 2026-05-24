@@ -31,13 +31,17 @@ object TraceEventMapper {
                         messages += "APP_RESOLVE: selecting the best app for this task..."
                         runtime = RuntimeUpdate("APP_RESOLVE", "Selecting app...")
                     }
-                    "ROUTE_PLAN" -> {
-                        messages += "ROUTE_PLAN: planning navigation route using map..."
-                        runtime = RuntimeUpdate("ROUTE_PLAN", "Planning route...")
+                    "DEVICE_PREPARE" -> {
+                        messages += "DEVICE_PREPARE: preparing device for task execution..."
+                        runtime = RuntimeUpdate("DEVICE_PREPARE", "Preparing device...")
                     }
-                    "ROUTING" -> {
-                        messages += "ROUTING: executing route on device..."
-                        runtime = RuntimeUpdate("ROUTING", "Executing route...")
+                    "APP_ENTER" -> {
+                        messages += "APP_ENTER: launching and readying the selected app..."
+                        runtime = RuntimeUpdate("APP_ENTER", "Entering app...")
+                    }
+                    "SCRIPT_ACT" -> {
+                        messages += "SCRIPT_ACT: replaying learned task-route script when available..."
+                        runtime = RuntimeUpdate("SCRIPT_ACT", "Running learned script...")
                     }
                     "VISION_ACT" -> {
                         messages += "VISION_ACT: entering vision-action loop (LLM + VLM)."
@@ -120,34 +124,67 @@ object TraceEventMapper {
                 runtime = RuntimeUpdate("FAILED", "Execution failed.", stopAfter = true)
             }
 
-            "fsm_route_plan_no_map" -> {
-                messages += "No navigation map found for this app, skipping routing and entering VISION_ACT directly."
+            "fsm_device_prepare_done" -> {
+                val status = obj.optString("task_route_status", "")
+                messages += if (status.isNotEmpty()) {
+                    "Device preparation done: task_route=$status."
+                } else {
+                    "Device preparation done."
+                }
             }
 
-            "fsm_route_plan_done" -> {
-                val target = obj.optString("target_page", "")
-                val usedFallback = obj.optBoolean("used_fallback", false)
-                val base = if (target.isNotEmpty()) "Route plan completed, target page: $target." else "Route plan completed."
-                messages += if (usedFallback) "$base (fallback plan used)." else base
+            "fsm_app_enter_done" -> {
+                val pkg = obj.optString("package", "")
+                val result = obj.optString("result", "ok")
+                val base = if (pkg.isNotEmpty()) "APP_ENTER done: $pkg" else "APP_ENTER done"
+                messages += "$base ($result)."
             }
 
-            "fsm_route_plan_failed" -> {
+            "fsm_app_enter_failed" -> {
                 val reason = obj.optString("reason", "unknown")
-                messages += "Route planning failed: $reason"
+                messages += "APP_ENTER failed: $reason"
                 runtime = RuntimeUpdate("FAILED", "Execution failed.", stopAfter = true)
             }
 
-            "fsm_routing_done" -> {
+            "fsm_script_act_task_map_begin" -> {
                 val steps = obj.optInt("steps", -1)
-                val mode = obj.optString("mode", "")
-                val modeLabel = if (mode.isNotEmpty()) mode else "map"
-                messages += if (steps >= 0) "Routing finished: mode=$modeLabel, steps=$steps." else "Routing finished: mode=$modeLabel."
+                val segment = obj.optString("segment_id", "")
+                val suffix = buildString {
+                    if (segment.isNotEmpty()) append(" segment=$segment")
+                    if (steps >= 0) append(" steps=$steps")
+                }
+                messages += "SCRIPT_ACT task-map replay started$suffix."
             }
 
-            "fsm_routing_failed" -> {
+            "fsm_script_act_task_map_done" -> {
+                val steps = obj.optInt("steps", -1)
+                messages += if (steps >= 0) "SCRIPT_ACT task-map replay completed: steps=$steps." else "SCRIPT_ACT task-map replay completed."
+            }
+
+            "fsm_script_act_task_map_fallback" -> {
                 val reason = obj.optString("reason", "unknown")
-                messages += "Routing failed: $reason"
-                runtime = RuntimeUpdate("FAILED", "Execution failed.", stopAfter = true)
+                messages += "SCRIPT_ACT task-map replay fell back to VISION_ACT: $reason"
+                runtime = RuntimeUpdate("VISION_ACT", "Fallback to vision-action...")
+            }
+
+            "fsm_script_act_result" -> {
+                val result = obj.optString("result", "UNKNOWN")
+                val steps = obj.optInt("steps", -1)
+                val reason = obj.optString("reason", "")
+                val msg = buildString {
+                    append("SCRIPT_ACT result: ").append(result)
+                    if (steps >= 0) append(", steps=").append(steps)
+                    if (reason.isNotEmpty()) append(", reason=").append(reason)
+                    append(".")
+                }
+                messages += msg
+                runtime = when (result) {
+                    "DONE" -> RuntimeUpdate("DONE", "Task finished.", stopAfter = true)
+                    "FAILED" -> RuntimeUpdate("FAILED", "Execution failed.", stopAfter = true)
+                    "FALLBACK_VISION", "SKIPPED" -> RuntimeUpdate("VISION_ACT", "Fallback to vision-action...")
+                    "REPLAYED" -> RuntimeUpdate("SCRIPT_ACT", "Learned script replayed.")
+                    else -> RuntimeUpdate("SCRIPT_ACT", "Script result: $result")
+                }
             }
 
             "fsm_cancel_requested" -> messages += "Cancel requested, FSM will stop at the next safe point."

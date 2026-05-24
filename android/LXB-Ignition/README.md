@@ -6,7 +6,7 @@ Current direction:
 
 1. APK-first user workflow
 2. On-device Java backend (`lxb-core`)
-3. Route-Then-Act FSM execution on Android device
+3. Ordered FSM execution with optional learned task-route replay on Android device
 
 This module no longer treats WebConsole/Python runtime as the primary path.
 
@@ -20,7 +20,7 @@ This module no longer treats WebConsole/Python runtime as the primary path.
 2. `lxb-core`
 - Device-side Java backend service
 - LXB-Link protocol dispatch
-- Cortex FSM (`INIT -> TASK_DECOMPOSE -> APP_RESOLVE -> ROUTE_PLAN -> ROUTING -> VISION_ACT -> FINISH/FAIL`)
+- Cortex FSM (`INIT -> TASK_DECOMPOSE? -> DEVICE_PREPARE -> APP_RESOLVE? -> APP_ENTER -> SCRIPT_ACT -> VISION_ACT -> FINISH/FAIL`)
 - Task queue and scheduler
 
 ## Runtime Flow

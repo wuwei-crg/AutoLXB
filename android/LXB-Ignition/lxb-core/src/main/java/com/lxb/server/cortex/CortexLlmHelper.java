@@ -201,16 +201,6 @@ public final class CortexLlmHelper {
                 return "SET_APP " + pkg;
             }
         }
-        if (state == CortexFsmEngine.State.ROUTE_PLAN) {
-            String pkg = stringOrEmpty(obj.get("package_name"));
-            if (pkg.isEmpty()) {
-                pkg = ctx.selectedPackage != null ? ctx.selectedPackage : "";
-            }
-            String target = stringOrEmpty(obj.get("target_page"));
-            if (!pkg.isEmpty() && !target.isEmpty()) {
-                return "ROUTE " + pkg + " " + target;
-            }
-        }
         return text;
     }
 

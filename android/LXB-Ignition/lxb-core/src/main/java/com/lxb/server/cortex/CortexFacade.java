@@ -4,7 +4,6 @@ import com.lxb.server.execution.ExecutionEngine;
 import com.lxb.server.perception.PerceptionEngine;
 import com.lxb.server.cortex.json.Json;
 import com.lxb.server.cortex.notify.NotificationTriggerModule;
-import com.lxb.server.cortex.route.RouteExecutionService;
 import com.lxb.server.cortex.taskmap.TaskMap;
 import com.lxb.server.cortex.taskmap.TaskMapAssembler;
 import com.lxb.server.cortex.taskmap.TaskRouteKey;
@@ -27,7 +26,6 @@ import java.util.zip.GZIPInputStream;
  * - resolve locator using staged matching (self -> parent_rid -> bounds_hint)
  * - tap resolved node
  * - trace pull (jsonl ring buffer)
- * - route-only execution: given target_page, infer home + BFS + tap transitions
  *
  * Full end-side Cortex planner/LLM will be added in later milestones.
  */
@@ -43,7 +41,6 @@ public class CortexFacade {
     private final LlmClient llmClient;
     private final CortexFsmEngine fsmEngine;
     private final CortexTaskManager taskManager;
-    private final RouteExecutionService routeExecutionService;
     private final NotificationTriggerModule notificationTriggerModule;
     private final TaskMapStore taskMapStore;
 
@@ -57,12 +54,6 @@ public class CortexFacade {
         this.taskMapStore = new TaskMapStore();
         this.fsmEngine = new CortexFsmEngine(perceptionEngine, executionEngine, mapManager, trace, taskMapStore);
         this.taskManager = new CortexTaskManager(fsmEngine, taskMapStore);
-        this.routeExecutionService = new RouteExecutionService(
-                executionEngine,
-                perceptionEngine,
-                locatorResolver,
-                trace
-        );
         this.notificationTriggerModule = new NotificationTriggerModule(taskManager, trace);
     }
 
@@ -241,148 +232,6 @@ public class CortexFacade {
             out.put("items", items);
             return ok(Json.stringify(out));
         } catch (Exception e) {
-            return err(String.valueOf(e));
-        }
-    }
-
-    /**
-     * High-level Cortex entry: use end-side LLM to plan target_page from RouteMap,
-     * then execute routing to that page. This is the first step of migrating the
-     * Python Route-Then-Act / Cortex FSM to Java.
-     *
-     * Payload JSON UTF-8:
-     * {
-     *   "package": "tv.danmaku.bili",
-     *   "user_task": "open search page",
-     *   "start_page": "bilibili_home",   // optional override of inferred home
-     *   "max_steps": 16                  // optional route upper bound
-     * }
-     *
-     * Response JSON:
-     * {
-     *   "ok": true/false,
-     *   "package": "...",
-     *   "target_page": "...",
-     *   "route": { ... same as handleRouteRun(...) result ... },
-     *   "llm_used_fallback": true/false,
-     *   "reason": "error message if any"
-     * }
-     */
-    public byte[] handleCortexMapPlanRoute(byte[] payload) {
-        try {
-            String s = new String(payload, StandardCharsets.UTF_8);
-            Map<String, Object> req = Json.parseObject(s);
-            String pkg = stringOrEmpty(req.get("package"));
-            String userTask = stringOrEmpty(req.get("user_task"));
-            String startPageOverride = stringOrEmpty(req.get("start_page"));
-            int maxSteps = toInt(req.get("max_steps"), 0);
-
-            if (pkg.isEmpty()) return err("package is required");
-            if (userTask.isEmpty()) return err("user_task is required");
-
-            File mapFile = getConfiguredMapFile(pkg);
-            if (!mapFile.exists()) {
-                return err("map file not found for package=" + pkg + ", path=" + mapFile.getAbsolutePath());
-            }
-            RouteMap routeMap = RouteMap.loadFromFile(mapFile);
-            if (routeMap.pages.isEmpty()) {
-                return err("route map has no pages");
-            }
-            if (routeMap.transitions.isEmpty()) {
-                return err("route map has no transitions");
-            }
-            if (maxSteps <= 0) {
-                maxSteps = 64;
-            }
-
-            // Trace: task begin
-            Map<String, Object> beginEv = new LinkedHashMap<>();
-            beginEv.put("package", pkg);
-            beginEv.put("user_task", userTask);
-            trace.event("cortex_begin", beginEv);
-
-            // Load LLM config and run MapPromptPlanner
-            LlmConfig llmConfig = LlmConfig.loadDefault();
-            MapPromptPlanner planner = new MapPromptPlanner(llmClient);
-            MapPromptPlanner.PlanResult planResult = planner.plan(llmConfig, userTask, routeMap);
-
-            String targetPage = planResult.targetPage != null ? planResult.targetPage.trim() : "";
-            if (targetPage.isEmpty()) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("package", pkg);
-                ev.put("reason", "empty_target_page_after_planning");
-                trace.event("cortex_plan_fail", ev);
-
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("ok", false);
-                out.put("package", pkg);
-                out.put("target_page", "");
-                out.put("reason", "empty_target_page_after_planning");
-                return ok(Json.stringify(out));
-            }
-
-            Map<String, Object> planEv = new LinkedHashMap<>();
-            planEv.put("package", pkg);
-            planEv.put("target_page", targetPage);
-            planEv.put("used_fallback", planResult.usedFallback);
-            trace.event("cortex_plan_done", planEv);
-
-            // Compute route path from map (same semantics as handleRouteRun target_page branch).
-            String effectiveFrom;
-            java.util.List<RouteMap.Transition> path;
-            if (!startPageOverride.isEmpty()) {
-                effectiveFrom = startPageOverride;
-                path = routeMap.findPath(effectiveFrom, targetPage, maxSteps);
-            } else {
-                effectiveFrom = routeMap.inferHomePage();
-                if (effectiveFrom == null || effectiveFrom.isEmpty()) {
-                    Map<String, Object> out = new LinkedHashMap<>();
-                    out.put("ok", false);
-                    out.put("package", pkg);
-                    out.put("target_page", targetPage);
-                    out.put("reason", "cannot_infer_home_page");
-                    return ok(Json.stringify(out));
-                }
-                path = routeMap.findPathFromHome(targetPage, maxSteps);
-            }
-
-            if (path == null) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("package", pkg);
-                ev.put("from_page", effectiveFrom);
-                ev.put("to_page", targetPage);
-                trace.event("cortex_route_no_path", ev);
-
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("ok", false);
-                out.put("package", pkg);
-                out.put("target_page", targetPage);
-                out.put("reason", "no_path");
-                return ok(Json.stringify(out));
-            }
-
-            Map<String, Object> routeResult = routeExecutionService.executeRoute(pkg, effectiveFrom, targetPage, path);
-
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("ok", routeResult.get("ok"));
-            out.put("package", pkg);
-            out.put("target_page", targetPage);
-            out.put("route", routeResult);
-            out.put("llm_used_fallback", planResult.usedFallback);
-            if (Boolean.FALSE.equals(routeResult.get("ok"))) {
-                Object reason = routeResult.get("reason");
-                if (reason != null) {
-                    out.put("reason", String.valueOf(reason));
-                }
-            }
-
-            trace.event("cortex_end", out);
-
-            return ok(Json.stringify(out));
-        } catch (Exception e) {
-            Map<String, Object> ev = new LinkedHashMap<>();
-            ev.put("err", String.valueOf(e));
-            trace.event("cortex_err", ev);
             return err(String.valueOf(e));
         }
     }
@@ -960,100 +809,6 @@ public class CortexFacade {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("err", String.valueOf(e));
             trace.event("cortex_task_map_api_err", ev);
-            return err(String.valueOf(e));
-        }
-    }
-
-    /**
-     * Route-only 闂佸湱鐟抽崱鈺傛杸闂佹寧绋掗懝楣冩偄閳ь剙霉?map transitions闂佹寧绋戞總鏃傚垝?home闂佹寧绋戦悧濠囧垂閵娾晛鍙婇柟顖嗗懐顢?start_page闂佹寧绋戦ˇ鎶芥儗妤ｅ啯鍋ㄩ柛妤冨仜閻?target_page闂?     *
-     * payload: JSON UTF-8:
-     * {
-     *   "package": "tv.danmaku.bili",
-     *   "target_page": "search_page__n_xxx",   // 闂佺儵鏅╅崰妤呮偉閿濆棎浜滅痪鏉款槺缁€鍕叓閸パ勫櫣闁挎繄鍋ら弫?     *   "start_page": "bilibili_home",         // 闂佸憡鐟崹鍫曞焵椤掆偓椤р偓缂佽鲸绻堥幃鎯р枎閹存梹鏅為梺鍝勫暙婢у酣顢旈浣虹懝鐟滃海鈧?map 闂佽浜介崝宥夊蓟?home
-     *   "max_steps": 16                        // 闂佸憡鐟崹鍫曞焵椤掆偓椤р偓缂? 闂佺懓鐡ㄩ悧婊冾啅闁秵鍎戝ù锝咁潟閳ь剙鍟扮划鍫熸姜閺夊簱鏋忛梺娲绘娇閸旀垹鍒掗婊勫闁靛牆瀚悷鎰版⒒?     * }
-     *
-     * 闂佺绻掗崢褔顢欓幇鏉跨睄鐟滃繑鏅跺Δ鍐╁闁告劦鍘惧Σ鎼佹煥濞戞瑨澹樻い鈹洤鍑犳繝濠傚瀵捇鏌熺紒妯哄缂?target_page 婵炶揪绲藉Λ娆忥耿?from_page/to_page闂佹寧绋戦懟顖炲垂椤栨粍灏庨柣妤€鐗婇埢鏃傗偓?from->to 闁荤姳璀﹂崹鎶藉极闁秴违?     *
-     * 闁哄鏅滈弻銊ッ?JSON:
-     * {
-     *   "ok": true/false,
-     *   "package": "...",
-     *   "from_page": "...",
-     *   "to_page": "...",
-     *   "steps": [ { index, from, to, description, picked_stage, picked_bounds, result, reason }, ... ],
-     *   "reason": "step_failed|no_path" // 婵炲濮撮幊搴ㄥΦ閹寸姵瀚婚柕澶涢檮椤ρ囨倵濞戞顏勶耿?     * }
-     */
-        public byte[] handleRouteRun(byte[] payload) {
-        try {
-            String s = new String(payload, StandardCharsets.UTF_8);
-            Map<String, Object> req = Json.parseObject(s);
-            String pkg = stringOrEmpty(req.get("package"));
-            String targetPage = stringOrEmpty(req.get("target_page"));
-            String startPageOverride = stringOrEmpty(req.get("start_page"));
-            // Legacy compatibility: allow from_page/to_page when target_page is empty
-            String fromPageLegacy = stringOrEmpty(req.get("from_page"));
-            String toPageLegacy = stringOrEmpty(req.get("to_page"));
-            int maxSteps = toInt(req.get("max_steps"), 0);
-
-            if (pkg.isEmpty()) return err("package is required");
-            boolean useLegacyFromTo = targetPage.isEmpty() && !fromPageLegacy.isEmpty() && !toPageLegacy.isEmpty();
-            if (!useLegacyFromTo && targetPage.isEmpty()) {
-                return err("target_page is required");
-            }
-
-            File mapFile = getConfiguredMapFile(pkg);
-            if (!mapFile.exists()) {
-                return err("map file not found for package=" + pkg + ", path=" + mapFile.getAbsolutePath());
-            }
-
-            RouteMap routeMap = RouteMap.loadFromFile(mapFile);
-            if (routeMap.transitions.isEmpty()) {
-                return err("route map has no transitions");
-            }
-
-            if (maxSteps <= 0) {
-                maxSteps = 64; // default upper bound to avoid pathological long paths
-            }
-
-            String effectiveFrom;
-            String effectiveTo;
-            java.util.List<RouteMap.Transition> path;
-
-            if (useLegacyFromTo) {
-                effectiveFrom = fromPageLegacy;
-                effectiveTo = toPageLegacy;
-                trace.event("route_begin", RouteExecutionService.buildRouteEvent(pkg, effectiveFrom, effectiveTo, "begin"));
-                path = routeMap.findPath(effectiveFrom, effectiveTo, maxSteps);
-            } else {
-                // New semantics: only target_page is required; start_page is optional override of inferred home.
-                String start = !startPageOverride.isEmpty() ? startPageOverride : routeMap.inferHomePage();
-                if (start == null || start.isEmpty()) {
-                    return err("cannot infer home page from map");
-                }
-                effectiveFrom = start;
-                effectiveTo = targetPage;
-                trace.event("route_begin", RouteExecutionService.buildRouteEvent(pkg, effectiveFrom, effectiveTo, "begin"));
-                path = routeMap.findPathFromHome(effectiveTo, maxSteps);
-            }
-
-            if (path == null) {
-                Map<String, Object> ev = RouteExecutionService.buildRouteEvent(pkg, effectiveFrom, effectiveTo, "no_path");
-                trace.event("route_no_path", ev);
-                Map<String, Object> outFail = new LinkedHashMap<>();
-                outFail.put("ok", false);
-                outFail.put("package", pkg);
-                outFail.put("from_page", effectiveFrom);
-                outFail.put("to_page", effectiveTo);
-                outFail.put("steps", new java.util.ArrayList<>());
-                outFail.put("reason", "no_path");
-                return ok(Json.stringify(outFail));
-            }
-
-            Map<String, Object> out = routeExecutionService.executeRoute(pkg, effectiveFrom, effectiveTo, path);
-            return ok(Json.stringify(out));
-        } catch (Exception e) {
-            Map<String, Object> ev = new LinkedHashMap<>();
-            ev.put("err", String.valueOf(e));
-            trace.event("route_err", ev);
             return err(String.valueOf(e));
         }
     }

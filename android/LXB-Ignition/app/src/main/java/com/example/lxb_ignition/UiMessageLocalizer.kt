@@ -22,15 +22,21 @@ object UiMessageLocalizer {
             text == "Please select at least one weekday for weekly repeat." -> "每周重复模式至少需要选择一个星期几。"
             text == "schedule_id is empty." -> "schedule_id 为空。"
             text == "APP_RESOLVE: selecting the best app for this task..." -> "APP_RESOLVE：正在为任务选择最合适的应用..."
-            text == "ROUTE_PLAN: planning navigation route using map..." -> "ROUTE_PLAN：正在基于地图规划路由..."
-            text == "ROUTING: executing route on device..." -> "ROUTING：正在设备上执行路由..."
+            text == "DEVICE_PREPARE: preparing device for task execution..." -> "DEVICE_PREPARE：正在准备设备执行任务..."
+            text == "APP_ENTER: launching and readying the selected app..." -> "APP_ENTER：正在启动并准备目标应用..."
+            text == "SCRIPT_ACT: replaying learned task-route script when available..." -> "SCRIPT_ACT：正在尝试复用已学习的任务路线脚本..."
             text == "VISION_ACT: entering vision-action loop (LLM + VLM)." -> "VISION_ACT：进入视觉执行循环（LLM + VLM）。"
             text == "Task finished successfully." -> "任务执行成功。"
             text == "Task finished with failure." -> "任务执行失败。"
             text == "Decomposing the request into sub-tasks..." -> "正在将请求拆分为子任务..."
             text.startsWith("APP_RESOLVE failed: ") -> "APP_RESOLVE 失败: " + text.removePrefix("APP_RESOLVE failed: ")
-            text.startsWith("Route planning failed: ") -> "路由规划失败: " + text.removePrefix("Route planning failed: ")
-            text.startsWith("Routing failed: ") -> "路由执行失败: " + text.removePrefix("Routing failed: ")
+            text.startsWith("APP_ENTER failed: ") -> "APP_ENTER 失败: " + text.removePrefix("APP_ENTER failed: ")
+            text.startsWith("Device preparation done") -> "设备准备完成。"
+            text.startsWith("APP_ENTER done: ") -> "APP_ENTER 完成: " + text.removePrefix("APP_ENTER done: ")
+            text.startsWith("SCRIPT_ACT result: ") -> "SCRIPT_ACT 结果: " + text.removePrefix("SCRIPT_ACT result: ")
+            text.startsWith("SCRIPT_ACT task-map replay started") -> "SCRIPT_ACT 任务路线回放开始。"
+            text.startsWith("SCRIPT_ACT task-map replay completed") -> "SCRIPT_ACT 任务路线回放完成。"
+            text.startsWith("SCRIPT_ACT task-map replay fell back to VISION_ACT: ") -> "SCRIPT_ACT 回退到 VISION_ACT: " + text.removePrefix("SCRIPT_ACT task-map replay fell back to VISION_ACT: ")
             text == "Cancel requested, FSM will stop at the next safe point." -> "已请求取消，FSM 会在下一个安全点停止。"
             text == "Task cancelled by user." -> "任务已由用户取消。"
             text == "Screenshot captured, calling vision model for next action..." -> "已截图，正在调用视觉模型规划下一步..."

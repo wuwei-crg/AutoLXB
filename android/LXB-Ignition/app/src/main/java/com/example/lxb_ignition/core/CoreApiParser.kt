@@ -536,9 +536,9 @@ object CoreApiParser {
             event.startsWith("llm_response_") -> firstNonBlank(error, finalTask, raw, reason, event)
             event.startsWith("vision_") || event.startsWith("planner_") ->
                 firstNonBlank(error, reason, raw, finalTask, event)
-            event.startsWith("fsm_routing_") || event.startsWith("route_") ->
-                firstNonBlank(error, reason, result, buildRouteSummary(obj), event)
-            event.startsWith("fsm_app_resolve") || event.startsWith("resolve_") ->
+            event.startsWith("fsm_script_act_") ->
+                firstNonBlank(error, reason, result, buildScriptActSummary(obj), event)
+            event.startsWith("fsm_app_enter") || event.startsWith("fsm_app_resolve") || event.startsWith("resolve_") ->
                 firstNonBlank(error, reason, optText(obj, "resolved_package"), optText(obj, "package"), event)
             event.startsWith("cortex_") ->
                 firstNonBlank(error, finalTask, reason, userTask, event)
@@ -609,13 +609,13 @@ object CoreApiParser {
                 addMeta(out, "Screen", joinNonBlank(" / ", optText(obj, "screen_state_final"), optText(obj, "lock_hint_final")))
                 addMeta(out, "Error", optText(obj, "err"), 96)
             }
-            event.startsWith("fsm_routing_") || event.startsWith("route_") -> {
+            event.startsWith("fsm_script_act_") -> {
                 addMeta(out, "Package", optText(obj, "package"))
-                addMeta(out, "Path", buildRoutePath(obj))
-                addMeta(out, "Step", firstNonBlank(optText(obj, "step"), optText(obj, "step_index")))
+                addMeta(out, "Segment", optText(obj, "segment_id"))
+                addMeta(out, "Step", firstNonBlank(optText(obj, "step_id"), optText(obj, "step"), optText(obj, "step_index"), optText(obj, "index")))
                 addMeta(out, "Reason", firstNonBlank(optText(obj, "reason"), optText(obj, "error")), 96)
             }
-            event.startsWith("fsm_app_resolve") || event.startsWith("resolve_") -> {
+            event.startsWith("fsm_app_enter") || event.startsWith("fsm_app_resolve") || event.startsWith("resolve_") -> {
                 addMeta(out, "Package", firstNonBlank(optText(obj, "resolved_package"), optText(obj, "package")))
                 addMeta(out, "Stage", firstNonBlank(optText(obj, "stage"), optText(obj, "result")))
                 addMeta(out, "Reason", firstNonBlank(optText(obj, "reason"), optText(obj, "error")), 96)
@@ -683,21 +683,12 @@ object CoreApiParser {
             .ifBlank { "Swipe" }
     }
 
-    private fun buildRouteSummary(obj: JSONObject): String {
-        val pkg = optText(obj, "package")
-        val path = buildRoutePath(obj)
-        return when {
-            pkg.isNotBlank() && path.isNotBlank() -> "$pkg | $path"
-            path.isNotBlank() -> path
-            else -> pkg
-        }
-    }
-
-    private fun buildRoutePath(obj: JSONObject): String {
+    private fun buildScriptActSummary(obj: JSONObject): String {
         return joinNonBlank(
-            " -> ",
-            firstNonBlank(optText(obj, "from_page"), optText(obj, "from")),
-            firstNonBlank(optText(obj, "to_page"), optText(obj, "to"), optText(obj, "target_page"))
+            " | ",
+            optText(obj, "package"),
+            optText(obj, "segment_id"),
+            firstNonBlank(optText(obj, "step_id"), optText(obj, "step"), optText(obj, "step_index"), optText(obj, "index"))
         )
     }
 

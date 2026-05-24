@@ -38,24 +38,31 @@ import java.util.regex.Pattern;
  *
  * Goal for now:
  * - Mirror the high-level FSM structure and state transitions:
- *   INIT -> APP_RESOLVE -> ROUTE_PLAN -> PREPARE_DEVICE -> ROUTING -> VISION_ACT -> FINISH/FAIL
+ *   INIT -> TASK_DECOMPOSE? -> DEVICE_PREPARE -> APP_RESOLVE? -> APP_ENTER -> SCRIPT_ACT -> VISION_ACT -> FINISH/FAIL
  * - Provide a Context object and run() signature compatible with Python:
  *   status/state/package_name/target_page/route_result/command_log/llm_history/lessons/reason
- * - Gradually fill internal behavior with end-side engines (LLM planner, routing, VLM actions).
+ * - Gradually fill internal behavior with end-side engines (LLM planner, script replay, VLM actions).
  */
 public class CortexFsmEngine {
 
     public enum State {
         INIT,
         TASK_DECOMPOSE,
-        TASK_MAP_ROOT_LOOKUP,
+        DEVICE_PREPARE,
         APP_RESOLVE,
-        ROUTE_PLAN,
-        PREPARE_DEVICE,
-        ROUTING,
+        APP_ENTER,
+        SCRIPT_ACT,
         VISION_ACT,
         FINISH,
         FAIL
+    }
+
+    private enum ScriptActResult {
+        SKIPPED,
+        REPLAYED,
+        DONE,
+        FALLBACK_VISION,
+        FAILED
     }
 
     /**
@@ -160,6 +167,8 @@ public class CortexFsmEngine {
         public TaskRouteRecord latestAttemptRecord = null;
         public TaskRouteRecord latestSuccessRecord = null;
         public TaskMap taskMap = null;
+        public boolean hasTaskRoute = false;
+        public String taskRouteStatus = "off";
         public boolean taskMapRootHit = false;
         public String taskMapReplayFallbackReason = "";
         public boolean taskMapReplayUsed = false;
@@ -175,7 +184,6 @@ public class CortexFsmEngine {
     private final TraceLogger trace;
     private final LlmClient llmClient;
     private final MapManager mapManager;
-    private final MapPromptPlanner mapPlanner;
     private final TaskMapStore taskMapStore;
     private static final int LAUNCH_RETRY_MAX = 3;
     private static final long LAUNCH_WAIT_TIMEOUT_MS = 8000L;
@@ -199,14 +207,14 @@ public class CortexFsmEngine {
     private static final long UNLOCK_POST_SWIPE_SLEEP_MS = 900L;
     private static final int UNLOCK_SWIPE_DURATION_MS = 500;
     private static final long UNLOCK_POST_PIN_SLEEP_MS = 1200L;
-    private static final long ROUTING_FIRST_STEP_WINDOW_MS = 10000L;
-    private static final long ROUTING_FIRST_STEP_SAMPLE_MS = 350L;
-    private static final long ROUTING_FIRST_STEP_AFTER_SKIP_SLEEP_MS = 300L;
-    private static final int ROUTING_FIRST_STEP_SKIP_MIN_SCORE = 120;
-    private static final int ROUTING_STEP_RESOLVE_RETRY_MAX = 3;
-    private static final long ROUTING_STEP_RESOLVE_RETRY_SLEEP_MS = 300L;
-    private static final int ROUTING_RECOVERY_MAX = 2;
-    private static final long ROUTING_RECOVERY_POST_ACTION_SLEEP_MS = 300L;
+    private static final long SCRIPT_ACT_FIRST_STEP_WINDOW_MS = 10000L;
+    private static final long SCRIPT_ACT_FIRST_STEP_SAMPLE_MS = 350L;
+    private static final long SCRIPT_ACT_FIRST_STEP_AFTER_SKIP_SLEEP_MS = 300L;
+    private static final int SCRIPT_ACT_FIRST_STEP_SKIP_MIN_SCORE = 120;
+    private static final int SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX = 3;
+    private static final long SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS = 300L;
+    private static final int SCRIPT_ACT_RECOVERY_MAX = 2;
+    private static final long SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS = 300L;
     private static final int KEYCODE_HOME = 3;
     private static final int KEYCODE_WAKEUP = 224;
     private static final int KEYCODE_POWER = 26;
@@ -234,7 +242,6 @@ public class CortexFsmEngine {
         this.trace = trace;
         this.llmClient = new LlmClient();
         this.mapManager = mapManager;
-        this.mapPlanner = new MapPromptPlanner(llmClient);
         this.taskMapStore = taskMapStore != null ? taskMapStore : new TaskMapStore();
     }
 
@@ -334,10 +341,11 @@ public class CortexFsmEngine {
      * v2 structure:
      * - INIT: device/app discovery, coord probe.
      * - TASK_DECOMPOSE: call LLM to produce sub_tasks contracts (optional, best-effort).
-     * - For each sub_task (currently using existing APP_RESOLVE/ROUTE_PLAN/PREPARE_DEVICE/ROUTING/VISION_ACT):
-     *   - APP_RESOLVE
-     *   - ROUTE_PLAN
-     *   - ROUTING
+     * - DEVICE_PREPARE: task-wide device readiness.
+     * - For each sub_task:
+     *   - APP_RESOLVE (normal no-route path only)
+     *   - APP_ENTER
+     *   - SCRIPT_ACT
      *   - VISION_ACT
      * - Overall FINISH/FAIL is aggregated over all sub_tasks.
      */
@@ -451,7 +459,7 @@ public class CortexFsmEngine {
         }
 
         try {
-            // 1) INIT + task-map lookup + TASK_DECOMPOSE (single pass)
+            // 1) INIT + optional TASK_DECOMPOSE + DEVICE_PREPARE (single pass).
             State state = State.INIT;
             for (int i = 0; i < 30; i++) {
                 if (cancellationChecker != null && cancellationChecker.isCancelled()) {
@@ -467,13 +475,16 @@ public class CortexFsmEngine {
                     notifyUnlockReadyIfNeeded(ctx, "after_init");
                     continue;
                 }
-                if (state == State.TASK_MAP_ROOT_LOOKUP) {
-                    state = runTaskMapRootLookupState(ctx);
-                    continue;
-                }
                 if (state == State.TASK_DECOMPOSE) {
                     state = runTaskDecomposeState(ctx);
-                    break; // after decomposition, move on to per-sub_task execution
+                    continue;
+                }
+                if (state == State.DEVICE_PREPARE) {
+                    state = runDevicePrepareState(ctx);
+                    break; // after device preparation, move on to per-sub_task execution
+                }
+                if (state == State.FAIL) {
+                    break;
                 }
                 // Any other state here is unexpected; bail out.
                 break;
@@ -492,13 +503,12 @@ public class CortexFsmEngine {
                 effectiveSubTasks.addAll(ctx.subTasks);
             }
 
-            boolean overallSuccess = true;
-            State lastState = State.FINISH;
+            boolean overallSuccess = state != State.FAIL;
             boolean anyMemoryFastPathUsed = false;
             boolean anyMemoryFastPathFallback = false;
 
-            // 3) Execute each sub_task using the existing APP_RESOLVE/ROUTE_PLAN/PREPARE_DEVICE/ROUTING/VISION_ACT pipeline.
-            for (int idx = 0; idx < effectiveSubTasks.size(); idx++) {
+            // 3) Execute each sub_task using APP_RESOLVE/APP_ENTER/SCRIPT_ACT/VISION_ACT.
+            for (int idx = 0; overallSuccess && idx < effectiveSubTasks.size(); idx++) {
                 SubTask st = effectiveSubTasks.get(idx);
 
                 // For now, loop sub_tasks are still executed with the same single-shot pipeline.
@@ -551,10 +561,8 @@ public class CortexFsmEngine {
                 trace.event("fsm_sub_task_begin", subBegin);
 
                 // Memory fast path is intentionally disabled for now.
-                // Root-map hits skip decomposition and app resolution.
-                state = (ctx.currentTaskMapSegment != null && !ctx.currentTaskMapSegment.packageName.isEmpty())
-                        ? State.PREPARE_DEVICE
-                        : State.APP_RESOLVE;
+                // Task-route hits skip decomposition and app resolution.
+                state = ctx.hasTaskRoute ? State.APP_ENTER : State.APP_RESOLVE;
                 int subTaskStepLimit = Math.max(40, resolveVisionMaxTurns(ctx) + 20);
                 for (int step = 0; step < subTaskStepLimit; step++) {
                     notifyUnlockReadyIfNeeded(ctx, "sub_task_loop");
@@ -570,16 +578,12 @@ public class CortexFsmEngine {
                         state = runAppResolveState(ctx);
                         continue;
                     }
-                    if (state == State.ROUTE_PLAN) {
-                        state = runRoutePlanState(ctx);
+                    if (state == State.APP_ENTER) {
+                        state = runAppEnterState(ctx);
                         continue;
                     }
-                    if (state == State.PREPARE_DEVICE) {
-                        state = runPrepareDeviceState(ctx);
-                        continue;
-                    }
-                    if (state == State.ROUTING) {
-                        state = runRoutingState(ctx);
+                    if (state == State.SCRIPT_ACT) {
+                        state = runScriptActState(ctx);
                         continue;
                     }
                     if (state == State.VISION_ACT) {
@@ -606,8 +610,6 @@ public class CortexFsmEngine {
                     trace.event("fsm_sub_task_step_limit", limitEv);
                     state = State.FAIL;
                 }
-
-                lastState = state;
 
                 Map<String, Object> subEnd = new LinkedHashMap<>();
                 subEnd.put("task_id", ctx.taskId);
@@ -663,6 +665,8 @@ public class CortexFsmEngine {
             out.put("unlocked_by_fsm", ctx.unlockedByFsm);
             out.put("task_map_mode", ctx.taskMapMode);
             out.put("route_id", ctx.taskRouteKeyHash);
+            out.put("has_task_route", ctx.hasTaskRoute);
+            out.put("task_route_status", ctx.taskRouteStatus);
             out.put("task_map_root_hit", ctx.taskMapRootHit);
             out.put("task_map_replay_used", ctx.taskMapReplayUsed);
             out.put("task_map_replay_fallback_reason", ctx.taskMapReplayFallbackReason);
@@ -1080,35 +1084,41 @@ public class CortexFsmEngine {
                 : new LinkedHashMap<>(ctx.textInputSupport));
         trace.event("fsm_init_ready", readyEv);
 
-        // Next: attempt task-map lookup before task decomposition.
-        return State.TASK_MAP_ROOT_LOOKUP;
+        // Next: build execution plan, including task-route availability, before
+        // either decomposition or device preparation.
+        return buildExecutionPlanInInit(ctx);
     }
 
-    private State runTaskMapRootLookupState(Context ctx) {
+    private State buildExecutionPlanInInit(Context ctx) {
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("task_id", ctx.taskId);
-        ev.put("state", State.TASK_MAP_ROOT_LOOKUP.name());
         ev.put("route_id", ctx.taskRouteKeyHash);
         ev.put("task_map_mode", ctx.taskMapMode);
-        trace.event("task_map_root_lookup", ev);
+        trace.event("task_route_lookup", ev);
 
         if (ctx.taskRouteKeyHash == null || ctx.taskRouteKeyHash.isEmpty() || "off".equals(ctx.taskMapMode)) {
             ctx.taskMapRootHit = false;
+            ctx.hasTaskRoute = false;
+            ctx.taskRouteStatus = "off";
             return State.TASK_DECOMPOSE;
         }
 
         TaskMap map = taskMapStore != null ? taskMapStore.loadMap(ctx.taskRouteKeyHash) : null;
         if (map == null || !map.isUsable()) {
             ctx.taskMapRootHit = false;
+            ctx.hasTaskRoute = false;
+            ctx.taskRouteStatus = map == null ? "miss" : "unusable";
             Map<String, Object> miss = new LinkedHashMap<>();
             miss.put("task_id", ctx.taskId);
             miss.put("route_id", ctx.taskRouteKeyHash);
             miss.put("reason", map == null ? "map_missing" : "map_unusable");
-            trace.event("task_map_root_lookup_miss", miss);
+            trace.event("task_route_lookup_miss", miss);
             return State.TASK_DECOMPOSE;
         }
 
         ctx.taskMapRootHit = true;
+        ctx.hasTaskRoute = true;
+        ctx.taskRouteStatus = "hit";
         ctx.taskMap = map;
         ctx.subTasks.clear();
         ctx.subTasks.addAll(TaskMapSubTaskRestorer.restore(map));
@@ -1122,9 +1132,9 @@ public class CortexFsmEngine {
         hit.put("route_id", ctx.taskRouteKeyHash);
         hit.put("segment_count", map.segments.size());
         hit.put("step_count", map.stepCount());
-        trace.event("task_map_root_lookup_hit", hit);
+        trace.event("task_route_lookup_hit", hit);
         trace.event("task_map_subtasks_restored", hit);
-        return State.PREPARE_DEVICE;
+        return State.DEVICE_PREPARE;
     }
 
     /**
@@ -1506,9 +1516,9 @@ public class CortexFsmEngine {
             trace.event("llm_error_task_decompose", errEv);
         }
 
-        // For now, always proceed to APP_RESOLVE. Even if decomposition fails,
-        // the legacy single-task pipeline remains functional.
-        return State.APP_RESOLVE;
+        // For now, always proceed to device preparation. Even if decomposition
+        // fails, the legacy single-task fallback remains functional.
+        return State.DEVICE_PREPARE;
     }
 
     @SuppressWarnings("unchecked")
@@ -1696,7 +1706,7 @@ public class CortexFsmEngine {
             done.put("app_name", ctx.selectedPackageLabel);
             done.put("source", "caller");
             trace.event("fsm_app_resolve_fixed_package", done);
-            return State.ROUTE_PLAN;
+            return State.APP_ENTER;
         }
 
         // 2) Need app candidates collected in INIT.
@@ -1775,142 +1785,46 @@ public class CortexFsmEngine {
         done.put("source", usedFallback ? "fallback" : "llm");
         trace.event("fsm_app_resolve_done", done);
 
-        return State.ROUTE_PLAN;
+        return State.APP_ENTER;
     }
 
-    private State runRoutePlanState(Context ctx) {
+    private State runDevicePrepareState(Context ctx) {
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("task_id", ctx.taskId);
-        ev.put("state", State.ROUTE_PLAN.name());
-        ev.put("selected_package", ctx.selectedPackage);
-        ev.put("map_path", ctx.mapPath);
+        ev.put("state", State.DEVICE_PREPARE.name());
+        ev.put("has_task_route", ctx.hasTaskRoute);
+        ev.put("task_route_status", ctx.taskRouteStatus);
         trace.event("fsm_state_enter", ev);
 
-        // 1) Require selected package from APP_RESOLVE.
+        Map<String, Object> done = new LinkedHashMap<>();
+        done.put("task_id", ctx.taskId);
+        done.put("has_task_route", ctx.hasTaskRoute);
+        done.put("task_route_status", ctx.taskRouteStatus);
+        done.put("screen_state", getScreenStateCode());
+        done.put("lock_hint", isLikelyLockscreenShown());
+        trace.event("fsm_device_prepare_done", done);
+        return State.DEVICE_PREPARE;
+    }
+
+    private State runAppEnterState(Context ctx) {
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("task_id", ctx.taskId);
+        ev.put("state", State.APP_ENTER.name());
+        ev.put("selected_package", ctx.selectedPackage);
+        ev.put("segment_id", ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "");
+        trace.event("fsm_state_enter", ev);
+
         if (ctx.selectedPackage == null || ctx.selectedPackage.trim().isEmpty()) {
-            ctx.error = "route_plan_no_package";
+            ctx.error = "app_enter_no_package";
             Map<String, Object> fail = new LinkedHashMap<>();
             fail.put("task_id", ctx.taskId);
             fail.put("reason", ctx.error);
-            trace.event("fsm_route_plan_failed", fail);
+            trace.event("fsm_app_enter_failed", fail);
             return State.FAIL;
         }
 
         String pkg = ctx.selectedPackage.trim();
-        if (!ctx.useMap) {
-            ctx.mapPath = null;
-            ctx.targetPage = "";
-            Map<String, Object> noMapEv = new LinkedHashMap<>();
-            noMapEv.put("task_id", ctx.taskId);
-            noMapEv.put("package", pkg);
-            noMapEv.put("reason", "use_map_disabled");
-            noMapEv.put("use_map", false);
-            noMapEv.put("map_source", ctx.mapSource);
-            trace.event("fsm_route_plan_no_map", noMapEv);
-            return State.PREPARE_DEVICE;
-        }
-
-        File mapFile = mapManager.getMapFileForSource(pkg, ctx.mapSource);
-
-        // 2) No map for this package: keep pipeline, but mark as no-map mode.
-        if (!mapFile.exists() || !mapFile.isFile() || mapFile.length() == 0) {
-            ctx.mapPath = null;
-            Map<String, Object> noMapEv = new LinkedHashMap<>();
-            noMapEv.put("task_id", ctx.taskId);
-            noMapEv.put("package", pkg);
-            noMapEv.put("map_source", ctx.mapSource);
-            noMapEv.put("map_path", mapFile.getAbsolutePath());
-            trace.event("fsm_route_plan_no_map", noMapEv);
-            // No map available: continue to PREPARE_DEVICE, then ROUTING falls through to VISION_ACT.
-            return State.PREPARE_DEVICE;
-        }
-
-        // 3) Map exists: load RouteMap and ask LLM to choose target_page.
-        RouteMap routeMap = null;
-        try {
-            routeMap = RouteMap.loadFromFile(mapFile);
-        } catch (Exception e) {
-            ctx.mapPath = null;
-            ctx.error = "route_plan_map_load_failed:" + e.getMessage();
-            Map<String, Object> fail = new LinkedHashMap<>();
-            fail.put("task_id", ctx.taskId);
-            fail.put("package", pkg);
-            fail.put("map_source", ctx.mapSource);
-            fail.put("map_path", mapFile.getAbsolutePath());
-            fail.put("reason", ctx.error);
-            trace.event("fsm_route_plan_map_load_failed", fail);
-            // Keep pipeline consistent: PREPARE_DEVICE + ROUTING handle no-map mode.
-            return State.PREPARE_DEVICE;
-        }
-
-        ctx.mapPath = mapFile.getAbsolutePath();
-
-        String targetPage = null;
-        boolean usedFallback = false;
-        try {
-            LlmConfig cfg = LlmConfig.loadDefault();
-            MapPromptPlanner.PlanResult plan = mapPlanner.plan(cfg, ctx.userTask, routeMap);
-            if (plan.packageName != null && !plan.packageName.trim().isEmpty()) {
-                ctx.selectedPackage = plan.packageName.trim();
-            }
-            targetPage = plan.targetPage != null ? plan.targetPage.trim() : "";
-            usedFallback = plan.usedFallback;
-
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("task_id", ctx.taskId);
-            done.put("package", ctx.selectedPackage);
-            done.put("map_source", ctx.mapSource);
-            done.put("target_page", targetPage);
-            done.put("used_fallback", usedFallback);
-            trace.event("fsm_route_plan_done", done);
-        } catch (Exception e) {
-            ctx.error = "route_plan_llm_error:" + e.getMessage();
-            Map<String, Object> fail = new LinkedHashMap<>();
-            fail.put("task_id", ctx.taskId);
-            fail.put("package", pkg);
-            fail.put("map_source", ctx.mapSource);
-            fail.put("map_path", mapFile.getAbsolutePath());
-            fail.put("reason", ctx.error);
-            trace.event("fsm_route_plan_llm_error", fail);
-            return State.FAIL;
-        }
-
-        if (targetPage == null || targetPage.isEmpty()) {
-            ctx.error = "route_plan_failed:no_target_page";
-            Map<String, Object> fail = new LinkedHashMap<>();
-            fail.put("task_id", ctx.taskId);
-            fail.put("package", ctx.selectedPackage);
-            fail.put("map_source", ctx.mapSource);
-            fail.put("map_path", ctx.mapPath);
-            fail.put("reason", ctx.error);
-            trace.event("fsm_route_plan_failed", fail);
-            return State.FAIL;
-        }
-
-        ctx.targetPage = targetPage;
-        return State.PREPARE_DEVICE;
-    }
-
-    private State runPrepareDeviceState(Context ctx) {
-        Map<String, Object> ev = new LinkedHashMap<>();
-        ev.put("task_id", ctx.taskId);
-        ev.put("state", State.PREPARE_DEVICE.name());
-        ev.put("selected_package", ctx.selectedPackage);
-        ev.put("target_page", ctx.targetPage);
-        ev.put("map_path", ctx.mapPath);
-        trace.event("fsm_state_enter", ev);
-
-        if (ctx.selectedPackage == null || ctx.selectedPackage.trim().isEmpty()) {
-            ctx.error = "prepare_device_no_package";
-            Map<String, Object> fail = new LinkedHashMap<>();
-            fail.put("task_id", ctx.taskId);
-            fail.put("reason", ctx.error);
-            trace.event("fsm_prepare_device_failed", fail);
-            return State.FAIL;
-        }
-
-        String pkg = ctx.selectedPackage.trim();
-        if (shouldSkipPrepareLaunchForTaskMap(ctx, pkg)) {
+        if (shouldSkipAppEnterLaunchForTaskMap(ctx, pkg)) {
             Map<String, Object> skip = new LinkedHashMap<>();
             skip.put("task_id", ctx.taskId);
             skip.put("package", pkg);
@@ -1919,59 +1833,50 @@ public class CortexFsmEngine {
             skip.put("foreground_package", getCurrentActivityInfoForRouting().packageName);
             skip.put("screen_state", getScreenStateCode());
             skip.put("lock_hint", isLikelyLockscreenShown());
-            trace.event("fsm_prepare_device_skipped", skip);
+            trace.event("fsm_app_enter_skipped", skip);
 
             Map<String, Object> done = new LinkedHashMap<>();
             done.put("task_id", ctx.taskId);
             done.put("package", pkg);
             done.put("result", "skipped_ready");
-            trace.event("fsm_prepare_device_done", done);
-            return State.ROUTING;
+            trace.event("fsm_app_enter_done", done);
+            return State.SCRIPT_ACT;
         }
 
-        boolean launchOk = launchAppForRouting(ctx, pkg);
+        boolean launchOk = launchAppForAppEnter(ctx, pkg);
 
-        // Keep original event name for compatibility with existing traces/UI parsers.
         Map<String, Object> launchEv = new LinkedHashMap<>();
         launchEv.put("task_id", ctx.taskId);
         launchEv.put("package", pkg);
         launchEv.put("clear_task", true);
         launchEv.put("result", launchOk ? "ok" : "fail");
-        trace.event("fsm_routing_launch_app", launchEv);
-
-        Map<String, Object> prepareLaunchEv = new LinkedHashMap<>();
-        prepareLaunchEv.put("task_id", ctx.taskId);
-        prepareLaunchEv.put("package", pkg);
-        prepareLaunchEv.put("result", launchOk ? "ok" : "fail");
-        trace.event("fsm_prepare_device_launch", prepareLaunchEv);
+        trace.event("fsm_app_enter_launch", launchEv);
 
         if (!launchOk) {
-            ctx.error = "prepare_device_launch_failed";
+            ctx.error = "app_enter_launch_failed";
             Map<String, Object> fail = new LinkedHashMap<>();
             fail.put("task_id", ctx.taskId);
             fail.put("package", pkg);
             fail.put("reason", ctx.error);
-            trace.event("fsm_prepare_device_failed", fail);
+            trace.event("fsm_app_enter_failed", fail);
             return State.FAIL;
         }
 
-        boolean hasMap = ctx.mapPath != null && !ctx.mapPath.trim().isEmpty();
         Map<String, Object> uiEv = new LinkedHashMap<>();
         uiEv.put("task_id", ctx.taskId);
         uiEv.put("package", pkg);
-        uiEv.put("mode", hasMap ? "map" : "no_map");
         uiEv.put("ui", captureRoutingUiFingerprint());
-        trace.event("fsm_routing_post_launch_ui", uiEv);
+        trace.event("fsm_app_enter_post_launch_ui", uiEv);
 
         Map<String, Object> done = new LinkedHashMap<>();
         done.put("task_id", ctx.taskId);
         done.put("package", pkg);
         done.put("result", "ok");
-        trace.event("fsm_prepare_device_done", done);
-        return State.ROUTING;
+        trace.event("fsm_app_enter_done", done);
+        return State.SCRIPT_ACT;
     }
 
-    private boolean shouldSkipPrepareLaunchForTaskMap(Context ctx, String pkg) {
+    private boolean shouldSkipAppEnterLaunchForTaskMap(Context ctx, String pkg) {
         if (ctx == null || pkg == null || pkg.trim().isEmpty()) {
             return false;
         }
@@ -1985,21 +1890,17 @@ public class CortexFsmEngine {
         return pkg.equals(current.packageName);
     }
 
-    private State runRoutingState(Context ctx) {
+    private State runScriptActState(Context ctx) {
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("task_id", ctx.taskId);
-        ev.put("state", State.ROUTING.name());
+        ev.put("state", State.SCRIPT_ACT.name());
         ev.put("selected_package", ctx.selectedPackage);
-        ev.put("target_page", ctx.targetPage);
-        ev.put("map_path", ctx.mapPath);
+        ev.put("segment_id", ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "");
         trace.event("fsm_state_enter", ev);
 
         if (ctx.selectedPackage == null || ctx.selectedPackage.trim().isEmpty()) {
-            ctx.error = "routing_no_package";
-            Map<String, Object> fail = new LinkedHashMap<>();
-            fail.put("task_id", ctx.taskId);
-            fail.put("reason", ctx.error);
-            trace.event("fsm_routing_failed", fail);
+            ctx.error = "script_act_no_package";
+            emitScriptActResult(ctx, ScriptActResult.FAILED, "", "", ctx.error, 0);
             return State.FAIL;
         }
 
@@ -2007,213 +1908,37 @@ public class CortexFsmEngine {
         boolean hasTaskMapSegment = ctx.currentTaskMapSegment != null
                 && ctx.currentTaskMapSegment.steps != null
                 && !ctx.currentTaskMapSegment.steps.isEmpty();
-
-        if (hasTaskMapSegment) {
-            Map<String, Object> planEv = new LinkedHashMap<>();
-            planEv.put("task_id", ctx.taskId);
-            planEv.put("package", pkg);
-            planEv.put("has_map", false);
-            planEv.put("map_path", "");
-            planEv.put("from_page", "");
-            planEv.put("to_page", ctx.targetPage != null ? ctx.targetPage.trim() : "");
-            planEv.put("path_steps", ctx.currentTaskMapSegment.steps.size());
-            planEv.put("start_page_override", false);
-            planEv.put("route_source", "task_map");
-            planEv.put("segment_id", ctx.currentTaskMapSegment.segmentId);
-            trace.event("fsm_routing_plan", planEv);
-            return runTaskMapSegmentRouting(ctx, pkg);
-        }
-
-        boolean hasMap = ctx.mapPath != null && !ctx.mapPath.trim().isEmpty();
-        RouteMap routeMap = null;
-        List<RouteMap.Transition> path = null;
-        String fromPage = "";
-        String toPage = ctx.targetPage != null ? ctx.targetPage.trim() : "";
-
-        // 1) If mapPath is available, try to load RouteMap and find BFS path.
-        if (hasMap) {
-            File mapFile = new File(ctx.mapPath);
-            try {
-                routeMap = RouteMap.loadFromFile(mapFile);
-            } catch (Exception e) {
-                hasMap = false;
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("task_id", ctx.taskId);
-                m.put("package", pkg);
-                m.put("map_path", mapFile.getAbsolutePath());
-                m.put("reason", "routing_map_load_failed:" + e.getMessage());
-                trace.event("fsm_routing_map_load_failed", m);
-            }
-        }
-
-        if (hasMap && routeMap != null && toPage != null && !toPage.isEmpty()) {
-            int maxSteps = 64;
-
-            if (ctx.startPage != null && !ctx.startPage.trim().isEmpty()) {
-                fromPage = ctx.startPage.trim();
-                path = routeMap.findPath(fromPage, toPage, maxSteps);
-            } else {
-                fromPage = routeMap.inferHomePage();
-                if (fromPage == null || fromPage.isEmpty()) {
-                    ctx.error = "routing_no_home_page";
-                    Map<String, Object> fail = new LinkedHashMap<>();
-                    fail.put("task_id", ctx.taskId);
-                    fail.put("package", pkg);
-                    fail.put("reason", ctx.error);
-                    trace.event("fsm_routing_failed", fail);
-                    return State.FAIL;
-                }
-                path = routeMap.findPathFromHome(toPage, maxSteps);
-            }
-
-            if (path == null) {
-                ctx.error = "routing_no_path";
-                Map<String, Object> fail = new LinkedHashMap<>();
-                fail.put("task_id", ctx.taskId);
-                fail.put("package", pkg);
-                fail.put("from_page", fromPage);
-                fail.put("to_page", toPage);
-                fail.put("reason", ctx.error);
-                trace.event("fsm_routing_no_path", fail);
-                return State.FAIL;
-            }
-        } else {
-            hasMap = false;
-        }
-
-        Map<String, Object> planEv = new LinkedHashMap<>();
-        planEv.put("task_id", ctx.taskId);
-        planEv.put("package", pkg);
-        planEv.put("has_map", hasMap);
-        planEv.put("map_path", ctx.mapPath != null ? ctx.mapPath : "");
-        planEv.put("from_page", fromPage);
-        planEv.put("to_page", toPage);
-        planEv.put("path_steps", path != null ? path.size() : 0);
-        planEv.put("start_page_override", ctx.startPage != null && !ctx.startPage.trim().isEmpty());
-        trace.event("fsm_routing_plan", planEv);
-
-        // No-map mode: PREPARE_DEVICE already launched app; nothing to tap here.
-        if (!hasMap || path == null || path.isEmpty()) {
+        if (!hasTaskMapSegment) {
+            ctx.taskMapReplayUsed = false;
+            ctx.taskMapReplayFallbackReason = ctx.currentTaskMapSegment == null
+                    ? "no_task_map_segment"
+                    : "empty_segment";
             ctx.routeTrace.clear();
             ctx.routeResult.clear();
             ctx.routeResult.put("ok", true);
-            ctx.routeResult.put("mode", "no_map");
+            ctx.routeResult.put("mode", "no_script");
             ctx.routeResult.put("package", pkg);
             ctx.routeResult.put("steps", new ArrayList<Map<String, Object>>());
-            trace.event("fsm_routing_done", new LinkedHashMap<String, Object>() {{
-                put("task_id", ctx.taskId);
-                put("package", pkg);
-                put("mode", "no_map");
-                put("steps", 0);
-            }});
+            ctx.routeResult.put("reason", ctx.taskMapReplayFallbackReason);
+            emitScriptActResult(ctx,
+                    ctx.currentTaskMapSegment == null ? ScriptActResult.SKIPPED : ScriptActResult.FALLBACK_VISION,
+                    pkg,
+                    ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "",
+                    ctx.taskMapReplayFallbackReason,
+                    0);
             return State.VISION_ACT;
         }
 
-        // Small settle delay before first tap.
-        try {
-            Thread.sleep(1500);
-        } catch (InterruptedException ignored) {
-        }
-
-        // Execute route steps with locator resolution and tap.
-        LocatorResolver resolver = new LocatorResolver(perception, trace);
-        List<Map<String, Object>> stepSummaries = new ArrayList<>();
-        boolean allOk = true;
-        boolean degradedToVision = false;
-        int index = 0;
-        int recoveryAttempts = 0;
-
-        while (index < path.size()) {
-            RouteMap.Transition t = path.get(index);
-            RouteStepExec stepExec = (index == 0)
-                    ? executeFirstRoutingStepWithWindow(ctx, pkg, t, resolver, index)
-                    : executeRegularRoutingStep(ctx, pkg, t, resolver, index);
-            stepSummaries.add(stepExec.step);
-
-            if (stepExec.ok) {
-                index += 1;
-                sleepQuiet(400);
-                continue;
-            }
-
-            if (recoveryAttempts < ROUTING_RECOVERY_MAX) {
-                String failReason = stringOrEmpty(stepExec.step.get("reason"));
-                boolean recovered = tryRoutePopupRecoveryByVision(ctx, pkg, index, t, failReason);
-                Map<String, Object> recEv = new LinkedHashMap<>();
-                recEv.put("task_id", ctx.taskId);
-                recEv.put("package", pkg);
-                recEv.put("index", index);
-                recEv.put("attempt", recoveryAttempts + 1);
-                recEv.put("max_attempts", ROUTING_RECOVERY_MAX);
-                recEv.put("recovered", recovered);
-                recEv.put("reason", failReason);
-                trace.event("fsm_routing_recovery_result", recEv);
-                if (recovered) {
-                    recoveryAttempts += 1;
-                    sleepQuiet(ROUTING_RECOVERY_POST_ACTION_SLEEP_MS);
-                    continue;
-                }
-            }
-
-            allOk = false;
-            degradedToVision = true;
-            break;
-        }
-
-        // 4) Populate context route_result and route_trace.
-        ctx.routeTrace.clear();
-        if (fromPage != null && !fromPage.isEmpty()) {
-            ctx.routeTrace.add(fromPage);
-        }
-        for (RouteMap.Transition t : path) {
-            if (t.toPage != null && !t.toPage.isEmpty()) {
-                ctx.routeTrace.add(t.toPage);
-            }
-        }
-
-        ctx.routeResult.clear();
-        ctx.routeResult.put("ok", allOk);
-        ctx.routeResult.put("package", pkg);
-        ctx.routeResult.put("from_page", fromPage);
-        ctx.routeResult.put("to_page", toPage);
-        ctx.routeResult.put("steps", stepSummaries);
-        if (!allOk) {
-            ctx.routeResult.put("reason", degradedToVision ? "step_failed_degraded_to_vision" : "step_failed");
-        }
-
-        Map<String, Object> done = new LinkedHashMap<>();
-        done.put("task_id", ctx.taskId);
-        done.put("package", pkg);
-        done.put("from_page", fromPage);
-        done.put("to_page", toPage);
-        done.put("ok", allOk);
-        done.put("steps", stepSummaries.size());
-        done.put("degraded_to_vision", degradedToVision);
-        trace.event("fsm_routing_done", done);
-
-        if (!allOk) {
-            if (degradedToVision) {
-                Map<String, Object> deg = new LinkedHashMap<>();
-                deg.put("task_id", ctx.taskId);
-                deg.put("package", pkg);
-                deg.put("failed_index", index);
-                deg.put("reason", "routing_step_failed_degraded_to_vision");
-                trace.event("fsm_routing_degraded_to_vision", deg);
-                return State.VISION_ACT;
-            }
-            ctx.error = "routing_step_failed";
-            return State.FAIL;
-        }
-        return State.VISION_ACT;
+        return replayTaskMapSegmentScript(ctx, pkg);
     }
 
-    private State runTaskMapSegmentRouting(Context ctx, String pkg) {
+    private State replayTaskMapSegmentScript(Context ctx, String pkg) {
         Map<String, Object> begin = new LinkedHashMap<>();
         begin.put("task_id", ctx.taskId);
         begin.put("package", pkg);
         begin.put("segment_id", ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "");
         begin.put("steps", ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.steps.size() : 0);
-        trace.event("fsm_routing_task_map_begin", begin);
+        trace.event("fsm_script_act_task_map_begin", begin);
 
         if (ctx.currentTaskMapSegment == null || ctx.currentTaskMapSegment.steps.isEmpty()) {
             ctx.taskMapReplayUsed = false;
@@ -2222,7 +1947,8 @@ public class CortexFsmEngine {
             fail.put("task_id", ctx.taskId);
             fail.put("package", pkg);
             fail.put("reason", ctx.taskMapReplayFallbackReason);
-            trace.event("fsm_routing_task_map_fallback", fail);
+            trace.event("fsm_script_act_task_map_fallback", fail);
+            emitScriptActResult(ctx, ScriptActResult.FALLBACK_VISION, pkg, "", ctx.taskMapReplayFallbackReason, 0);
             return State.VISION_ACT;
         }
 
@@ -2245,7 +1971,7 @@ public class CortexFsmEngine {
                 continue;
             }
 
-            if (recoveryAttempts < ROUTING_RECOVERY_MAX) {
+            if (recoveryAttempts < SCRIPT_ACT_RECOVERY_MAX) {
                 String failReason = stringOrEmpty(exec.step.get("reason"));
                 boolean recovered = tryTaskMapPopupRecoveryByVision(ctx, pkg, index, step, failReason);
                 Map<String, Object> recEv = new LinkedHashMap<>();
@@ -2255,13 +1981,13 @@ public class CortexFsmEngine {
                 recEv.put("step_id", step != null ? step.stepId : "");
                 recEv.put("index", index);
                 recEv.put("attempt", recoveryAttempts + 1);
-                recEv.put("max_attempts", ROUTING_RECOVERY_MAX);
+                recEv.put("max_attempts", SCRIPT_ACT_RECOVERY_MAX);
                 recEv.put("recovered", recovered);
                 recEv.put("reason", failReason);
-                trace.event("fsm_routing_task_map_recovery_result", recEv);
+                trace.event("fsm_script_act_task_map_recovery_result", recEv);
                 if (recovered) {
                     recoveryAttempts += 1;
-                    sleepQuiet(ROUTING_RECOVERY_POST_ACTION_SLEEP_MS);
+                    sleepQuiet(SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS);
                     continue;
                 }
             }
@@ -2292,7 +2018,9 @@ public class CortexFsmEngine {
             fail.put("segment_id", ctx.currentTaskMapSegment.segmentId);
             fail.put("failed_index", failedIndex);
             fail.put("reason", ctx.taskMapReplayFallbackReason);
-            trace.event("fsm_routing_task_map_fallback", fail);
+            trace.event("fsm_script_act_task_map_fallback", fail);
+            emitScriptActResult(ctx, ScriptActResult.FALLBACK_VISION, pkg,
+                    ctx.currentTaskMapSegment.segmentId, ctx.taskMapReplayFallbackReason, stepSummaries.size());
             return State.VISION_ACT;
         }
 
@@ -2303,17 +2031,39 @@ public class CortexFsmEngine {
         done.put("package", pkg);
         done.put("segment_id", ctx.currentTaskMapSegment.segmentId);
         done.put("steps", stepSummaries.size());
-        trace.event("fsm_routing_task_map_done", done);
+        trace.event("fsm_script_act_task_map_done", done);
         if (ctx.taskMap != null && ctx.taskMap.finishAfterReplay) {
             Map<String, Object> finish = new LinkedHashMap<>();
             finish.put("task_id", ctx.taskId);
             finish.put("package", pkg);
             finish.put("segment_id", ctx.currentTaskMapSegment.segmentId);
             finish.put("is_last_segment", ctx.currentSubTaskIsLast);
-            trace.event("fsm_routing_task_map_finish_after_replay", finish);
+            trace.event("fsm_script_act_task_map_finish_after_replay", finish);
+            emitScriptActResult(ctx, ScriptActResult.DONE, pkg,
+                    ctx.currentTaskMapSegment.segmentId, "finish_after_replay", stepSummaries.size());
             return State.FINISH;
         }
+        emitScriptActResult(ctx, ScriptActResult.REPLAYED, pkg,
+                ctx.currentTaskMapSegment.segmentId, "", stepSummaries.size());
         return State.VISION_ACT;
+    }
+
+    private void emitScriptActResult(
+            Context ctx,
+            ScriptActResult result,
+            String pkg,
+            String segmentId,
+            String reason,
+            int steps
+    ) {
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("task_id", ctx != null ? ctx.taskId : "");
+        ev.put("result", result != null ? result.name() : ScriptActResult.FAILED.name());
+        ev.put("package", pkg != null ? pkg : "");
+        ev.put("segment_id", segmentId != null ? segmentId : "");
+        ev.put("reason", reason != null ? reason : "");
+        ev.put("steps", steps);
+        trace.event("fsm_script_act_result", ev);
     }
 
     private boolean tryTaskMapPopupRecoveryByVision(
@@ -2333,7 +2083,7 @@ public class CortexFsmEngine {
             begin.put("source_action_id", failedStep != null ? failedStep.sourceActionId : "");
             begin.put("op", failedStep != null ? failedStep.op : "");
             begin.put("reason", failReason);
-            trace.event("fsm_routing_task_map_recovery_begin", begin);
+            trace.event("fsm_script_act_task_map_recovery_begin", begin);
 
             byte[] shotResp = perception != null ? perception.handleScreenshot() : null;
             byte[] screenshotPng = null;
@@ -2345,7 +2095,7 @@ public class CortexFsmEngine {
                 ev.put("task_id", ctx.taskId);
                 ev.put("segment_id", ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "");
                 ev.put("reason", "screenshot_unavailable");
-                trace.event("fsm_routing_task_map_recovery_skip", ev);
+                trace.event("fsm_script_act_task_map_recovery_skip", ev);
                 return false;
             }
 
@@ -2380,7 +2130,7 @@ public class CortexFsmEngine {
                 ev.put("failed_index", failedIndex);
                 ev.put("command", cmd.raw);
                 ev.put("reason", argErr);
-                trace.event("fsm_routing_task_map_recovery_invalid_command", ev);
+                trace.event("fsm_script_act_task_map_recovery_invalid_command", ev);
                 return false;
             }
 
@@ -2391,7 +2141,7 @@ public class CortexFsmEngine {
                 ev.put("failed_index", failedIndex);
                 ev.put("command", cmd.raw);
                 ev.put("result", "not_popup");
-                trace.event("fsm_routing_task_map_recovery_decision", ev);
+                trace.event("fsm_script_act_task_map_recovery_decision", ev);
                 return false;
             }
 
@@ -2401,14 +2151,14 @@ public class CortexFsmEngine {
             ev.put("failed_index", failedIndex);
             ev.put("command", cmd.raw);
             ev.put("ok", ok);
-            trace.event("fsm_routing_task_map_recovery_action", ev);
+            trace.event("fsm_script_act_task_map_recovery_action", ev);
             return ok;
         } catch (Exception e) {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
             ev.put("failed_index", failedIndex);
             ev.put("err", String.valueOf(e));
-            trace.event("fsm_routing_task_map_recovery_error", ev);
+            trace.event("fsm_script_act_task_map_recovery_error", ev);
             return false;
         }
     }
@@ -2421,7 +2171,7 @@ public class CortexFsmEngine {
             String failReason
     ) {
         StringBuilder sb = new StringBuilder();
-        sb.append("You are assisting ROUTING recovery on Android UI.\n");
+        sb.append("You are assisting SCRIPT_ACT recovery on Android UI.\n");
         sb.append("Task: determine whether a FULL-SCREEN or LARGE blocking popup/overlay is preventing learned-route replay.\n");
         sb.append("Only handle severe blockers that occupy most of the screen and block normal interaction.\n");
         sb.append("If such blocker exists, output ONE dismiss action command.\n");
@@ -2444,7 +2194,7 @@ public class CortexFsmEngine {
         sb.append("- FAIL not_popup\n\n");
         sb.append("Rules:\n");
         sb.append("1) Output exactly one command line, no extra text.\n");
-        sb.append("2) Treat as popup only when it is full-screen or large center modal/overlay (roughly >= 40% screen area), and it blocks routing interaction.\n");
+        sb.append("2) Treat as popup only when it is full-screen or large center modal/overlay (roughly >= 40% screen area), and it blocks script replay interaction.\n");
         sb.append("3) Ignore small ads/cards/inline banners/floating widgets that do not block the whole page; for these output FAIL not_popup.\n");
         sb.append("4) Only close the blocker; do not perform business actions.\n");
         sb.append("5) If uncertain, output FAIL not_popup.\n");
@@ -2466,7 +2216,7 @@ public class CortexFsmEngine {
         stepEv.put("source_action_id", step != null ? step.sourceActionId : "");
         stepEv.put("index", index);
         stepEv.put("op", step != null ? step.op : "");
-        trace.event("fsm_routing_task_map_step_start", stepEv);
+        trace.event("fsm_script_act_task_map_step_start", stepEv);
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("index", index);
@@ -2477,7 +2227,7 @@ public class CortexFsmEngine {
         if (step == null) {
             summary.put("result", "invalid_step");
             summary.put("reason", "null_step");
-            trace.event("fsm_routing_task_map_step_end", summary);
+            trace.event("fsm_script_act_task_map_step_end", summary);
             return new RouteStepExec(summary, false);
         }
 
@@ -2486,7 +2236,7 @@ public class CortexFsmEngine {
             if ("TAP".equals(op)) {
                 TaskMap.Step executableStep = ensureSemanticTapMaterialized(ctx, pkg, step, summary);
                 if (executableStep == null) {
-                    trace.event("fsm_routing_task_map_step_end", summary);
+                    trace.event("fsm_script_act_task_map_step_end", summary);
                     return new RouteStepExec(summary, false);
                 }
                 TaskMapResolvedPoint point = index == 0
@@ -2498,7 +2248,7 @@ public class CortexFsmEngine {
                 summary.put("picked_point", java.util.Arrays.asList(point.x, point.y));
                 summary.put("result", ok ? "ok" : "tap_fail");
                 summary.put("reason", ok ? "" : "tap_exec_failed");
-                trace.event("fsm_routing_task_map_step_end", summary);
+                trace.event("fsm_script_act_task_map_step_end", summary);
                 return new RouteStepExec(summary, ok);
             }
             if ("SWIPE".equals(op)) {
@@ -2510,7 +2260,7 @@ public class CortexFsmEngine {
                 summary.put("duration", spec.durationMs);
                 summary.put("result", ok ? "ok" : "swipe_fail");
                 summary.put("reason", ok ? "" : "swipe_exec_failed");
-                trace.event("fsm_routing_task_map_step_end", summary);
+                trace.event("fsm_script_act_task_map_step_end", summary);
                 return new RouteStepExec(summary, ok);
             }
             if ("INPUT".equals(op) || "BACK".equals(op) || "WAIT".equals(op)) {
@@ -2518,17 +2268,17 @@ public class CortexFsmEngine {
                 boolean ok = execActionCommand(ctx, cmd);
                 summary.put("result", ok ? "ok" : "action_fail");
                 summary.put("reason", ok ? "" : "action_exec_failed");
-                trace.event("fsm_routing_task_map_step_end", summary);
+                trace.event("fsm_script_act_task_map_step_end", summary);
                 return new RouteStepExec(summary, ok);
             }
             summary.put("result", "unsupported");
             summary.put("reason", "unsupported_task_map_op:" + op);
-            trace.event("fsm_routing_task_map_step_end", summary);
+            trace.event("fsm_script_act_task_map_step_end", summary);
             return new RouteStepExec(summary, false);
         } catch (Exception e) {
             summary.put("result", "resolve_fail");
             summary.put("reason", String.valueOf(e));
-            trace.event("fsm_routing_task_map_step_end", summary);
+            trace.event("fsm_script_act_task_map_step_end", summary);
             return new RouteStepExec(summary, false);
         }
     }
@@ -2722,7 +2472,7 @@ public class CortexFsmEngine {
             LocatorResolver resolver,
             int index
     ) throws Exception {
-        long deadline = System.currentTimeMillis() + ROUTING_FIRST_STEP_WINDOW_MS;
+        long deadline = System.currentTimeMillis() + SCRIPT_ACT_FIRST_STEP_WINDOW_MS;
         int probes = 0;
         String lastErr = "";
         while (System.currentTimeMillis() <= deadline) {
@@ -2735,16 +2485,16 @@ public class CortexFsmEngine {
                 hitEv.put("index", index);
                 hitEv.put("probe", probes);
                 hitEv.put("picked_stage", point.pickedStage);
-                trace.event("fsm_routing_task_map_first_step_hit", hitEv);
+                trace.event("fsm_script_act_task_map_first_step_hit", hitEv);
                 return point;
             } catch (Exception e) {
                 lastErr = String.valueOf(e);
             }
-            boolean skipTapped = tryTapRoutingSkipCandidate(ctx, pkg, index, probes);
+            boolean skipTapped = tryTapScriptActSkipCandidate(ctx, pkg, index, probes);
             if (skipTapped) {
-                sleepQuiet(ROUTING_FIRST_STEP_AFTER_SKIP_SLEEP_MS);
+                sleepQuiet(SCRIPT_ACT_FIRST_STEP_AFTER_SKIP_SLEEP_MS);
             }
-            sleepQuiet(ROUTING_FIRST_STEP_SAMPLE_MS);
+            sleepQuiet(SCRIPT_ACT_FIRST_STEP_SAMPLE_MS);
         }
         throw new IllegalStateException(lastErr.isEmpty()
                 ? "task_map_first_step_window_timeout"
@@ -2759,7 +2509,7 @@ public class CortexFsmEngine {
             int index
     ) throws Exception {
         Exception last = null;
-        for (int attempt = 1; attempt <= ROUTING_STEP_RESOLVE_RETRY_MAX; attempt++) {
+        for (int attempt = 1; attempt <= SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX; attempt++) {
             try {
                 TaskMapResolvedPoint point = resolveTaskMapTapPointByPriority(step, resolver);
                 if (attempt > 1) {
@@ -2770,7 +2520,7 @@ public class CortexFsmEngine {
                     recovered.put("attempt", attempt);
                     recovered.put("result", "recovered");
                     recovered.put("picked_stage", point.pickedStage);
-                    trace.event("fsm_routing_task_map_step_retry", recovered);
+                    trace.event("fsm_script_act_task_map_step_retry", recovered);
                 }
                 return point;
             } catch (Exception e) {
@@ -2780,12 +2530,12 @@ public class CortexFsmEngine {
                 retryEv.put("package", pkg);
                 retryEv.put("index", index);
                 retryEv.put("attempt", attempt);
-                retryEv.put("max_attempts", ROUTING_STEP_RESOLVE_RETRY_MAX);
+                retryEv.put("max_attempts", SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX);
                 retryEv.put("reason", String.valueOf(e));
-                retryEv.put("retrying", attempt < ROUTING_STEP_RESOLVE_RETRY_MAX);
-                trace.event("fsm_routing_task_map_step_retry", retryEv);
-                if (attempt < ROUTING_STEP_RESOLVE_RETRY_MAX) {
-                    sleepQuiet(ROUTING_STEP_RESOLVE_RETRY_SLEEP_MS);
+                retryEv.put("retrying", attempt < SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX);
+                trace.event("fsm_script_act_task_map_step_retry", retryEv);
+                if (attempt < SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX) {
+                    sleepQuiet(SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS);
                 }
             }
         }
@@ -3178,10 +2928,10 @@ public class CortexFsmEngine {
     }
 
     /**
-     * Launch app for routing, Java port of Python RouteThenActCortex._execute_route launch step.
+     * Launch app for app entry, Java port of Python RouteThenActCortex._execute_route launch step.
      * Always uses CLEAR_TASK flag so each route starts from a clean task stack.
      */
-    private boolean launchAppForRouting(Context ctx, String packageName) {
+    private boolean launchAppForAppEnter(Context ctx, String packageName) {
         try {
             for (int attempt = 1; attempt <= LAUNCH_RETRY_MAX; attempt++) {
                 ActivityInfo pre = getCurrentActivityInfoForRouting();
@@ -3193,7 +2943,7 @@ public class CortexFsmEngine {
                 begin.put("pre_activity", pre.activityName);
                 begin.put("screen_state", getScreenStateCode());
                 begin.put("lock_hint", isLikelyLockscreenShown());
-                trace.event("fsm_routing_launch_attempt_begin", begin);
+                trace.event("fsm_app_enter_launch_attempt_begin", begin);
 
                 if (!ensureUnlockedBeforeRoute(ctx, packageName, attempt)) {
                     Map<String, Object> skip = new LinkedHashMap<>();
@@ -3201,20 +2951,20 @@ public class CortexFsmEngine {
                     skip.put("package", packageName);
                     skip.put("attempt", attempt);
                     skip.put("reason", "unlock_not_ready");
-                    trace.event("fsm_routing_launch_attempt_skip", skip);
+                    trace.event("fsm_app_enter_launch_attempt_skip", skip);
                     continue;
                 }
-                boolean launchOk = launchAppClearTaskForRouting(packageName);
+                boolean launchOk = launchAppClearTaskForAppEnter(packageName);
                 if (launchOk) {
                     Map<String, Object> postWaitEv = new LinkedHashMap<>();
                     postWaitEv.put("task_id", ctx.taskId);
                     postWaitEv.put("package", packageName);
                     postWaitEv.put("attempt", attempt);
                     postWaitEv.put("wait_ms", LAUNCH_POST_START_WAIT_MS);
-                    trace.event("fsm_routing_launch_post_wait", postWaitEv);
+                    trace.event("fsm_app_enter_launch_post_wait", postWaitEv);
                     sleepQuiet(LAUNCH_POST_START_WAIT_MS);
                 }
-                boolean packageReady = launchOk && waitForForegroundPackageForRouting(
+                boolean packageReady = launchOk && waitForForegroundPackageForAppEnter(
                         packageName, LAUNCH_WAIT_TIMEOUT_MS, LAUNCH_WAIT_SAMPLE_MS, LAUNCH_READY_REQUIRED_HITS
                 );
                 ActivityInfo post = getCurrentActivityInfoForRouting();
@@ -3249,7 +2999,7 @@ public class CortexFsmEngine {
                 if (uiFingerprint != null) {
                     ev.put("ui", uiFingerprint);
                 }
-                trace.event("fsm_routing_launch_attempt", ev);
+                trace.event("fsm_app_enter_launch_attempt", ev);
 
                 if (launchOk && packageReady) {
                     return true;
@@ -3260,356 +3010,18 @@ public class CortexFsmEngine {
             ev.put("package", packageName);
             ev.put("attempts", LAUNCH_RETRY_MAX);
             ev.put("reason", "package_not_ready");
-            trace.event("fsm_routing_launch_failed", ev);
+            trace.event("fsm_app_enter_launch_failed", ev);
             return false;
         } catch (Exception e) {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("package", packageName);
             ev.put("err", String.valueOf(e));
-            trace.event("fsm_routing_launch_err", ev);
+            trace.event("fsm_app_enter_launch_err", ev);
             return false;
         }
     }
 
-    private RouteStepExec executeFirstRoutingStepWithWindow(
-            Context ctx,
-            String pkg,
-            RouteMap.Transition t,
-            LocatorResolver resolver,
-            int index
-    ) {
-        Map<String, Object> stepEv = new LinkedHashMap<>();
-        stepEv.put("task_id", ctx.taskId);
-        stepEv.put("package", pkg);
-        stepEv.put("from_page", t.fromPage);
-        stepEv.put("to_page", t.toPage);
-        stepEv.put("index", index);
-        stepEv.put("description", t.description);
-        stepEv.put("window_ms", ROUTING_FIRST_STEP_WINDOW_MS);
-        trace.event("fsm_routing_step_start", stepEv);
-
-        Map<String, Object> step = new LinkedHashMap<>();
-        step.put("index", index);
-        step.put("from", t.fromPage);
-        step.put("to", t.toPage);
-        step.put("description", t.description);
-        step.put("first_step_window_ms", ROUTING_FIRST_STEP_WINDOW_MS);
-
-        Locator locator = t.action != null ? t.action.locator : null;
-        if (locator == null) {
-            step.put("result", "resolve_fail");
-            step.put("reason", "missing_locator");
-            trace.event("fsm_routing_step_end", step);
-            return new RouteStepExec(step, false);
-        }
-
-        long deadline = System.currentTimeMillis() + ROUTING_FIRST_STEP_WINDOW_MS;
-        int probes = 0;
-        String lastResolveErr = "";
-
-        while (System.currentTimeMillis() <= deadline) {
-            probes += 1;
-
-            try {
-                ResolvedNode node = resolver.resolve(locator);
-                int cx = (node.bounds.left + node.bounds.right) / 2;
-                int cy = (node.bounds.top + node.bounds.bottom) / 2;
-
-                ByteBuffer tapPayload = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN);
-                tapPayload.putShort((short) cx);
-                tapPayload.putShort((short) cy);
-                byte[] resp = execution.handleTap(tapPayload.array());
-
-                step.put("picked_stage", node.pickedStage);
-                step.put("picked_bounds", node.bounds.toList());
-                step.put("tap_resp_len", resp != null ? resp.length : 0);
-                step.put("window_probe_count", probes);
-                step.put("result", "ok");
-                step.put("reason", "first_step_window_route_hit");
-
-                Map<String, Object> hitEv = new LinkedHashMap<>();
-                hitEv.put("task_id", ctx.taskId);
-                hitEv.put("package", pkg);
-                hitEv.put("index", index);
-                hitEv.put("probe", probes);
-                hitEv.put("x", cx);
-                hitEv.put("y", cy);
-                hitEv.put("picked_stage", node.pickedStage);
-                trace.event("fsm_routing_first_step_route_hit", hitEv);
-
-                trace.event("fsm_routing_step_end", step);
-                return new RouteStepExec(step, true);
-            } catch (Exception e) {
-                lastResolveErr = String.valueOf(e);
-            }
-
-            boolean skipTapped = tryTapRoutingSkipCandidate(ctx, pkg, index, probes);
-            if (skipTapped) {
-                sleepQuiet(ROUTING_FIRST_STEP_AFTER_SKIP_SLEEP_MS);
-            }
-            sleepQuiet(ROUTING_FIRST_STEP_SAMPLE_MS);
-        }
-
-        step.put("window_probe_count", probes);
-        step.put("result", "resolve_fail");
-        step.put("reason", lastResolveErr.isEmpty()
-                ? "first_step_window_timeout"
-                : ("first_step_window_timeout:" + lastResolveErr));
-        trace.event("fsm_routing_step_end", step);
-        return new RouteStepExec(step, false);
-    }
-
-    private RouteStepExec executeRegularRoutingStep(
-            Context ctx,
-            String pkg,
-            RouteMap.Transition t,
-            LocatorResolver resolver,
-            int index
-    ) {
-        Map<String, Object> stepEv = new LinkedHashMap<>();
-        stepEv.put("task_id", ctx.taskId);
-        stepEv.put("package", pkg);
-        stepEv.put("from_page", t.fromPage);
-        stepEv.put("to_page", t.toPage);
-        stepEv.put("index", index);
-        stepEv.put("description", t.description);
-        trace.event("fsm_routing_step_start", stepEv);
-
-        Map<String, Object> step = new LinkedHashMap<>();
-        step.put("index", index);
-        step.put("from", t.fromPage);
-        step.put("to", t.toPage);
-        step.put("description", t.description);
-
-        String result = "ok";
-        String reason = "";
-        String pickedStage = "";
-        List<Object> pickedBounds = null;
-
-        try {
-            Locator locator = t.action != null ? t.action.locator : null;
-            if (locator == null) {
-                result = "resolve_fail";
-                reason = "missing_locator";
-            } else {
-                ResolvedNode node = null;
-                String lastResolveErr = "";
-                int resolveAttempts = 0;
-                for (int resolveAttempt = 1; resolveAttempt <= ROUTING_STEP_RESOLVE_RETRY_MAX; resolveAttempt++) {
-                    resolveAttempts = resolveAttempt;
-                    try {
-                        node = resolver.resolve(locator);
-                        if (resolveAttempt > 1) {
-                            Map<String, Object> okRetryEv = new LinkedHashMap<>();
-                            okRetryEv.put("task_id", ctx.taskId);
-                            okRetryEv.put("package", pkg);
-                            okRetryEv.put("index", index);
-                            okRetryEv.put("attempt", resolveAttempt);
-                            okRetryEv.put("result", "recovered");
-                            trace.event("fsm_routing_step_resolve_retry", okRetryEv);
-                        }
-                        break;
-                    } catch (Exception re) {
-                        lastResolveErr = String.valueOf(re);
-                        Map<String, Object> retryEv = new LinkedHashMap<>();
-                        retryEv.put("task_id", ctx.taskId);
-                        retryEv.put("package", pkg);
-                        retryEv.put("index", index);
-                        retryEv.put("attempt", resolveAttempt);
-                        retryEv.put("max_attempts", ROUTING_STEP_RESOLVE_RETRY_MAX);
-                        retryEv.put("reason", lastResolveErr);
-                        retryEv.put("retrying", resolveAttempt < ROUTING_STEP_RESOLVE_RETRY_MAX);
-                        trace.event("fsm_routing_step_resolve_retry", retryEv);
-                        if (resolveAttempt < ROUTING_STEP_RESOLVE_RETRY_MAX) {
-                            sleepQuiet(ROUTING_STEP_RESOLVE_RETRY_SLEEP_MS);
-                        }
-                    }
-                }
-
-                step.put("resolve_attempts", resolveAttempts);
-                if (node == null) {
-                    result = "resolve_fail";
-                    reason = lastResolveErr.isEmpty() ? "resolve_failed_after_retries" : lastResolveErr;
-                } else {
-                    pickedStage = node.pickedStage;
-                    pickedBounds = node.bounds.toList();
-
-                    int cx = (node.bounds.left + node.bounds.right) / 2;
-                    int cy = (node.bounds.top + node.bounds.bottom) / 2;
-
-                    ByteBuffer tapPayload = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN);
-                    tapPayload.putShort((short) cx);
-                    tapPayload.putShort((short) cy);
-                    byte[] resp = execution.handleTap(tapPayload.array());
-
-                    step.put("tap_resp_len", resp != null ? resp.length : 0);
-                }
-            }
-        } catch (Exception e) {
-            String msg = String.valueOf(e);
-            if (result.startsWith("resolve")) {
-                result = "resolve_fail";
-            } else {
-                result = "tap_fail";
-            }
-            reason = msg;
-        }
-
-        step.put("picked_stage", pickedStage);
-        if (pickedBounds != null) {
-            step.put("picked_bounds", pickedBounds);
-        }
-        step.put("result", result);
-        step.put("reason", reason);
-
-        trace.event("fsm_routing_step_end", step);
-        return new RouteStepExec(step, "ok".equals(result));
-    }
-
-    private boolean tryRoutePopupRecoveryByVision(
-            Context ctx,
-            String pkg,
-            int failedIndex,
-            RouteMap.Transition failedTransition,
-            String failReason
-    ) {
-        try {
-            Map<String, Object> begin = new LinkedHashMap<>();
-            begin.put("task_id", ctx.taskId);
-            begin.put("package", pkg);
-            begin.put("failed_index", failedIndex);
-            begin.put("from_page", failedTransition != null ? failedTransition.fromPage : "");
-            begin.put("to_page", failedTransition != null ? failedTransition.toPage : "");
-            begin.put("reason", failReason);
-            trace.event("fsm_routing_recovery_begin", begin);
-
-            byte[] shotResp = perception != null ? perception.handleScreenshot() : null;
-            byte[] screenshotPng = null;
-            if (shotResp != null && shotResp.length > 1 && shotResp[0] != 0x00) {
-                screenshotPng = Arrays.copyOfRange(shotResp, 1, shotResp.length);
-            }
-            if (screenshotPng == null || screenshotPng.length == 0) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("task_id", ctx.taskId);
-                ev.put("reason", "screenshot_unavailable");
-                trace.event("fsm_routing_recovery_skip", ev);
-                return false;
-            }
-
-            LlmConfig cfg = LlmConfig.loadDefault();
-            String prompt = buildRoutingRecoveryPrompt(ctx, pkg, failedIndex, failedTransition, failReason);
-            Map<String, Object> promptEv = new LinkedHashMap<>();
-            promptEv.put("task_id", ctx.taskId);
-            promptEv.put("failed_index", failedIndex);
-            promptEv.put("prompt", prompt);
-            trace.event("llm_prompt_routing_recovery", promptEv);
-
-            String raw = llmClient.chatOnce(cfg, null, prompt, screenshotPng);
-            Map<String, Object> respEv = new LinkedHashMap<>();
-            respEv.put("task_id", ctx.taskId);
-            respEv.put("failed_index", failedIndex);
-            respEv.put("response", raw != null && raw.length() > 2000 ? raw.substring(0, 2000) + "..." : raw);
-            trace.event("llm_response_routing_recovery", respEv);
-
-            String normalized = CortexLlmHelper.normalizeModelOutput(raw, State.VISION_ACT, ctx);
-            List<Instruction> cmds = parseInstructions(normalized, 1);
-            if (cmds == null || cmds.isEmpty()) {
-                return false;
-            }
-
-            Instruction cmd = cmds.get(0);
-            String argErr = validateVisionCommandArgs(cmd);
-            if (!argErr.isEmpty()) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("task_id", ctx.taskId);
-                ev.put("failed_index", failedIndex);
-                ev.put("command", cmd.raw);
-                ev.put("reason", argErr);
-                trace.event("fsm_routing_recovery_invalid_command", ev);
-                return false;
-            }
-
-            String op = cmd.op != null ? cmd.op : "";
-            if ("FAIL".equals(op) || "DONE".equals(op)) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("task_id", ctx.taskId);
-                ev.put("failed_index", failedIndex);
-                ev.put("command", cmd.raw);
-                ev.put("result", "not_popup");
-                trace.event("fsm_routing_recovery_decision", ev);
-                return false;
-            }
-            if (!"TAP".equals(op) && !"BACK".equals(op) && !"WAIT".equals(op)) {
-                Map<String, Object> ev = new LinkedHashMap<>();
-                ev.put("task_id", ctx.taskId);
-                ev.put("failed_index", failedIndex);
-                ev.put("command", cmd.raw);
-                ev.put("result", "unsupported_op");
-                trace.event("fsm_routing_recovery_decision", ev);
-                return false;
-            }
-
-            boolean ok = execActionCommand(ctx, cmd);
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("task_id", ctx.taskId);
-            done.put("failed_index", failedIndex);
-            done.put("command", cmd.raw);
-            done.put("op", op);
-            done.put("action_ok", ok);
-            trace.event("fsm_routing_recovery_exec", done);
-            if (ok) {
-                ctx.error = "";
-            }
-            return ok;
-        } catch (Exception e) {
-            Map<String, Object> ev = new LinkedHashMap<>();
-            ev.put("task_id", ctx != null ? ctx.taskId : "");
-            ev.put("package", pkg);
-            ev.put("failed_index", failedIndex);
-            ev.put("err", String.valueOf(e));
-            trace.event("fsm_routing_recovery_err", ev);
-            return false;
-        }
-    }
-
-    private String buildRoutingRecoveryPrompt(
-            Context ctx,
-            String pkg,
-            int failedIndex,
-            RouteMap.Transition failedTransition,
-            String failReason
-    ) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("You are assisting ROUTING recovery on Android UI.\n");
-        sb.append("Task: determine whether a FULL-SCREEN or LARGE blocking popup/overlay is preventing route locator matching.\n");
-        sb.append("Only handle severe blockers that occupy most of the screen and block normal interaction.\n");
-        sb.append("If such blocker exists, output ONE dismiss action command.\n");
-        sb.append("If not, output FAIL not_popup.\n");
-        sb.append("\n");
-        sb.append("Current context:\n");
-        sb.append("- package: ").append(pkg).append("\n");
-        sb.append("- user_task: ").append(ctx != null ? stringOrEmpty(ctx.userTask) : "").append("\n");
-        sb.append("- failed_route_step_index: ").append(failedIndex).append("\n");
-        sb.append("- failed_from_page: ").append(failedTransition != null ? stringOrEmpty(failedTransition.fromPage) : "").append("\n");
-        sb.append("- failed_to_page: ").append(failedTransition != null ? stringOrEmpty(failedTransition.toPage) : "").append("\n");
-        sb.append("- failed_reason: ").append(failReason != null ? failReason : "").append("\n");
-        sb.append("\n");
-        sb.append("Allowed outputs (one line only):\n");
-        sb.append("- TAP x y      (x,y normalized in [0,1000])\n");
-        sb.append("- BACK\n");
-        sb.append("- WAIT ms\n");
-        sb.append("- FAIL not_popup\n");
-        sb.append("\n");
-        sb.append("Rules:\n");
-        sb.append("1) Output exactly one command line, no extra text.\n");
-        sb.append("2) Treat as popup only when it is full-screen or large center modal/overlay (roughly >= 40% screen area), and it blocks routing interaction.\n");
-        sb.append("3) Ignore small ads/cards/inline banners/floating widgets that do not block the whole page; for these output FAIL not_popup.\n");
-        sb.append("4) Only close the blocker; do not perform business actions.\n");
-        sb.append("5) If uncertain, output FAIL not_popup.\n");
-        return sb.toString();
-    }
-
-    private boolean tryTapRoutingSkipCandidate(Context ctx, String pkg, int stepIndex, int probeIndex) {
+    private boolean tryTapScriptActSkipCandidate(Context ctx, String pkg, int stepIndex, int probeIndex) {
         try {
             byte[] payload = perception != null ? perception.handleDumpActions(new byte[0]) : null;
             List<DumpActionsParser.ActionNode> nodes = DumpActionsParser.parse(payload);
@@ -3659,10 +3071,10 @@ public class CortexFsmEngine {
                 probeEv.put("best_text", best.label);
                 probeEv.put("best_x", best.x);
                 probeEv.put("best_y", best.y);
-                trace.event("fsm_routing_first_step_skip_probe", probeEv);
+                trace.event("fsm_script_act_first_step_skip_probe", probeEv);
             }
 
-            if (best == null || best.score < ROUTING_FIRST_STEP_SKIP_MIN_SCORE) {
+            if (best == null || best.score < SCRIPT_ACT_FIRST_STEP_SKIP_MIN_SCORE) {
                 return false;
             }
 
@@ -3677,7 +3089,7 @@ public class CortexFsmEngine {
             tapEv.put("score", best.score);
             tapEv.put("text", best.label);
             tapEv.put("tap_ok", tapOk);
-            trace.event("fsm_routing_first_step_skip_tap", tapEv);
+            trace.event("fsm_script_act_first_step_skip_tap", tapEv);
             return tapOk;
         } catch (Exception e) {
             Map<String, Object> ev = new LinkedHashMap<>();
@@ -3686,12 +3098,12 @@ public class CortexFsmEngine {
             ev.put("index", stepIndex);
             ev.put("probe", probeIndex);
             ev.put("err", String.valueOf(e));
-            trace.event("fsm_routing_first_step_skip_err", ev);
+            trace.event("fsm_script_act_first_step_skip_err", ev);
             return false;
         }
     }
 
-    private boolean launchAppClearTaskForRouting(String packageName) {
+    private boolean launchAppClearTaskForAppEnter(String packageName) {
         byte[] pkgBytes = packageName.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buf = ByteBuffer.allocate(1 + 2 + pkgBytes.length).order(ByteOrder.BIG_ENDIAN);
         int flags = 0x01; // CLEAR_TASK
@@ -3704,12 +3116,12 @@ public class CortexFsmEngine {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("package", packageName);
             ev.put("status", resp != null && resp.length > 0 ? (int) resp[0] : 0);
-            trace.event("fsm_routing_launch_status", ev);
+            trace.event("fsm_app_enter_launch_status", ev);
         }
         return ok;
     }
 
-    private boolean waitForForegroundPackageForRouting(
+    private boolean waitForForegroundPackageForAppEnter(
             String expectedPackage, long timeoutMs, long sampleMs, int requiredHits
     ) {
         long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);

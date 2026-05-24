@@ -51,7 +51,6 @@ public final class CommandIds {
     public static final byte CMD_CORTEX_RESOLVE_LOCATOR = 0x72; // resolve locator -> bounds
     public static final byte CMD_CORTEX_TAP_LOCATOR = 0x73;     // resolve + tap
     public static final byte CMD_CORTEX_TRACE_PULL = 0x74;      // pull trace lines (jsonl)
-    public static final byte CMD_CORTEX_ROUTE_RUN = 0x75;       // run route-only FSM (sync)
     public static final byte CMD_CORTEX_FSM_RUN = 0x76;         // run full Cortex FSM (sync, WIP)
     public static final byte CMD_CORTEX_TASK_STATUS = 0x77;     // query FSM task status by task_id
     public static final byte CMD_CORTEX_FSM_CANCEL = 0x78;      // request cancellation of current FSM task

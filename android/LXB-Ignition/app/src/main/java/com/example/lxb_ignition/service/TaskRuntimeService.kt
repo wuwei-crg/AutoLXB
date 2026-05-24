@@ -124,9 +124,10 @@ class TaskRuntimeService : Service() {
         val title = when (phase.uppercase()) {
             "SETTLING" -> "LXB Running - Settling UI"
             "VISION_LLM" -> "LXB Running - Calling LLM/VLM"
-            "ROUTING" -> "LXB Running - Routing"
+            "DEVICE_PREPARE" -> "LXB Running - Preparing Device"
             "APP_RESOLVE" -> "LXB Running - Resolving App"
-            "ROUTE_PLAN" -> "LXB Running - Planning Route"
+            "APP_ENTER" -> "LXB Running - Entering App"
+            "SCRIPT_ACT" -> "LXB Running - Running Script"
             "FAILED" -> "LXB Task Failed"
             "DONE" -> "LXB Task Done"
             "CANCELLING" -> "LXB Task Cancelling"
