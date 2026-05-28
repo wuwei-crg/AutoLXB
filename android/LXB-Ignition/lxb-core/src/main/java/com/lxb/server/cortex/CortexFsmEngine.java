@@ -149,6 +149,7 @@ public class CortexFsmEngine {
         public String unlockPin = "";
         public boolean useMap = true;
         public String mapSource = "stable";
+        public int maxTaskSteps = LlmConfig.DEFAULT_MAX_TASK_STEPS;
         public boolean unlockedByFsm = false;
         public UnlockReadyCallback unlockReadyCallback = null;
         public boolean unlockReadyNotified = false;
@@ -209,8 +210,6 @@ public class CortexFsmEngine {
     private static final long SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS = 300L;
     private static final int SCRIPT_ACT_RECOVERY_MAX = 2;
     private static final long SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS = 300L;
-    private static final int VISION_MAX_TURNS_SINGLE = 100;
-    private static final int VISION_MAX_TURNS_LOOP = 100;
     private static final int KEYCODE_HOME = 3;
     private static final int KEYCODE_WAKEUP = 224;
     private static final int KEYCODE_POWER = 26;
@@ -568,8 +567,10 @@ public class CortexFsmEngine {
                 // Memory fast path is intentionally disabled for now.
                 // Task-route hits skip decomposition and app resolution.
                 state = ctx.hasTaskRoute ? State.APP_ENTER : State.APP_RESOLVE;
-                int subTaskStepLimit = Math.max(40, resolveVisionMaxTurns(ctx) + 20);
-                for (int step = 0; step < subTaskStepLimit; step++) {
+                int subTaskStepLimit = resolveMaxTaskSteps(ctx);
+                int fsmStepCount = 0;
+                while (subTaskStepLimit <= 0 || fsmStepCount < subTaskStepLimit) {
+                    fsmStepCount++;
                     notifyUnlockReadyIfNeeded(ctx, "sub_task_loop");
                     if (cancellationChecker != null && cancellationChecker.isCancelled()) {
                         ctx.error = "cancelled_by_user";
@@ -603,13 +604,15 @@ public class CortexFsmEngine {
                     state = State.FAIL;
                     break;
                 }
-                if (state != State.FINISH && state != State.FAIL) {
+                if (subTaskStepLimit > 0 && state != State.FINISH && state != State.FAIL) {
                     ctx.error = "sub_task_step_limit_exceeded";
                     Map<String, Object> limitEv = new LinkedHashMap<>();
                     limitEv.put("task_id", ctx.taskId);
                     limitEv.put("sub_task_id", st.id);
                     limitEv.put("mode", st.mode);
                     limitEv.put("step_limit", subTaskStepLimit);
+                    limitEv.put("max_task_steps", ctx.maxTaskSteps);
+                    limitEv.put("fsm_steps", fsmStepCount);
                     limitEv.put("vision_turns", ctx.visionTurns);
                     limitEv.put("state", state.name());
                     trace.event("fsm_sub_task_step_limit", limitEv);
@@ -667,6 +670,7 @@ public class CortexFsmEngine {
             out.put("auto_lock_after_task", ctx.autoLockAfterTask);
             out.put("use_map", ctx.useMap);
             out.put("map_source", ctx.mapSource);
+            out.put("max_task_steps", ctx.maxTaskSteps);
             out.put("unlocked_by_fsm", ctx.unlockedByFsm);
             out.put("task_map_mode", ctx.taskMapMode);
             out.put("route_id", ctx.taskRouteKeyHash);
@@ -3116,6 +3120,7 @@ public class CortexFsmEngine {
         ctx.unlockPin = "";
         ctx.useMap = true;
         ctx.mapSource = "stable";
+        ctx.maxTaskSteps = LlmConfig.DEFAULT_MAX_TASK_STEPS;
         try {
             LlmConfig cfg = LlmConfig.loadDefault();
             ctx.autoUnlockBeforeRoute = cfg.autoUnlockBeforeRoute;
@@ -3123,6 +3128,7 @@ public class CortexFsmEngine {
             ctx.unlockPin = cfg.unlockPin != null ? cfg.unlockPin.trim() : "";
             ctx.useMap = cfg.useMap;
             ctx.mapSource = cfg.mapSource != null ? cfg.mapSource.trim() : "stable";
+            ctx.maxTaskSteps = cfg.maxTaskSteps;
 
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
@@ -3130,6 +3136,8 @@ public class CortexFsmEngine {
             ev.put("auto_lock_after_task", ctx.autoLockAfterTask);
             ev.put("use_map", ctx.useMap);
             ev.put("map_source", ctx.mapSource);
+            ev.put("max_task_steps", ctx.maxTaskSteps);
+            ev.put("max_task_steps_unlimited", ctx.maxTaskSteps <= 0);
             ev.put("has_unlock_pin", !ctx.unlockPin.isEmpty());
             trace.event("fsm_unlock_policy_loaded", ev);
         } catch (Exception e) {
@@ -3141,6 +3149,8 @@ public class CortexFsmEngine {
             ev.put("auto_lock_after_task", ctx.autoLockAfterTask);
             ev.put("use_map", ctx.useMap);
             ev.put("map_source", ctx.mapSource);
+            ev.put("max_task_steps", ctx.maxTaskSteps);
+            ev.put("max_task_steps_unlimited", ctx.maxTaskSteps <= 0);
             trace.event("fsm_unlock_policy_default", ev);
         }
     }
@@ -3935,11 +3945,8 @@ public class CortexFsmEngine {
             trace.event("task_route_record_begin", beginEv);
         }
 
-        // Turn limit by sub_task mode:
-        // - single: 100
-        // - loop: 100
         int maxTurns = resolveVisionMaxTurns(ctx);
-        if (ctx.visionTurns >= maxTurns) {
+        if (maxTurns > 0 && ctx.visionTurns >= maxTurns) {
             ctx.error = "vision_turn_limit";
             Map<String, Object> fail = new LinkedHashMap<>();
             fail.put("task_id", ctx.taskId);
@@ -4759,11 +4766,14 @@ public class CortexFsmEngine {
     }
 
     private int resolveVisionMaxTurns(Context ctx) {
-        String mode = resolveCurrentSubTaskMode(ctx);
-        if ("loop".equals(mode)) {
-            return VISION_MAX_TURNS_LOOP;
+        return resolveMaxTaskSteps(ctx);
+    }
+
+    private int resolveMaxTaskSteps(Context ctx) {
+        if (ctx == null) {
+            return LlmConfig.DEFAULT_MAX_TASK_STEPS;
         }
-        return VISION_MAX_TURNS_SINGLE;
+        return ctx.maxTaskSteps <= 0 ? 0 : ctx.maxTaskSteps;
     }
 
     private String validateVisionCommandArgs(Instruction cmd) {

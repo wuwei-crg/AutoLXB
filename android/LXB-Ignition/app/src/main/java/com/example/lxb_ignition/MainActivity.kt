@@ -2031,6 +2031,13 @@ private val ZhMap = mapOf(
     "ADB Keyboard is recommended because it gives the most reliable input experience." to "推荐使用 ADB Keyboard，因为它通常能提供最稳定的输入体验。",
     "Task-time Do Not Disturb" to "任务期间免打扰",
     "Choose what happens to DND automatically when a task begins." to "选择任务开始时要自动如何处理免打扰。",
+    "Task step limit" to "任务步数限制",
+    "Limits state-machine/vision turns per sub-task. Set 0 for unlimited." to "限制每个子任务的状态机/视觉执行轮数，设为 0 表示无限制。",
+    "No step limit" to "无步数限制",
+    "Allow tasks to run without stopping on a step count. Cancellation still works." to "允许任务不因步数停止，仍可手动取消。",
+    "Maximum steps" to "最大步数",
+    "0 means unlimited; default is 100." to "0 表示无限制；默认 100。",
+    "Unlimited" to "无限制",
     "Apply changes" to "应用更改",
     "Push the current control configuration to core now, or only save it locally." to "现在就把当前操控配置推送到 Core，或者只保存在本地。",
     "Touch mode profile" to "触摸策略档位",
@@ -5658,9 +5665,11 @@ fun LxbCoreConfigCard(viewModel: MainViewModel) {
     val lxbPort by viewModel.lxbPort.collectAsState()
     val touchMode by viewModel.touchMode.collectAsState()
     val taskDndMode by viewModel.taskDndMode.collectAsState()
+    val maxTaskSteps by viewModel.maxTaskSteps.collectAsState()
     val adbKeyboardUiState by viewModel.adbKeyboardUiState.collectAsState()
     val coreConfigResult by viewModel.coreConfigResult.collectAsState()
     val coreRuntime by viewModel.coreRuntimeStatus.collectAsState()
+    val maxTaskStepsUnlimited = maxTaskSteps.trim().toIntOrNull()?.let { it <= 0 } == true
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -5801,6 +5810,31 @@ fun LxbCoreConfigCard(viewModel: MainViewModel) {
                     onClick = { viewModel.setTaskDndMode(MainViewModel.TASK_DND_MODE_NONE) }
                 )
             }
+        }
+
+        SettingsSectionCard(
+            title = tr("Task step limit"),
+            subtitle = tr("Limits state-machine/vision turns per sub-task. Set 0 for unlimited."),
+            glyph = "∞"
+        ) {
+            PreferenceSwitchRow(
+                title = tr("No step limit"),
+                detail = tr("Allow tasks to run without stopping on a step count. Cancellation still works."),
+                checked = maxTaskStepsUnlimited,
+                onCheckedChange = { viewModel.setMaxTaskStepsUnlimited(it) }
+            )
+            OutlinedTextField(
+                value = if (maxTaskStepsUnlimited) tr("Unlimited") else maxTaskSteps,
+                onValueChange = { viewModel.setMaxTaskSteps(it) },
+                enabled = !maxTaskStepsUnlimited,
+                label = { Text(tr("Maximum steps")) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                supportingText = {
+                    Text(tr("0 means unlimited; default is 100."))
+                }
+            )
         }
 
         SettingsSectionCard(

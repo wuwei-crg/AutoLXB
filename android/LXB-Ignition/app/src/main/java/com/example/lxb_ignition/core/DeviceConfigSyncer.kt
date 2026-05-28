@@ -16,7 +16,8 @@ data class DeviceLlmSettings(
     val unlockPin: String,
     val useMap: Boolean,
     val mapSource: String,
-    val taskDndMode: String
+    val taskDndMode: String,
+    val maxTaskSteps: Int
 )
 
 class DeviceConfigSyncer(
@@ -35,6 +36,7 @@ class DeviceConfigSyncer(
             .put("use_map", settings.useMap)
             .put("map_source", settings.mapSource)
             .put("task_dnd_mode", settings.taskDndMode)
+            .put("max_task_steps", settings.maxTaskSteps)
             .toString()
     }
 

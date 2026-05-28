@@ -141,6 +141,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_UI_LANG_MANUAL = "ui_lang_manual"
         private const val KEY_TOUCH_MODE = "touch_mode"
         private const val KEY_TASK_DND_MODE = "task_dnd_mode"
+        private const val KEY_MAX_TASK_STEPS = "max_task_steps"
+        private const val DEFAULT_MAX_TASK_STEPS = "100"
+        private const val MAX_TASK_STEPS_UNLIMITED = "0"
         private const val DEFAULT_MAP_REPO_RAW_BASE_URL = "https://raw.githubusercontent.com/wuwei-crg/LXB-MapRepo/main"
         private const val RELEASE_API_LATEST = "https://api.github.com/repos/wuwei-crg/AutoLXB/releases/latest"
         private const val RELEASE_WEB_LATEST = "https://github.com/wuwei-crg/AutoLXB/releases/latest"
@@ -204,6 +207,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 TASK_DND_MODE_NONE -> TASK_DND_MODE_NONE
                 else -> TASK_DND_MODE_NONE
             }
+        }
+
+        private fun normalizeMaxTaskSteps(raw: String?): String {
+            val v = raw?.trim()?.lowercase().orEmpty()
+            if (v.isBlank()) return DEFAULT_MAX_TASK_STEPS
+            if (v == MAX_TASK_STEPS_UNLIMITED ||
+                v == "unlimited" ||
+                v == "none" ||
+                v == "off" ||
+                v == "no_limit"
+            ) {
+                return MAX_TASK_STEPS_UNLIMITED
+            }
+            val n = v.toLongOrNull() ?: return DEFAULT_MAX_TASK_STEPS
+            if (n <= 0L) return MAX_TASK_STEPS_UNLIMITED
+            return n.coerceAtMost(Int.MAX_VALUE.toLong()).toString()
         }
 
         private fun normalizeNotifyActionUseMap(raw: String?): String {
@@ -301,6 +320,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiLang = MutableStateFlow(loadInitialUiLang())
     val touchMode = MutableStateFlow(normalizeTouchMode(prefs.getString(KEY_TOUCH_MODE, TOUCH_MODE_SHELL)))
     val taskDndMode = MutableStateFlow(normalizeTaskDndMode(prefs.getString(KEY_TASK_DND_MODE, TASK_DND_MODE_NONE)))
+    val maxTaskSteps = MutableStateFlow(
+        normalizeMaxTaskSteps(prefs.getString(KEY_MAX_TASK_STEPS, DEFAULT_MAX_TASK_STEPS))
+    )
     private val _llmProfiles = MutableStateFlow<List<LlmProfile>>(emptyList())
     val llmProfiles: StateFlow<List<LlmProfile>> = _llmProfiles.asStateFlow()
     private val _activeLlmProfileId = MutableStateFlow(prefs.getString(KEY_ACTIVE_LLM_PROFILE_ID, "") ?: "")
@@ -2005,7 +2027,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             unlockPin = unlockPin.value,
             useMap = useMap.value,
             mapSource = mapSource.value,
-            taskDndMode = taskDndMode.value
+            taskDndMode = taskDndMode.value,
+            maxTaskSteps = currentMaxTaskStepsValue()
         )
     }
 
@@ -2442,6 +2465,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         taskDndMode.value = normalizeTaskDndMode(mode)
     }
 
+    fun setMaxTaskSteps(raw: String) {
+        maxTaskSteps.value = raw.filter { it.isDigit() }.take(10)
+    }
+
+    fun setMaxTaskStepsUnlimited(unlimited: Boolean) {
+        maxTaskSteps.value = if (unlimited) {
+            MAX_TASK_STEPS_UNLIMITED
+        } else {
+            DEFAULT_MAX_TASK_STEPS
+        }
+    }
+
+    private fun currentMaxTaskStepsValue(): Int {
+        return normalizeMaxTaskSteps(maxTaskSteps.value).toIntOrNull()
+            ?: DEFAULT_MAX_TASK_STEPS.toInt()
+    }
+
     fun applyTouchModeToCore() {
         val port = currentLxbPortOrNull() ?: run {
             val msg = "Invalid lxb-core port, cannot apply touch mode."
@@ -2520,6 +2560,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (normalizedLang != uiLang.value) {
             uiLang.value = normalizedLang
         }
+        val normalizedMaxTaskSteps = normalizeMaxTaskSteps(maxTaskSteps.value)
+        if (normalizedMaxTaskSteps != maxTaskSteps.value) {
+            maxTaskSteps.value = normalizedMaxTaskSteps
+        }
         prefs.edit()
             .putString(KEY_LXB_PORT, normalizedPort)
             .putString(KEY_SERVER_IP, serverIp.value)
@@ -2537,6 +2581,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putString(KEY_UI_LANG, normalizedLang)
             .putString(KEY_TOUCH_MODE, normalizeTouchMode(touchMode.value))
             .putString(KEY_TASK_DND_MODE, normalizeTaskDndMode(taskDndMode.value))
+            .putString(KEY_MAX_TASK_STEPS, normalizedMaxTaskSteps)
             .apply()
     }
 

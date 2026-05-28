@@ -21,12 +21,14 @@ import java.util.Map;
  *   "unlock_pin": "1234",
  *   "use_map": true,
  *   "map_source": "stable",
- *   "task_dnd_mode": "none"
+ *   "task_dnd_mode": "none",
+ *   "max_task_steps": 100
  * }
  */
 public class LlmConfig {
 
     public static final String DEFAULT_CONFIG_PATH = "/data/local/tmp/lxb-llm-config.json";
+    public static final int DEFAULT_MAX_TASK_STEPS = 100;
 
     public final String apiBaseUrl;
     public final String apiKey;
@@ -37,9 +39,13 @@ public class LlmConfig {
     public final boolean useMap;
     public final String mapSource;
     public final String taskDndMode;
+    /**
+     * Maximum FSM/vision steps per sub task. A value <= 0 means unlimited.
+     */
+    public final int maxTaskSteps;
 
     public LlmConfig(String apiBaseUrl, String apiKey, String model) {
-        this(apiBaseUrl, apiKey, model, true, true, "", true, "stable", "none");
+        this(apiBaseUrl, apiKey, model, true, true, "", true, "stable", "none", DEFAULT_MAX_TASK_STEPS);
     }
 
     public LlmConfig(
@@ -53,6 +59,32 @@ public class LlmConfig {
             String mapSource,
             String taskDndMode
     ) {
+        this(
+                apiBaseUrl,
+                apiKey,
+                model,
+                autoUnlockBeforeRoute,
+                autoLockAfterTask,
+                unlockPin,
+                useMap,
+                mapSource,
+                taskDndMode,
+                DEFAULT_MAX_TASK_STEPS
+        );
+    }
+
+    public LlmConfig(
+            String apiBaseUrl,
+            String apiKey,
+            String model,
+            boolean autoUnlockBeforeRoute,
+            boolean autoLockAfterTask,
+            String unlockPin,
+            boolean useMap,
+            String mapSource,
+            String taskDndMode,
+            int maxTaskSteps
+    ) {
         this.apiBaseUrl = apiBaseUrl;
         this.apiKey = apiKey;
         this.model = model;
@@ -62,6 +94,7 @@ public class LlmConfig {
         this.useMap = useMap;
         this.mapSource = normalizeMapSource(mapSource);
         this.taskDndMode = normalizeTaskDndMode(taskDndMode);
+        this.maxTaskSteps = normalizeMaxTaskSteps(maxTaskSteps);
     }
 
     public static LlmConfig loadDefault() throws Exception {
@@ -91,6 +124,7 @@ public class LlmConfig {
         boolean useMap = parseBool(obj.get("use_map"), true);
         String mapSource = normalizeMapSource(stringOrEmpty(obj.get("map_source")));
         String taskDndMode = normalizeTaskDndMode(stringOrEmpty(obj.get("task_dnd_mode")));
+        int maxTaskSteps = parseMaxTaskSteps(obj.get("max_task_steps"), DEFAULT_MAX_TASK_STEPS);
 
         if (baseUrl.isEmpty() || model.isEmpty()) {
             throw new IllegalStateException("LLM config missing api_base_url or model");
@@ -105,7 +139,8 @@ public class LlmConfig {
                 unlockPin,
                 useMap,
                 mapSource,
-                taskDndMode
+                taskDndMode,
+                maxTaskSteps
         );
     }
 
@@ -131,6 +166,39 @@ public class LlmConfig {
             return false;
         }
         return defVal;
+    }
+
+    private static int parseMaxTaskSteps(Object o, int defVal) {
+        if (o == null) {
+            return normalizeMaxTaskSteps(defVal);
+        }
+        if (o instanceof Number) {
+            long n = ((Number) o).longValue();
+            if (n > Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+            return normalizeMaxTaskSteps((int) n);
+        }
+        String s = String.valueOf(o).trim().toLowerCase();
+        if (s.isEmpty()) {
+            return normalizeMaxTaskSteps(defVal);
+        }
+        if ("unlimited".equals(s) || "none".equals(s) || "off".equals(s) || "no_limit".equals(s)) {
+            return 0;
+        }
+        try {
+            long n = Long.parseLong(s);
+            if (n > Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+            return normalizeMaxTaskSteps((int) n);
+        } catch (Exception ignored) {
+            return normalizeMaxTaskSteps(defVal);
+        }
+    }
+
+    private static int normalizeMaxTaskSteps(int raw) {
+        return raw <= 0 ? 0 : raw;
     }
 
     private static String normalizeMapSource(String raw) {
