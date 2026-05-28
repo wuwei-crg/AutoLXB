@@ -1,5 +1,6 @@
 package com.lxb.server.cortex.taskmap;
 
+import com.lxb.server.cortex.CortexExecutionHistory;
 import com.lxb.server.cortex.fsm.VisionCommandParser;
 
 import java.util.ArrayList;
@@ -40,8 +41,7 @@ public final class TaskMapAssembler {
             }
             if ("TAP".equals(op)
                     && (action.locator == null || action.locator.isEmpty())
-                    && (action.containerProbe == null || action.containerProbe.isEmpty())
-                    && (action.tapPoint == null || action.tapPoint.size() < 2)) {
+                    && !hasSemanticTapContext(action)) {
                 continue;
             }
             if ("SWIPE".equals(op)
@@ -87,12 +87,18 @@ public final class TaskMapAssembler {
             step.fallbackPoint = fallbackPoint != null ? String.valueOf(fallbackPoint) : "";
             step.semanticNote = action.createdPageSemantics != null ? action.createdPageSemantics : "";
             step.expected = action.vision != null ? stringOrEmpty(action.vision.get("expected")) : "";
+            step.history.putAll(CortexExecutionHistory.rowFromVision(
+                    action.vision,
+                    action.createdPageSemantics,
+                    action.rawCommand
+            ));
             segment.steps.add(step);
         }
         if (segments.isEmpty()) {
             return null;
         }
         TaskMap out = new TaskMap();
+        out.schema = TaskMap.SCHEMA_V2;
         out.taskKeyHash = record.taskKeyHash;
         out.source = record.source;
         out.sourceId = record.sourceId;
@@ -105,6 +111,21 @@ public final class TaskMapAssembler {
         out.lastReplayStatus = "unused";
         out.segments.addAll(segments.values());
         return out.stepCount() > 0 ? out : null;
+    }
+
+    private static boolean hasSemanticTapContext(TaskRouteRecord.Action action) {
+        if (action == null) {
+            return false;
+        }
+        if (action.vision != null) {
+            if (!stringOrEmpty(action.vision.get("action")).isEmpty()
+                    || !stringOrEmpty(action.vision.get("instruction")).isEmpty()
+                    || !stringOrEmpty(action.vision.get("expected")).isEmpty()
+                    || !stringOrEmpty(action.vision.get("carry_context")).isEmpty()) {
+                return true;
+            }
+        }
+        return !stringOrEmpty(action.createdPageSemantics).isEmpty();
     }
 
     public static boolean isReplayableOp(String op) {

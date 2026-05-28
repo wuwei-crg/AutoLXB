@@ -151,6 +151,7 @@ public final class TaskMapStore {
         out.put("has_latest_attempt_record", attempt != null);
         if (map != null) {
             Map<String, Object> summary = new LinkedHashMap<String, Object>();
+            summary.put("schema", map.schema);
             summary.put("created_at_ms", map.createdAtMs);
             summary.put("created_from_task_id", map.createdFromTaskId);
             summary.put("segment_count", map.segments.size());
@@ -210,6 +211,7 @@ public final class TaskMapStore {
             row.put("source_id", sourceId != null ? sourceId : "");
             row.put("package_name", packageName != null ? packageName : "");
             row.put("has_map", map != null);
+            row.put("schema", map != null ? map.schema : "");
             row.put("map_created_at_ms", map != null ? map.createdAtMs : 0L);
             row.put("map_created_from_task_id", map != null ? map.createdFromTaskId : "");
             row.put("segment_count", map != null ? map.segments.size() : 0);
@@ -361,6 +363,8 @@ public final class TaskMapStore {
         target.fallbackPoint = src.fallbackPoint;
         target.semanticNote = src.semanticNote;
         target.expected = src.expected;
+        target.history.clear();
+        target.history.putAll(src.history);
         target.portableKind = src.portableKind;
         target.semanticDescriptor.clear();
         target.semanticDescriptor.putAll(src.semanticDescriptor);

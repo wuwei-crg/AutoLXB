@@ -134,13 +134,8 @@ public class CortexFsmEngine {
         public boolean currentSubTaskIsLast = false;
         public TaskMap.Segment currentTaskMapSegment = null;
 
-        // External semantic history (maintained by host, not by model memory).
-        // Each row contains:
-        // instruction, expected, actual, judgement_prev, judgement_global, carry_context.
-        public final List<Map<String, Object>> visionHistory = new ArrayList<>();
-        public String pendingHistoryInstruction = "";
-        public String pendingHistoryExpected = "";
-        public String pendingHistoryCarryContext = "";
+        // External semantic history shared by SCRIPT_ACT and VISION_ACT.
+        public final CortexExecutionHistory executionHistory = new CortexExecutionHistory();
         // Durable memory written by model across turns for long-context tasks.
         public final List<String> workingMemory = new ArrayList<>();
 
@@ -185,6 +180,7 @@ public class CortexFsmEngine {
     private final LlmClient llmClient;
     private final MapManager mapManager;
     private final TaskMapStore taskMapStore;
+    private final TaskMapStepVisualResolver taskMapStepVisualResolver;
     private static final int LAUNCH_RETRY_MAX = 3;
     private static final long LAUNCH_WAIT_TIMEOUT_MS = 8000L;
     private static final long LAUNCH_WAIT_SAMPLE_MS = 350L;
@@ -201,8 +197,6 @@ public class CortexFsmEngine {
     private static final int UI_SETTLE_REQUIRED_HITS = 2;
     private static final int FAST_SKIP_MAX_TURNS = 2;
     private static final long FAST_SKIP_POST_TAP_SLEEP_MS = 220L;
-    private static final int VISION_MAX_TURNS_SINGLE = 100;
-    private static final int VISION_MAX_TURNS_LOOP = 100;
     private static final long UNLOCK_POST_WAKE_SLEEP_MS = 450L;
     private static final long UNLOCK_POST_SWIPE_SLEEP_MS = 900L;
     private static final int UNLOCK_SWIPE_DURATION_MS = 500;
@@ -215,6 +209,8 @@ public class CortexFsmEngine {
     private static final long SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS = 300L;
     private static final int SCRIPT_ACT_RECOVERY_MAX = 2;
     private static final long SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS = 300L;
+    private static final int VISION_MAX_TURNS_SINGLE = 100;
+    private static final int VISION_MAX_TURNS_LOOP = 100;
     private static final int KEYCODE_HOME = 3;
     private static final int KEYCODE_WAKEUP = 224;
     private static final int KEYCODE_POWER = 26;
@@ -237,12 +233,24 @@ public class CortexFsmEngine {
                            MapManager mapManager,
                            TraceLogger trace,
                            TaskMapStore taskMapStore) {
+        this(perception, execution, mapManager, trace, taskMapStore, null);
+    }
+
+    public CortexFsmEngine(PerceptionEngine perception,
+                           ExecutionEngine execution,
+                           MapManager mapManager,
+                           TraceLogger trace,
+                           TaskMapStore taskMapStore,
+                           TaskMapStepVisualResolver taskMapStepVisualResolver) {
         this.perception = perception;
         this.execution = execution;
         this.trace = trace;
         this.llmClient = new LlmClient();
         this.mapManager = mapManager;
         this.taskMapStore = taskMapStore != null ? taskMapStore : new TaskMapStore();
+        this.taskMapStepVisualResolver = taskMapStepVisualResolver != null
+                ? taskMapStepVisualResolver
+                : new SemanticVisionStepResolver(this.llmClient, this.trace);
     }
 
     /**
@@ -528,10 +536,7 @@ public class CortexFsmEngine {
                 ctx.currentTaskMapSegment = (ctx.taskMap != null && idx >= 0 && idx < ctx.taskMap.segments.size())
                         ? ctx.taskMap.segments.get(idx)
                         : null;
-                ctx.visionHistory.clear();
-                ctx.pendingHistoryInstruction = "";
-                ctx.pendingHistoryExpected = "";
-                ctx.pendingHistoryCarryContext = "";
+                ctx.executionHistory.clear();
                 ctx.workingMemory.clear();
 
                 // Select package:
@@ -1965,6 +1970,7 @@ public class CortexFsmEngine {
             TaskMap.Step step = ctx.currentTaskMapSegment.steps.get(index);
             RouteStepExec exec = executeTaskMapRoutingStep(ctx, pkg, step, resolver, index);
             stepSummaries.add(exec.step);
+            appendScriptActHistory(ctx, step, exec.step, "task_map_step");
             if (exec.ok) {
                 index += 1;
                 sleepQuiet(400L);
@@ -1985,6 +1991,9 @@ public class CortexFsmEngine {
                 recEv.put("recovered", recovered);
                 recEv.put("reason", failReason);
                 trace.event("fsm_script_act_task_map_recovery_result", recEv);
+                appendScriptActHistory(ctx, step,
+                        CortexExecutionHistory.recoveryRow(step, recovered, failReason),
+                        "task_map_recovery");
                 if (recovered) {
                     recoveryAttempts += 1;
                     sleepQuiet(SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS);
@@ -2064,6 +2073,29 @@ public class CortexFsmEngine {
         ev.put("reason", reason != null ? reason : "");
         ev.put("steps", steps);
         trace.event("fsm_script_act_result", ev);
+    }
+
+    private void appendScriptActHistory(
+            Context ctx,
+            TaskMap.Step step,
+            Map<String, Object> rowOrSummary,
+            String source
+    ) {
+        if (ctx == null || ctx.executionHistory == null) {
+            return;
+        }
+        Map<String, Object> row = "task_map_recovery".equals(source)
+                ? CortexExecutionHistory.normalizeRow(rowOrSummary)
+                : CortexExecutionHistory.rowFromTaskMapStep(step, rowOrSummary);
+        ctx.executionHistory.addRow(row);
+
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("task_id", ctx.taskId);
+        ev.put("source", source != null ? source : "");
+        ev.put("step_id", step != null ? step.stepId : "");
+        ev.put("row", row);
+        ev.put("history_size", ctx.executionHistory.size());
+        trace.event("execution_history_append", ev);
     }
 
     private boolean tryTaskMapPopupRecoveryByVision(
@@ -2448,6 +2480,8 @@ public class CortexFsmEngine {
         target.fallbackPoint = src.fallbackPoint;
         target.semanticNote = src.semanticNote;
         target.expected = src.expected;
+        target.history.clear();
+        target.history.putAll(src.history);
         target.portableKind = src.portableKind;
         target.semanticDescriptor.clear();
         target.semanticDescriptor.putAll(src.semanticDescriptor);
@@ -2456,13 +2490,6 @@ public class CortexFsmEngine {
         target.adaptationAttemptedAtMs = src.adaptationAttemptedAtMs;
         target.materializedFromStepId = src.materializedFromStepId;
         target.materializedAtMs = src.materializedAtMs;
-    }
-
-    private TaskMapResolvedPoint resolveTaskMapTapPoint(TaskMap.Step step, LocatorResolver resolver) throws Exception {
-        Map<String, Object> loc = step != null && step.locator != null
-                ? step.locator
-                : Collections.<String, Object>emptyMap();
-        return resolveTaskMapPoint(loc, "fallback_point", "fallback_point", resolver);
     }
 
     private TaskMapResolvedPoint resolveFirstTaskMapTapPointWithWindow(
@@ -2508,10 +2535,14 @@ public class CortexFsmEngine {
             LocatorResolver resolver,
             int index
     ) throws Exception {
+        if (!hasTaskMapLocator(step)) {
+            return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_locator_missing");
+        }
+
         Exception last = null;
         for (int attempt = 1; attempt <= SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX; attempt++) {
             try {
-                TaskMapResolvedPoint point = resolveTaskMapTapPointByPriority(step, resolver);
+                TaskMapResolvedPoint point = resolveTaskMapTapPointByLocatorOnly(step, resolver);
                 if (attempt > 1) {
                     Map<String, Object> recovered = new LinkedHashMap<>();
                     recovered.put("task_id", ctx.taskId);
@@ -2539,92 +2570,75 @@ public class CortexFsmEngine {
                 }
             }
         }
-        throw last != null ? last : new IllegalStateException("task_map_tap_resolve_failed");
+        String reason = last != null ? String.valueOf(last) : "task_map_tap_resolve_failed";
+        return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, reason);
     }
 
-    private TaskMapResolvedPoint resolveTaskMapTapPointByPriority(TaskMap.Step step, LocatorResolver resolver) throws Exception {
+    private TaskMapResolvedPoint resolveTaskMapTapPointByLocatorOnly(TaskMap.Step step, LocatorResolver resolver) throws Exception {
         if (step == null) {
             throw new IllegalStateException("task_map_step_missing");
         }
-        if (step.locator != null && !step.locator.isEmpty()) {
-            return resolveTaskMapPoint(step.locator, "fallback_point", "fallback_point", resolver);
-        }
-        if (step.containerProbe != null && !step.containerProbe.isEmpty()) {
-            return resolveTaskMapContainerProbePoint(step);
-        }
-        int[] tapPoint = extractTapPoint(step.tapPoint);
-        if (tapPoint != null) {
-            return new TaskMapResolvedPoint(tapPoint[0], tapPoint[1], null, "tap_point");
-        }
-        int[] fallback = extractPoint(step.fallbackPoint);
-        if (fallback != null) {
-            return new TaskMapResolvedPoint(fallback[0], fallback[1], null, "fallback_point");
-        }
-        throw new IllegalStateException("task_map_tap_target_missing");
-    }
-
-    private TaskMapResolvedPoint resolveTaskMapContainerProbePoint(TaskMap.Step step) throws Exception {
-        int[] tapPoint = extractTapPoint(step != null ? step.tapPoint : null);
-        if (tapPoint == null) {
-            throw new IllegalStateException("task_map_container_probe_missing_tap_point");
-        }
-        List<DumpActionsParser.ActionNode> nodes = captureDumpActionNodes();
-        List<LocatorSemantics.NodeRecord> records = LocatorSemantics.fromActionNodes(nodes);
-        LocatorSemantics.NodeRecord hit = findClickableContainerHitAtPoint(
-                tapPoint[0],
-                tapPoint[1],
-                records,
-                0
-        );
-        if (hit == null) {
-            hit = findClickableContainerHitAtPoint(tapPoint[0], tapPoint[1], records, 20);
-        }
-        if (hit == null) {
-            throw new IllegalStateException("task_map_container_probe_no_clickable_hit");
-        }
-        if (!matchesContainerProbe(step != null ? step.containerProbe : null, hit)) {
-            throw new IllegalStateException("task_map_container_probe_attr_mismatch");
-        }
-        return new TaskMapResolvedPoint(tapPoint[0], tapPoint[1], hit.bounds, "container_probe_hit");
-    }
-
-    private TaskMapResolvedPoint resolveTaskMapPoint(
-            Map<String, Object> locatorMap,
-            String primaryFallbackKey,
-            String secondaryFallbackKey,
-            LocatorResolver resolver
-    ) throws Exception {
-        Map<String, Object> safeLocator = locatorMap != null ? locatorMap : Collections.<String, Object>emptyMap();
+        Map<String, Object> safeLocator = step.locator != null
+                ? step.locator
+                : Collections.<String, Object>emptyMap();
         Locator locator = Locator.fromMap(safeLocator);
-        if (hasUsableLocator(locator)) {
-            try {
-                ResolvedNode node = resolver.resolve(locator);
-                int cx = (node.bounds.left + node.bounds.right) / 2;
-                int cy = (node.bounds.top + node.bounds.bottom) / 2;
-                return new TaskMapResolvedPoint(cx, cy, node.bounds, "locator:" + node.pickedStage);
-            } catch (Exception ignored) {
-            }
+        if (!hasUsableLocator(locator)) {
+            throw new IllegalStateException("task_map_locator_missing");
         }
-        int[] fallback = extractPoint(safeLocator.get(primaryFallbackKey));
-        if (fallback == null && secondaryFallbackKey != null && !secondaryFallbackKey.isEmpty()) {
-            fallback = extractPoint(safeLocator.get(secondaryFallbackKey));
-        }
-        if (fallback == null) {
-            throw new IllegalStateException("task_map_locator_missing_fallback");
-        }
-        return resolveTaskMapFallbackPoint(locator, fallback[0], fallback[1]);
+        ResolvedNode node = resolver.resolve(locator);
+        int cx = (node.bounds.left + node.bounds.right) / 2;
+        int cy = (node.bounds.top + node.bounds.bottom) / 2;
+        return new TaskMapResolvedPoint(cx, cy, node.bounds, "locator:" + node.pickedStage);
     }
 
-    private TaskMapResolvedPoint resolveTaskMapFallbackPoint(Locator locator, int x, int y) throws Exception {
-        List<DumpActionsParser.ActionNode> nodes = captureDumpActionNodes();
-        DumpActionsParser.ActionNode candidate = findBestActionNodeForPoint(nodes, x, y);
-        if (candidate == null) {
-            throw new IllegalStateException("task_map_fallback_node_missing");
+    private TaskMapResolvedPoint resolveTaskMapTapPointByVisual(
+            Context ctx,
+            String pkg,
+            TaskMap.Step step,
+            int index,
+            String locatorFailureReason
+    ) throws Exception {
+        byte[] screenshotPng = captureScreenshotPng();
+        if (screenshotPng == null || screenshotPng.length == 0) {
+            throw new IllegalStateException("task_map_visual_screenshot_missing:" + locatorFailureReason);
         }
-        if (locator != null && hasUsableLocator(locator) && !matchesFallbackGuard(locator, candidate, nodes)) {
-            throw new IllegalStateException("task_map_fallback_guard_mismatch");
+        StepVisualResolveRequest request = new StepVisualResolveRequest(
+                ctx != null ? ctx.taskId : "",
+                ctx != null ? ctx.taskRouteKeyHash : "",
+                pkg,
+                ctx != null && ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "",
+                index,
+                step,
+                screenshotPng,
+                renderExecutionHistoryForResolver(ctx),
+                locatorFailureReason
+        );
+        TaskMapStepVisualResolver visualResolver = taskMapStepVisualResolver;
+        if (visualResolver == null) {
+            throw new IllegalStateException("task_map_visual_resolver_missing:" + locatorFailureReason);
         }
-        return new TaskMapResolvedPoint(x, y, candidate.bounds, "fallback_guard");
+        StepVisualResolveResult result = visualResolver.resolve(request);
+        if (result != null && result.isPoint()) {
+            return new TaskMapResolvedPoint(result.x, result.y, null,
+                    firstNonEmpty(result.resolverName, "semantic_visual"));
+        }
+        String status = result != null ? result.status : StepVisualResolveResult.STATUS_ERROR;
+        String reason = result != null ? result.reason : "visual_resolver_null_result";
+        throw new IllegalStateException("task_map_visual_" + status + ":" + firstNonEmpty(reason, locatorFailureReason));
+    }
+
+    private String renderExecutionHistoryForResolver(Context ctx) {
+        if (ctx == null || ctx.executionHistory == null) {
+            return "";
+        }
+        return ctx.executionHistory.renderPromptBlock().trim();
+    }
+
+    private boolean hasTaskMapLocator(TaskMap.Step step) {
+        if (step == null || step.locator == null || step.locator.isEmpty()) {
+            return false;
+        }
+        return hasUsableLocator(Locator.fromMap(step.locator));
     }
 
     private SwipeReplaySpec resolveTaskMapSwipeSpec(Context ctx, TaskMap.Step step) throws Exception {
@@ -2661,104 +2675,6 @@ public class CortexFsmEngine {
         return new SwipeReplaySpec(start[0], start[1], end[0], end[1], duration);
     }
 
-    private boolean matchesFallbackGuard(
-            Locator locator,
-            DumpActionsParser.ActionNode node,
-            List<DumpActionsParser.ActionNode> nodes
-    ) {
-        if (locator == null || node == null) {
-            return false;
-        }
-        String expectedRid = Util.normalizeResourceId(locator.resourceId);
-        if (!expectedRid.isEmpty() && !expectedRid.equals(Util.normalizeResourceId(node.resourceId))) {
-            return false;
-        }
-        String expectedCls = Util.normalizeClass(locator.className);
-        if (!expectedCls.isEmpty() && !expectedCls.equals(Util.normalizeClass(node.className))) {
-            return false;
-        }
-        String expectedDesc = Util.normalizeText(locator.contentDesc);
-        if (!expectedDesc.isEmpty() && !expectedDesc.equals(Util.normalizeText(node.contentDesc))) {
-            return false;
-        }
-        String expectedText = Util.normalizeText(locator.text);
-        if (!expectedText.isEmpty() && !expectedText.equals(Util.normalizeText(node.text))) {
-            return false;
-        }
-        String expectedParent = Util.normalizeResourceId(locator.parentRid);
-        if (!expectedParent.isEmpty()) {
-            String actualParent = LocatorSemantics.inferParentRid(node, nodes);
-            if (!expectedParent.equals(actualParent)) {
-                return false;
-            }
-        }
-        if (locator.index != null && locator.count != null && locator.count >= 2 && locator.count <= 3) {
-            List<LocatorSemantics.NodeRecord> records = LocatorSemantics.fromActionNodes(nodes);
-            LocatorSemantics.NodeRecord target = null;
-            for (LocatorSemantics.NodeRecord record : records) {
-                if (record != null && record.actionNode == node) {
-                    target = record;
-                    break;
-                }
-            }
-            if (target == null) {
-                return false;
-            }
-            List<LocatorSemantics.NodeRecord> peers =
-                    LocatorSemantics.filterSelfCandidates(locator, records, false);
-            if (!expectedText.isEmpty() && peers.size() > 1) {
-                List<LocatorSemantics.NodeRecord> textPeers =
-                        LocatorSemantics.filterSelfCandidates(locator, peers, true);
-                if (!textPeers.isEmpty()) {
-                    peers = textPeers;
-                }
-            }
-            if (!expectedParent.isEmpty() && peers.size() > 1) {
-                List<LocatorSemantics.NodeRecord> parentPeers =
-                        LocatorSemantics.filterByParentRid(peers, expectedParent);
-                if (!parentPeers.isEmpty()) {
-                    peers = parentPeers;
-                }
-            }
-            int[] indexCount = LocatorSemantics.findPeerIndex(target, peers);
-            if (indexCount == null
-                    || indexCount[0] != locator.index.intValue()
-                    || indexCount[1] != locator.count.intValue()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private DumpActionsParser.ActionNode findBestActionNodeForPoint(
-            List<DumpActionsParser.ActionNode> nodes,
-            int x,
-            int y
-    ) {
-        if (nodes == null || nodes.isEmpty()) {
-            return null;
-        }
-        DumpActionsParser.ActionNode bestContaining = null;
-        long bestContainingScore = Long.MAX_VALUE;
-        DumpActionsParser.ActionNode bestNearest = null;
-        long bestNearestScore = Long.MAX_VALUE;
-        for (DumpActionsParser.ActionNode node : nodes) {
-            if (node == null || node.bounds == null) {
-                continue;
-            }
-            long score = scorePointToBounds(node.bounds, x, y);
-            if (containsPoint(node.bounds, x, y) && score < bestContainingScore) {
-                bestContaining = node;
-                bestContainingScore = score;
-            }
-            if (score < bestNearestScore) {
-                bestNearest = node;
-                bestNearestScore = score;
-            }
-        }
-        return bestContaining != null ? bestContaining : bestNearest;
-    }
-
     private boolean hasUsableLocator(Locator locator) {
         return locator != null
                 && (!stringOrEmpty(locator.resourceId).isEmpty()
@@ -2767,81 +2683,6 @@ public class CortexFsmEngine {
                 || !stringOrEmpty(locator.className).isEmpty()
                 || !stringOrEmpty(locator.parentRid).isEmpty()
                 || locator.boundsHint != null);
-    }
-
-    private int[] extractTapPoint(List<Object> list) {
-        if (list == null || list.size() < 2) {
-            return null;
-        }
-        Number x = toNumber(list.get(0));
-        Number y = toNumber(list.get(1));
-        if (x == null || y == null) {
-            return null;
-        }
-        return new int[]{x.intValue(), y.intValue()};
-    }
-
-    private LocatorSemantics.NodeRecord findClickableContainerHitAtPoint(
-            int x,
-            int y,
-            List<LocatorSemantics.NodeRecord> records,
-            int margin
-    ) {
-        if (records == null || records.isEmpty()) {
-            return null;
-        }
-        LocatorSemantics.NodeRecord bestContaining = null;
-        long bestContainingArea = Long.MAX_VALUE;
-        for (LocatorSemantics.NodeRecord record : records) {
-            if (record == null || record.bounds == null || record.actionNode == null) {
-                continue;
-            }
-            if ((record.actionNode.type & 0x01) == 0) {
-                continue;
-            }
-            Bounds probeBounds = new Bounds(
-                    record.bounds.left - margin,
-                    record.bounds.top - margin,
-                    record.bounds.right + margin,
-                    record.bounds.bottom + margin
-            );
-            if (!containsPoint(probeBounds, x, y)) {
-                continue;
-            }
-            long area = Math.max(1L, (long) (record.bounds.right - record.bounds.left) * (record.bounds.bottom - record.bounds.top));
-            if (area < bestContainingArea) {
-                bestContainingArea = area;
-                bestContaining = record;
-            }
-        }
-        return bestContaining;
-    }
-
-    private boolean matchesContainerProbe(
-            Map<String, Object> probe,
-            LocatorSemantics.NodeRecord record
-    ) {
-        if (probe == null || probe.isEmpty() || record == null) {
-            return false;
-        }
-        String rid = Util.normalizeResourceId(stringOrEmpty(probe.get("resource_id")));
-        if (!rid.isEmpty() && !rid.equals(record.resourceId)) {
-            return false;
-        }
-        String text = Util.normalizeText(stringOrEmpty(probe.get("text")));
-        if (!text.isEmpty() && !text.equals(record.text)) {
-            return false;
-        }
-        String desc = Util.normalizeText(stringOrEmpty(probe.get("content_desc")));
-        if (!desc.isEmpty() && !desc.equals(record.contentDesc)) {
-            return false;
-        }
-        String cls = Util.normalizeClass(stringOrEmpty(probe.get("class")));
-        if (!cls.isEmpty() && !cls.equals(record.className)) {
-            return false;
-        }
-        String parentRid = Util.normalizeResourceId(stringOrEmpty(probe.get("parent_rid")));
-        return parentRid.isEmpty() || parentRid.equals(record.parentRid);
     }
 
     private int[] extractPoint(Object obj) {
@@ -2909,22 +2750,6 @@ public class CortexFsmEngine {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private boolean containsPoint(Bounds b, int x, int y) {
-        return b != null && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
-    }
-
-    private long scorePointToBounds(Bounds b, int x, int y) {
-        if (b == null) {
-            return Long.MAX_VALUE / 2L;
-        }
-        int cx = (b.left + b.right) / 2;
-        int cy = (b.top + b.bottom) / 2;
-        long dx = Math.abs((long) cx - x);
-        long dy = Math.abs((long) cy - y);
-        long area = Math.max(1L, (long) Math.max(1, b.right - b.left) * (long) Math.max(1, b.bottom - b.top));
-        return dx + dy + (area / 1000L);
     }
 
     /**
@@ -4111,8 +3936,8 @@ public class CortexFsmEngine {
         }
 
         // Turn limit by sub_task mode:
-        // - single: 30
-        // - loop: 60
+        // - single: 100
+        // - loop: 100
         int maxTurns = resolveVisionMaxTurns(ctx);
         if (ctx.visionTurns >= maxTurns) {
             ctx.error = "vision_turn_limit";
@@ -4348,11 +4173,8 @@ public class CortexFsmEngine {
 
             // Snapshot mutable context so retry does not pollute history/logs.
             int llmHistorySizeBefore = ctx.llmHistory.size();
-            int visionHistorySizeBefore = ctx.visionHistory.size();
+            CortexExecutionHistory.Snapshot executionHistoryBefore = ctx.executionHistory.snapshot();
             int commandLogSizeBefore = ctx.commandLog.size();
-            String pendingInstructionBefore = ctx.pendingHistoryInstruction;
-            String pendingExpectedBefore = ctx.pendingHistoryExpected;
-            String pendingCarryBefore = ctx.pendingHistoryCarryContext;
             int workingMemorySizeBefore = ctx.workingMemory.size();
             String lastCommandBefore = ctx.lastCommand;
             int sameCommandStreakBefore = ctx.sameCommandStreak;
@@ -4386,39 +4208,28 @@ public class CortexFsmEngine {
 
             // External history maintenance:
             // previous instruction/expected are matched with current actual/judgement.
-            if (!ctx.pendingHistoryInstruction.isEmpty()
-                    || !ctx.pendingHistoryExpected.isEmpty()
-                    || !ctx.pendingHistoryCarryContext.isEmpty()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("instruction", ctx.pendingHistoryInstruction);
-                row.put("expected", ctx.pendingHistoryExpected);
-                String actual = !observeResult.isEmpty() ? observeResult : observing;
-                row.put("actual", actual);
-                String jp = !judgePrevResult.isEmpty() ? judgePrevResult : "unknown";
-                String jg = !judgeGlobalResult.isEmpty() ? judgeGlobalResult : jp;
-                row.put("judgement_prev", jp);
-                row.put("judgement_global", jg);
-                // Keep legacy key for compatibility with old readers.
-                row.put("judgement", jp);
-                row.put("carry_context", ctx.pendingHistoryCarryContext);
-                ctx.visionHistory.add(row);
-                while (ctx.visionHistory.size() > 10) {
-                    ctx.visionHistory.remove(0);
-                }
-
+            String actual = !observeResult.isEmpty() ? observeResult : observing;
+            Map<String, Object> closedHistoryRow = ctx.executionHistory.closePendingWithObservation(
+                    actual,
+                    !judgePrevResult.isEmpty() ? judgePrevResult : "unknown",
+                    !judgeGlobalResult.isEmpty() ? judgeGlobalResult : (!judgePrevResult.isEmpty() ? judgePrevResult : "unknown")
+            );
+            if (closedHistoryRow != null) {
                 Map<String, Object> hEv = new LinkedHashMap<>();
                 hEv.put("task_id", ctx.taskId);
-                hEv.put("row", row);
-                hEv.put("history_size", ctx.visionHistory.size());
+                hEv.put("row", closedHistoryRow);
+                hEv.put("history_size", ctx.executionHistory.size());
                 trace.event("vision_history_append", hEv);
             }
 
             appendWorkingMemory(ctx, memoryWriteText);
 
             // Stash next pair for history matching in next turn.
-            ctx.pendingHistoryInstruction = actionText != null ? actionText.trim() : "";
-            ctx.pendingHistoryExpected = expectedText != null ? expectedText.trim() : "";
-            ctx.pendingHistoryCarryContext = carryContextText;
+            ctx.executionHistory.beginPending(
+                    actionText != null ? actionText.trim() : "",
+                    expectedText != null ? expectedText.trim() : "",
+                    carryContextText
+            );
 
             Instruction cmd0 = commands.get(0);
             String currentSig = cmd0.raw.trim();
@@ -4511,18 +4322,13 @@ public class CortexFsmEngine {
                 while (ctx.llmHistory.size() > llmHistorySizeBefore) {
                     ctx.llmHistory.remove(ctx.llmHistory.size() - 1);
                 }
-                while (ctx.visionHistory.size() > visionHistorySizeBefore) {
-                    ctx.visionHistory.remove(ctx.visionHistory.size() - 1);
-                }
                 while (ctx.commandLog.size() > commandLogSizeBefore) {
                     ctx.commandLog.remove(ctx.commandLog.size() - 1);
                 }
                 while (ctx.workingMemory.size() > workingMemorySizeBefore) {
                     ctx.workingMemory.remove(ctx.workingMemory.size() - 1);
                 }
-                ctx.pendingHistoryInstruction = pendingInstructionBefore;
-                ctx.pendingHistoryExpected = pendingExpectedBefore;
-                ctx.pendingHistoryCarryContext = pendingCarryBefore;
+                ctx.executionHistory.restore(executionHistoryBefore);
                 ctx.lastCommand = lastCommandBefore;
                 ctx.sameCommandStreak = sameCommandStreakBefore;
                 ctx.error = "";
@@ -5265,33 +5071,10 @@ public class CortexFsmEngine {
         sb.append("- loop: continue until no pending target remains.\n\n");
 
         sb.append("[RECENT_HISTORY_BLOCK]\n");
-        String pendingInstruction = stringOrEmpty(ctx.pendingHistoryInstruction);
-        String pendingExpected = stringOrEmpty(ctx.pendingHistoryExpected);
-        String pendingCarryContext = stringOrEmpty(ctx.pendingHistoryCarryContext);
-        boolean hasPending = !pendingInstruction.isEmpty() || !pendingExpected.isEmpty() || !pendingCarryContext.isEmpty();
-
-        if (ctx.visionHistory.isEmpty() && !hasPending) {
-            sb.append("Recent turns: none\n");
+        if (ctx != null && ctx.executionHistory != null) {
+            ctx.executionHistory.appendPromptBlock(sb);
         } else {
-            sb.append("Recent turns (oldest -> newest):\n");
-            int rowIndex = 1;
-            for (int i = 0; i < ctx.visionHistory.size(); i++) {
-                Map<String, Object> row = ctx.visionHistory.get(i);
-                sb.append(rowIndex++).append(") action: ").append(stringOrEmpty(row.get("instruction"))).append("\n");
-                sb.append("   expected: ").append(stringOrEmpty(row.get("expected"))).append("\n");
-                sb.append("   actual: ").append(stringOrEmpty(row.get("actual"))).append("\n");
-                sb.append("   judge_prev: ").append(stringOrEmpty(row.get("judgement_prev"))).append("\n");
-                sb.append("   judge_global: ").append(stringOrEmpty(row.get("judgement_global"))).append("\n");
-                sb.append("   carry_context: ").append(stringOrEmpty(row.get("carry_context"))).append("\n");
-            }
-            if (hasPending) {
-                sb.append(rowIndex).append(") action: ").append(pendingInstruction).append("\n");
-                sb.append("   expected: ").append(pendingExpected).append("\n");
-                sb.append("   actual: pending - observe actual result in this turn\n");
-                sb.append("   judge_prev: pending - evaluate previous action outcome in this turn\n");
-                sb.append("   judge_global: pending - evaluate global progress in this turn\n");
-                sb.append("   carry_context: ").append(!pendingCarryContext.isEmpty() ? pendingCarryContext : "none").append("\n");
-            }
+            sb.append("Recent turns: none\n");
         }
         sb.append("Recent-history guidance:\n");
         sb.append("- judge_prev checks only previous action vs previous expected result.\n");

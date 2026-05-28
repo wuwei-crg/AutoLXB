@@ -93,6 +93,7 @@ public final class SemanticStepMaterializer {
                 materialized.fallbackPoint = payload.fallbackPoint;
                 materialized.semanticNote = pendingStep.semanticNote;
                 materialized.expected = pendingStep.expected;
+                materialized.history.putAll(pendingStep.history);
                 materialized.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED;
                 materialized.semanticDescriptor.putAll(pendingStep.semanticDescriptor);
                 materialized.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED;

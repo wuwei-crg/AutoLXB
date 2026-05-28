@@ -112,6 +112,8 @@ public class TaskMapStoreTest {
         materialized.stepId = "s0001";
         materialized.op = "TAP";
         materialized.locator.put("resource_id", "publish_button");
+        materialized.history.put("instruction", "tap publish");
+        materialized.history.put("expected", "publish opens");
         materialized.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED;
         materialized.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED;
         materialized.materializedAtMs = 12L;
@@ -121,6 +123,8 @@ public class TaskMapStoreTest {
         Assert.assertNotNull(restored);
         TaskMap.Step restoredStep = restored.segments.get(0).steps.get(0);
         Assert.assertEquals("publish_button", restoredStep.locator.get("resource_id"));
+        Assert.assertEquals("tap publish", restoredStep.history.get("instruction"));
+        Assert.assertEquals("publish opens", restoredStep.history.get("expected"));
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED, restoredStep.portableKind);
         Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED, restoredStep.adaptationStatus);
     }

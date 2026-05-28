@@ -47,6 +47,7 @@ public class TaskMapAssemblerTest {
         TaskMap map = TaskMapAssembler.assemble(record, deleteIds, "ai");
 
         Assert.assertNotNull(map);
+        Assert.assertEquals(TaskMap.SCHEMA_V2, map.schema);
         Assert.assertEquals(1, map.segments.size());
         Assert.assertEquals(2, map.stepCount());
         Assert.assertEquals("TAP", map.segments.get(0).steps.get(0).op);
@@ -56,7 +57,7 @@ public class TaskMapAssemblerTest {
     }
 
     @Test
-    public void assemble_skipsTouchStepWithoutLocator() {
+    public void assemble_skipsPureCoordinateTapWithoutLocatorOrSemanticContext() {
         TaskRouteRecord record = new TaskRouteRecord();
         record.taskKeyHash = "hash";
         record.packageName = "com.demo";
@@ -75,10 +76,38 @@ public class TaskMapAssemblerTest {
 
         TaskMap map = TaskMapAssembler.assemble(record, Collections.<String>emptySet(), "ai");
 
+        Assert.assertNull(map);
+    }
+
+    @Test
+    public void assemble_keepsSemanticTapWithoutLocatorForVisualFallback() {
+        TaskRouteRecord record = new TaskRouteRecord();
+        record.taskKeyHash = "hash";
+        record.packageName = "com.demo";
+        record.rootTask = "open something";
+        record.taskId = "tid";
+
+        TaskRouteRecord.Action tap = new TaskRouteRecord.Action();
+        tap.actionId = "a0001";
+        tap.subTaskId = "default";
+        tap.op = "TAP";
+        tap.rawCommand = "TAP 100 200";
+        tap.vision.put("action", "tap the publish entry");
+        tap.vision.put("expected", "publish page opens");
+        tap.vision.put("carry_context", "from home tab");
+        record.actions.add(tap);
+
+        TaskMap map = TaskMapAssembler.assemble(record, Collections.<String>emptySet(), "ai");
+
         Assert.assertNotNull(map);
+        Assert.assertEquals(TaskMap.SCHEMA_V2, map.schema);
         Assert.assertEquals(1, map.stepCount());
-        Assert.assertEquals("TAP", map.segments.get(0).steps.get(0).op);
-        Assert.assertEquals(2, map.segments.get(0).steps.get(0).tapPoint.size());
+        TaskMap.Step step = map.segments.get(0).steps.get(0);
+        Assert.assertEquals("TAP", step.op);
+        Assert.assertTrue(step.locator.isEmpty());
+        Assert.assertTrue(step.tapPoint.isEmpty());
+        Assert.assertEquals("tap the publish entry", step.history.get("instruction"));
+        Assert.assertEquals("publish page opens", step.history.get("expected"));
     }
 
     @Test
@@ -133,6 +162,8 @@ public class TaskMapAssemblerTest {
         tap.containerProbe.put("resource_id", "feed_item");
         tap.containerProbe.put("class", "LinearLayout");
         tap.containerProbe.put("parent_rid", "feed_list");
+        tap.vision.put("action", "tap the news feed item");
+        tap.vision.put("expected", "detail page opens");
         record.actions.add(tap);
 
         TaskMap map = TaskMapAssembler.assemble(record, Collections.<String>emptySet(), "manual");
@@ -142,6 +173,7 @@ public class TaskMapAssemblerTest {
         Assert.assertTrue(map.segments.get(0).steps.get(0).locator.isEmpty());
         Assert.assertEquals("feed_item", map.segments.get(0).steps.get(0).containerProbe.get("resource_id"));
         Assert.assertEquals(2, map.segments.get(0).steps.get(0).tapPoint.size());
+        Assert.assertEquals("tap the news feed item", map.segments.get(0).steps.get(0).history.get("instruction"));
     }
 
     @Test

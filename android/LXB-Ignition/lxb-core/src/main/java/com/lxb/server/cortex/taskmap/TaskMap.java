@@ -9,7 +9,10 @@ import java.util.Map;
 
 public final class TaskMap {
 
-    public String schema = "task_map.v1";
+    public static final String SCHEMA_V1 = "task_map.v1";
+    public static final String SCHEMA_V2 = "task_map.v2";
+
+    public String schema = SCHEMA_V2;
     public String taskKeyHash = "";
     public String source = "";
     public String sourceId = "";
@@ -69,6 +72,7 @@ public final class TaskMap {
         public String fallbackPoint = "";
         public String semanticNote = "";
         public String expected = "";
+        public Map<String, Object> history = new LinkedHashMap<String, Object>();
         public String portableKind = "";
         public Map<String, Object> semanticDescriptor = new LinkedHashMap<String, Object>();
         public String adaptationStatus = "";
@@ -90,6 +94,7 @@ public final class TaskMap {
             out.put("fallback_point", fallbackPoint);
             out.put("semantic_note", semanticNote);
             out.put("expected", expected);
+            out.put("history", new LinkedHashMap<String, Object>(history));
             out.put("portable_kind", portableKind);
             out.put("semantic_descriptor", new LinkedHashMap<String, Object>(semanticDescriptor));
             out.put("adaptation_status", adaptationStatus);
@@ -131,7 +136,7 @@ public final class TaskMap {
         TaskMap out = new TaskMap();
         out.schema = stringOrEmpty(map.get("schema"));
         if (out.schema.isEmpty()) {
-            out.schema = "task_map.v1";
+            out.schema = SCHEMA_V1;
         }
         out.taskKeyHash = stringOrEmpty(map.get("route_id"));
         out.source = stringOrEmpty(map.get("source"));
@@ -214,6 +219,10 @@ public final class TaskMap {
                         step.fallbackPoint = stringOrEmpty(sRow.get("fallback_point"));
                         step.semanticNote = stringOrEmpty(sRow.get("semantic_note"));
                         step.expected = stringOrEmpty(sRow.get("expected"));
+                        Object historyObj = sRow.get("history");
+                        if (historyObj instanceof Map) {
+                            step.history.putAll((Map<String, Object>) historyObj);
+                        }
                         step.portableKind = stringOrEmpty(sRow.get("portable_kind"));
                         Object semanticDescriptorObj = sRow.get("semantic_descriptor");
                         if (semanticDescriptorObj instanceof Map) {
