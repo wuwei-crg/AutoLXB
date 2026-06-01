@@ -21,6 +21,12 @@ data class TaskSubmitParsed(
     val taskId: String
 )
 
+data class ScheduleTriggerParsed(
+    val message: String,
+    val taskId: String,
+    val scheduleId: String
+)
+
 data class SystemControlParsed(
     val ok: Boolean,
     val detail: String
@@ -193,6 +199,33 @@ object CoreApiParser {
             "Schedule removed: $scheduleId"
         } else {
             "Schedule not found: $scheduleId"
+        }
+    }
+
+    fun parseScheduleTrigger(payload: ByteArray, scheduleId: String): ScheduleTriggerParsed {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false) || !obj.optBoolean("submitted", false)) {
+            return ScheduleTriggerParsed(
+                message = "Trigger schedule failed: ${text.take(220)}",
+                taskId = "",
+                scheduleId = scheduleId
+            )
+        }
+        val sid = obj.optString("schedule_id", scheduleId)
+        val taskId = obj.optString("task_id", "")
+        return if (taskId.isNotBlank()) {
+            ScheduleTriggerParsed(
+                message = "Schedule triggered: $sid (task: $taskId)",
+                taskId = taskId,
+                scheduleId = sid
+            )
+        } else {
+            ScheduleTriggerParsed(
+                message = "Trigger schedule failed: ${text.take(220)}",
+                taskId = "",
+                scheduleId = sid
+            )
         }
     }
 

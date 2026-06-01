@@ -528,6 +528,73 @@ public class CortexTaskManager {
         return result;
     }
 
+    /**
+     * Manually enqueue an existing schedule without changing its automatic cadence.
+     */
+    public Map<String, Object> triggerScheduledTask(String scheduleId) {
+        String sid = scheduleId != null ? scheduleId.trim() : "";
+        if (sid.isEmpty()) {
+            throw new IllegalArgumentException("schedule_id is required");
+        }
+
+        ScheduledTaskDef def = scheduleRegistry.get(sid);
+        if (def == null) {
+            return null;
+        }
+
+        String userTask;
+        String packageName;
+        String mapPath;
+        String startPage;
+        String traceMode;
+        Integer traceUdpPort;
+        String userPlaybook;
+        boolean recordEnabled;
+        String taskMapMode;
+        synchronized (def) {
+            userTask = def.userTask;
+            packageName = def.packageName;
+            mapPath = def.mapPath;
+            startPage = def.startPage;
+            traceMode = def.traceMode;
+            traceUdpPort = def.traceUdpPort;
+            userPlaybook = def.userPlaybook;
+            recordEnabled = def.recordEnabled;
+            taskMapMode = def.taskMapMode;
+        }
+
+        String taskId = submitTaskInternal(
+                userTask,
+                packageName,
+                mapPath,
+                startPage,
+                traceMode,
+                traceUdpPort,
+                "schedule",
+                sid,
+                userPlaybook,
+                Boolean.valueOf(recordEnabled),
+                null,
+                taskMapMode,
+                sid,
+                ""
+        );
+
+        Map<String, Object> scheduleSnapshot;
+        synchronized (def) {
+            def.lastTriggeredAt = System.currentTimeMillis();
+            def.triggerCount += 1;
+            scheduleSnapshot = snapshotSchedule(def);
+        }
+        saveSchedulesToDisk();
+
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("schedule_id", sid);
+        out.put("task_id", taskId);
+        out.put("schedule", scheduleSnapshot);
+        return out;
+    }
+
     private void schedulerLoop() {
         for (; ; ) {
             try {

@@ -29,6 +29,38 @@ class CoreApiParserTest {
     }
 
     @Test
+    fun parseScheduleTrigger_success() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .put("submitted", true)
+            .put("schedule_id", "sid-1")
+            .put("task_id", "task-1")
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseScheduleTrigger(payload, "fallback")
+
+        assertEquals("sid-1", parsed.scheduleId)
+        assertEquals("task-1", parsed.taskId)
+        assertEquals("Schedule triggered: sid-1 (task: task-1)", parsed.message)
+    }
+
+    @Test
+    fun parseScheduleTrigger_failure() {
+        val payload = JSONObject()
+            .put("ok", false)
+            .put("error", "missing")
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseScheduleTrigger(payload, "sid-1")
+
+        assertEquals("sid-1", parsed.scheduleId)
+        assertEquals("", parsed.taskId)
+        assertTrue(parsed.message.startsWith("Trigger schedule failed: "))
+    }
+
+    @Test
     fun parseSystemControl_emptyPayload() {
         val parsed = CoreApiParser.parseSystemControl(ByteArray(0))
         assertEquals(false, parsed.ok)

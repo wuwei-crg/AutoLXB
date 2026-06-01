@@ -1863,6 +1863,7 @@ private val ZhMap = mapOf(
     "Final state" to "最终状态",
     "Next run" to "下次运行",
     "Triggered count" to "触发次数",
+    "Trigger now" to "立即触发",
     "Record" to "录屏",
     "Cooldown" to "冷却",
     "Time window" to "生效时段",
@@ -2488,6 +2489,9 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                     schedule = schedule,
                                     onToggleEnabled = { checked ->
                                         viewModel.toggleScheduleEnabledOnDevice(schedule, checked)
+                                    },
+                                    onTriggerNow = {
+                                        viewModel.triggerScheduleNowOnDevice(schedule.scheduleId)
                                     },
                                     onEdit = {
                                         editingScheduleId = schedule.scheduleId
@@ -4262,6 +4266,7 @@ private fun DetailTextLine(label: String, value: String) {
 fun ScheduleRow(
     schedule: ScheduleSummary,
     onToggleEnabled: (Boolean) -> Unit,
+    onTriggerNow: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -4342,12 +4347,24 @@ fun ScheduleRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                TextButton(
-                    onClick = onDelete,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                    modifier = Modifier.height(26.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(tr("Delete"), fontSize = 10.sp, color = scheme.error)
+                    TextButton(
+                        onClick = onTriggerNow,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text(tr("Trigger now"), fontSize = 10.sp)
+                    }
+                    TextButton(
+                        onClick = onDelete,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text(tr("Delete"), fontSize = 10.sp, color = scheme.error)
+                    }
                 }
             }
         }

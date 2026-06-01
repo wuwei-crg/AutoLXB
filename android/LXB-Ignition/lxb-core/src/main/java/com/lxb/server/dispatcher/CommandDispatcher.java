@@ -147,6 +147,9 @@ public class CommandDispatcher {
                 case CommandIds.CMD_CORTEX_TRACE_PULL:
                     response = cortexFacade.handleTracePull(payload);
                     break;
+                case CommandIds.CMD_CORTEX_SCHEDULE_TRIGGER:
+                    response = cortexFacade.handleCortexScheduleTrigger(payload);
+                    break;
                 case CommandIds.CMD_CORTEX_FSM_RUN:
                     response = cortexFacade.handleCortexFsmRun(payload);
                     break;

@@ -24,6 +24,7 @@ import com.example.lxb_ignition.core.CoreApiParser
 import com.example.lxb_ignition.core.DeviceConfigSyncer
 import com.example.lxb_ignition.core.DeviceLlmSettings
 import com.example.lxb_ignition.core.MapOperationsController
+import com.example.lxb_ignition.core.ScheduleTriggerParsed
 import com.example.lxb_ignition.core.TaskRuntimeController
 import com.example.lxb_ignition.map.MapSyncManager
 import com.example.lxb_ignition.model.AppPackageOption
@@ -1855,6 +1856,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog("[SCHEDULE] $result")
                 appendSystemMessage(result)
                 refreshScheduleListOnDevice()
+            }
+        }
+    }
+
+    fun triggerScheduleNowOnDevice(scheduleId: String) {
+        val sid = scheduleId.trim()
+        if (sid.isEmpty()) {
+            appendSystemMessage("schedule_id is empty.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot trigger schedule.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val payloadJson = org.json.JSONObject()
+                        .put("schedule_id", sid)
+                        .toString()
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_SCHEDULE_TRIGGER,
+                        payloadJson.toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseScheduleTrigger(resp, sid)
+                }
+            }.getOrElse { e ->
+                ScheduleTriggerParsed(
+                    message = "Trigger schedule failed: ${e.message ?: e.toString()}",
+                    taskId = "",
+                    scheduleId = sid
+                )
+            }
+
+            withContext(Dispatchers.Main) {
+                appendLog("[SCHEDULE] ${result.message}")
+                appendSystemMessage(result.message)
+                if (result.taskId.isNotBlank()) {
+                    refreshScheduleListOnDevice()
+                    refreshTaskListOnDevice(silent = true)
+                }
             }
         }
     }

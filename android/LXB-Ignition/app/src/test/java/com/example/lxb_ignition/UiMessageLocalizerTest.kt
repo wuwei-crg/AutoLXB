@@ -18,6 +18,12 @@ class UiMessageLocalizerTest {
     }
 
     @Test
+    fun localize_mapsScheduleTriggerForZh() {
+        val text = "Schedule triggered: sid-1 (task: task-1)"
+        assertEquals("定时任务已立即触发: sid-1 (task: task-1)", UiMessageLocalizer.localize("zh", text))
+    }
+
+    @Test
     fun localize_keepsUnknownMessage() {
         val text = "some-random-message"
         assertEquals(text, UiMessageLocalizer.localize("zh", text))

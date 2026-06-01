@@ -56,6 +56,8 @@ object UiMessageLocalizer {
             text.startsWith("Portable task imported as new task ") -> "便携任务已导入为新任务 " + text.removePrefix("Portable task imported as new task ")
             text.startsWith("Portable schedule task created: ") -> "便携定时任务已创建: " + text.removePrefix("Portable schedule task created: ")
             text.startsWith("Portable notification task created: ") -> "便携通知触发任务已创建: " + text.removePrefix("Portable notification task created: ")
+            text.startsWith("Schedule triggered: ") -> "定时任务已立即触发: " + text.removePrefix("Schedule triggered: ")
+            text.startsWith("Trigger schedule failed: ") -> "立即触发定时任务失败: " + text.removePrefix("Trigger schedule failed: ")
             text.startsWith("Portable task import failed: Invalid portable task JSON.") -> "????????: ??????? JSON?"
             text.startsWith("Portable task import failed: Unsupported portable task schema: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task schema: ")
             text.startsWith("Portable task import failed: Unsupported portable task type: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task type: ")

@@ -528,6 +528,42 @@ public class CortexFacade {
     }
 
     /**
+     * Immediately enqueue an existing schedule by id without changing its cadence.
+     *
+     * Payload JSON:
+     * {
+     *   "schedule_id": "..."
+     * }
+     */
+    public byte[] handleCortexScheduleTrigger(byte[] payload) {
+        try {
+            String s = payload != null ? new String(payload, StandardCharsets.UTF_8) : "{}";
+            Map<String, Object> req = Json.parseObject(s);
+            String scheduleId = stringOrEmpty(req.get("schedule_id"));
+            if (scheduleId.isEmpty()) {
+                return err("schedule_id is required");
+            }
+
+            Map<String, Object> triggered = taskManager.triggerScheduledTask(scheduleId);
+            if (triggered == null) {
+                return err("schedule not found: " + scheduleId);
+            }
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("submitted", true);
+            out.putAll(triggered);
+            trace.event("cortex_schedule_trigger", triggered);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("err", String.valueOf(e));
+            trace.event("cortex_schedule_trigger_err", ev);
+            return err(String.valueOf(e));
+        }
+    }
+
+    /**
      * Remove schedule by id.
      *
      * Payload JSON:
