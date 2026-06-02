@@ -151,7 +151,7 @@ Phase 3: Finish  → distill lessons + wrap-up
 
 [workflow-state:no_task]
 No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; no file writes + one-line answer + repo reads ≤ 2 files → AI judges, no override needed.
-**B Create a task** — any implementation / code change / build / refactor work. Entry sequence: (1) `python ./.trellis/scripts/task.py create "<title>"` to create the task (status=planning, breadcrumb switches to [workflow-state:planning] for brainstorm + jsonl phase guidance) → (2) load `trellis-brainstorm` skill to discuss requirements with the user and iterate on prd.md → (3) once prd is done and jsonl is curated, run `task.py start <task-dir>` to enter [workflow-state:in_progress] for the implementation skeleton. **"It looks small" is NOT grounds for downgrading B to A or C**.
+**B Create a task** — any implementation / code change / build / refactor work. Entry sequence: (1) `python ./.trellis/scripts/task.py create "<title>"` to create the task (status=planning, breadcrumb switches to [workflow-state:planning] for brainstorm + jsonl phase guidance) → (2) load `trellis-brainstorm` skill, which must use the `grill-me` interview style and keep updating prd.md after each answer → (3) once prd is done and jsonl is curated, run `task.py start <task-dir>` to enter [workflow-state:in_progress] for the implementation skeleton. **"It looks small" is NOT grounds for downgrading B to A or C**.
 **C Inline change** (per-turn only, escape hatch for B) — the user's CURRENT message MUST contain one of: "skip trellis" / "no task" / "just do it" / "don't create a task" / "跳过 trellis" / "别走流程" / "小修一下" / "直接改" / "先别建任务" → briefly acknowledge ("ok, skipping trellis flow this turn"), then inline. **Without seeing one of these phrases you must NOT inline on your own**; do not invent an override the user never said.
 [/workflow-state:no_task]
 
@@ -166,7 +166,7 @@ No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 (status='planning') -->
 
 [workflow-state:planning]
-Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
+Load the `trellis-brainstorm` skill. During brainstorm, use the `grill-me` interview style, update prd.md after every user answer, and run the two generic requirement tracks in order: backend behavior first, frontend/user-facing interface second.
 Phase 1.3 (required, once): before `task.py start`, you MUST curate `implement.jsonl` and `check.jsonl` — list the spec / research files sub-agents need so they get the right context injected. You may skip only if the jsonl already has agent-curated entries (the seed `_example` row alone doesn't count).
 Then run `task.py start <task-dir>` to flip status to in_progress.
 [/workflow-state:planning]
@@ -178,7 +178,7 @@ Then run `task.py start <task-dir>` to flip status to in_progress.
      into a sub-agent. -->
 
 [workflow-state:planning-inline]
-Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
+Load the `trellis-brainstorm` skill. During brainstorm, use the `grill-me` interview style, update prd.md after every user answer, and run the two generic requirement tracks in order: backend behavior first, frontend/user-facing interface second.
 Phase 1.3 jsonl curation is **skipped** in inline dispatch mode — the main session loads `trellis-before-dev` directly in Phase 2 and reads spec context itself, so there is no sub-agent to inject jsonl into.
 Then run `task.py start <task-dir>` to flip status to in_progress.
 [/workflow-state:planning-inline]
@@ -329,13 +329,14 @@ Skip when `python ./.trellis/scripts/task.py current --source` already points to
 
 #### 1.1 Requirement exploration `[required · repeatable]`
 
-Load the `trellis-brainstorm` skill and explore requirements interactively with the user per the skill's guidance.
+Load the `trellis-brainstorm` skill and explore requirements interactively with the user per the skill's guidance. Brainstorm must use the `grill-me` interview style and persist the evolving PRD continuously.
 
 The brainstorm skill will guide you to:
-- Ask one question at a time
+- Ask one question at a time, with a recommended answer
 - Prefer researching over asking the user
 - Prefer offering options over open-ended questions
 - Update `prd.md` immediately after each user answer
+- Complete two independent interview tracks in order: backend behavior, then frontend/user-facing interface
 
 Return to this step whenever requirements change and revise `prd.md`.
 

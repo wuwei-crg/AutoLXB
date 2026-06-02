@@ -1,15 +1,17 @@
 ---
 name: trellis-brainstorm
-description: "Guides collaborative requirements discovery before implementation. Creates task directory, seeds PRD, asks high-value questions one at a time, researches technical choices, and converges on MVP scope. Use when requirements are unclear, there are multiple valid approaches, or the user describes a new feature or complex task."
+description: "Guides collaborative requirements discovery before implementation. Creates task directory, seeds PRD, uses grill-me style interviews in two generic tracks (backend behavior, then frontend/user-facing interface), records the PRD after every answer, researches technical choices, and converges on MVP scope. Use when requirements are unclear, there are multiple valid approaches, or the user describes a new feature or complex task."
 ---
 
 # Brainstorm - Requirements Discovery (AI Coding Enhanced)
 
-**CoreRule**: Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+**CoreRule**: Use the `grill-me` interview style during brainstorm. Interview the user relentlessly about every aspect of the plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
 Ask the questions one at a time.
 
 If a question can be answered by exploring the codebase, explore the codebase instead.
+
+**PRD Recording Rule**: Update `prd.md` after every user answer. Do not wait until the interview ends. Each answered question must leave a durable record in the PRD by updating requirements, assumptions, open questions, acceptance criteria, technical notes, or the decision log.
 
 ---
 
@@ -57,6 +59,14 @@ Triggered from `start` (Trellis command) when the user describes a development t
    Do not ask "should I search?" or "can you paste the code so I can continue?"
    If you need information: search/inspect. If blocked: ask the minimal blocking question.
 
+8. **Two-track grill-me**
+   Run requirement discovery in two independent tracks, in this order:
+   1. Backend behavior: domain rules, state changes, commands/APIs/events, persistence, migration, execution flow, validation, errors, compatibility, tests.
+   2. Frontend/user-facing interface: where users encounter the feature, what they see, what they can do, which fields are exposed, wording/i18n, controls, feedback states, and layout ergonomics.
+
+9. **One PRD, one record per answer**
+   Keep one `prd.md` for the task. After each answer, append or update a concrete record so the next turn can resume from the file, not from chat memory.
+
 ---
 
 ## Step 0: Ensure Task Exists (ALWAYS)
@@ -94,6 +104,18 @@ Create/seed `prd.md` immediately with what you know:
 ## Open Questions
 
 * <ONLY Blocking / Preference questions; keep list short>
+
+## Backend Behavior (evolving)
+
+* <backend behavior, constraints, decisions, and acceptance criteria>
+
+## Frontend/User-Facing Interface (evolving)
+
+* <user-facing requirements, exposed information, interaction flows, i18n, states, and acceptance criteria>
+
+## Decision Log
+
+* <question> → <answer / decision> → <PRD impact>
 
 ## Requirements (evolving)
 
@@ -192,7 +214,54 @@ Examples:
 
 ---
 
-## Step 4: Research-first Mode (Mandatory for technical choices)
+## Step 4: Two-Track Grill-Me Interview (MANDATORY)
+
+Run brainstorm as two separate interview tracks. Do not blend backend and frontend decisions into one vague discussion.
+
+### Track 1: Backend Behavior
+
+Finish backend behavior first. Cover only the behavior and system contract:
+
+* domain concepts and ownership boundaries
+* commands, APIs, events, or protocol shape
+* persistence, migration, compatibility, and rollback
+* execution flow, lifecycle, cancellation, retry, and error handling
+* validation rules and default behavior
+* tests and traceability
+
+Ask one backend question at a time. For each question:
+
+1. Inspect code/specs first when possible.
+2. Present 2–3 concrete options with a recommended answer.
+3. After the user answers, update `prd.md` immediately.
+4. Record the answer in `## Decision Log` and update `## Backend Behavior (evolving)`.
+
+Do not move to the frontend/user-facing track until backend behavior is coherent enough to summarize.
+
+### Track 2: Frontend/User-Facing Interface
+
+After backend behavior is summarized, run a separate frontend/user-facing grill-me pass. Cover only the surface users interact with:
+
+* where the feature appears in the product and how users enter/leave it
+* primary user journeys and secondary actions, such as create/edit/delete/toggle/run when applicable
+* what information users should see versus what remains internal
+* which control type fits each user-editable value, such as text input, picker, switch, calendar/time selector, or modal/full-screen selector
+* Chinese-first copy, i18n keys, validation text, and user-facing terminology
+* empty states, loading states, errors, success feedback, save/cancel behavior, and dirty-state handling
+* information density, navigation, mobile/desktop layout, and accessibility constraints
+
+Ask one frontend/user-facing question at a time. For each question:
+
+1. Inspect the old/current user-facing implementation first when possible.
+2. Present 2–3 concrete UX options with a recommended answer.
+3. After the user answers, update `prd.md` immediately.
+4. Record the answer in `## Decision Log` and update `## Frontend/User-Facing Interface (evolving)`.
+
+The frontend/user-facing track is required for any user-visible change. If the task is truly backend-only, still record that conclusion in `prd.md` with the reason and the checked surfaces before skipping detailed UI questions.
+
+---
+
+## Step 5: Research-first Mode (Mandatory for technical choices)
 
 ### Trigger conditions (any → research-first)
 
@@ -293,7 +362,7 @@ Then ask **one** preference question:
 
 ---
 
-## Step 5: Expansion Sweep (DIVERGE) — Required after initial understanding
+## Step 6: Expansion Sweep (DIVERGE) — Required after initial understanding
 
 After you can summarize the goal, proactively broaden thinking before converging.
 
@@ -340,7 +409,7 @@ Then update PRD:
 
 ---
 
-## Step 6: Q&A Loop (CONVERGE)
+## Step 7: Q&A Loop (CONVERGE)
 
 ### Rules
 
@@ -349,7 +418,9 @@ Then update PRD:
 * After each user answer:
 
   * Update PRD immediately
+  * Add or update one `## Decision Log` entry
   * Move answered items from `Open Questions` → `Requirements`
+  * Update `Backend Behavior (evolving)` or `Frontend/User-Facing Interface (evolving)` depending on the active track
   * Update `Acceptance Criteria` with testable checkboxes
   * Clarify `Out of Scope`
 
@@ -373,7 +444,7 @@ For <topic>, which approach do you prefer?
 
 ---
 
-## Step 7: Propose Approaches + Record Decisions (Complex tasks)
+## Step 8: Propose Approaches + Record Decisions (Complex tasks)
 
 After requirements are clear enough, propose 2–3 approaches (if not already done via research-first):
 
@@ -407,7 +478,7 @@ Record the outcome in PRD as an ADR-lite section:
 
 ---
 
-## Step 8: Final Confirmation + Implementation Plan
+## Step 9: Final Confirmation + Implementation Plan
 
 When open questions are resolved, confirm complete requirements with a structured summary:
 
@@ -478,6 +549,14 @@ python ./.trellis/scripts/task.py add-subtask "$TASK_DIR" "$CHILD_DIR"
 
 * ...
 
+## Backend Behavior
+
+* ...
+
+## Frontend/User-Facing Interface
+
+* ...
+
 ## Acceptance Criteria
 
 * [ ] ...
@@ -493,6 +572,10 @@ python ./.trellis/scripts/task.py add-subtask "$TASK_DIR" "$CHILD_DIR"
 ## Decision (ADR-lite)
 
 Context / Decision / Consequences
+
+## Decision Log
+
+* <question> → <answer / decision> → <PRD impact>
 
 ## Out of Scope
 
@@ -517,13 +600,13 @@ Context / Decision / Consequences
 
 ## Integration with Start Workflow
 
-After brainstorm completes (Step 8 confirmation approved), the flow continues to the Task Workflow's **Phase 2: Prepare for Implementation**:
+After brainstorm completes (Step 9 confirmation approved), the flow continues to the Task Workflow's **Phase 2: Prepare for Implementation**:
 
 ```text
 Brainstorm
   Step 0: Create task directory + seed PRD
-  Step 1–7: Discover requirements, research, converge
-  Step 8: Final confirmation → user approves
+  Step 1-8: Discover requirements, grill-me backend behavior, grill-me frontend/user-facing interface, research, converge
+  Step 9: Final confirmation → user approves
   ↓
 Task Workflow Phase 2 (Prepare for Implementation)
   Code-Spec Depth Check (if applicable)
