@@ -13,14 +13,19 @@ object UiMessageLocalizer {
             text == "Task received, checking lxb-core server status..." -> "任务已接收，正在检查 lxb-core 服务状态..."
             text == "Server is not running, please start the service first." -> "服务未运行，请先启动服务。"
             text == "Server is running, calling Cortex FSM on device..." -> "服务已运行，正在调用设备端 Cortex FSM..."
+            text == "Root is not available on this device." -> "当前设备未检测到可用 Root。"
             text.startsWith("Task id: ") -> "任务 ID: " + text.removePrefix("Task id: ")
             text == "Cancel requested for current task." -> "已请求取消当前任务。"
             text.startsWith("Failed to send cancel request: ") -> "发送取消请求失败: " + text.removePrefix("Failed to send cancel request: ")
             text == "Schedule task cannot be empty." -> "定时任务描述不能为空。"
+            text == "Task description is empty." -> "任务描述不能为空。"
+            text == "Package is required." -> "请选择应用。"
             text == "Please pick a valid date and time." -> "请选择有效的日期和时间。"
-            text == "run_at must be in the future." -> "run_at 必须是未来时间。"
+            text == "run_at must be in the future." -> "运行时间必须是未来时间。"
+            text == "One-shot schedule in the past cannot be enabled again." -> "单次定时任务的时间已过，不能再次启用。"
             text == "Please select at least one weekday for weekly repeat." -> "每周重复模式至少需要选择一个星期几。"
             text == "schedule_id is empty." -> "schedule_id 为空。"
+            text == "rule_id is empty." -> "通知规则 ID 为空。"
             text == "APP_RESOLVE: selecting the best app for this task..." -> "APP_RESOLVE：正在为任务选择最合适的应用..."
             text == "DEVICE_PREPARE: preparing device for task execution..." -> "DEVICE_PREPARE：正在准备设备执行任务..."
             text == "APP_ENTER: launching and readying the selected app..." -> "APP_ENTER：正在启动并准备目标应用..."
@@ -58,17 +63,41 @@ object UiMessageLocalizer {
             text.startsWith("Portable notification task created: ") -> "便携通知触发任务已创建: " + text.removePrefix("Portable notification task created: ")
             text.startsWith("Schedule triggered: ") -> "定时任务已立即触发: " + text.removePrefix("Schedule triggered: ")
             text.startsWith("Trigger schedule failed: ") -> "立即触发定时任务失败: " + text.removePrefix("Trigger schedule failed: ")
-            text.startsWith("Portable task import failed: Invalid portable task JSON.") -> "????????: ??????? JSON?"
-            text.startsWith("Portable task import failed: Unsupported portable task schema: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task schema: ")
-            text.startsWith("Portable task import failed: Unsupported portable task type: ") -> "????????: ???????? " + text.removePrefix("Portable task import failed: Unsupported portable task type: ")
-            text.startsWith("Portable task import failed: Portable task route segments are missing.") -> "????????: ?????? segments?"
-            text.startsWith("Portable task import failed: Portable task_info is missing.") -> "????????: ???? task_info?"
-            text.startsWith("Portable task import failed: Portable task_config is missing.") -> "????????: ???? task_config?"
-            text.startsWith("Portable task import failed: Portable task user_task is missing.") -> "????????: ???????? user_task?"
-            text.startsWith("Portable task import failed: Portable notification trigger package_list is missing.") -> "????????: ???????????? package_list?"
-            text.startsWith("Portable task import failed: Portable notification trigger condition is missing.") -> "????????: ?????????????"
-            text.startsWith("Portable task import failed: Cannot open portable task file.") -> "????????: ??????????"
-            text.startsWith("Portable task import failed: Import portable route failed: ") -> "????????: ??????: " + text.removePrefix("Portable task import failed: Import portable route failed: ")
+            text.startsWith("Template list query failed: ") -> "任务模板列表查询失败: " + text.removePrefix("Template list query failed: ")
+            text.startsWith("Template list refreshed: ") -> "任务模板列表已刷新: " + text.removePrefix("Template list refreshed: ")
+            text.startsWith("Workflow list query failed: ") -> "工作流列表查询失败: " + text.removePrefix("Workflow list query failed: ")
+            text.startsWith("Workflow list refreshed: ") -> "工作流列表已刷新: " + text.removePrefix("Workflow list refreshed: ")
+            text == "Template description is empty." -> "任务模板描述不能为空。"
+            text.startsWith("Save template failed: ") -> "保存任务模板失败: " + text.removePrefix("Save template failed: ")
+            text == "Template saved." -> "任务模板已保存。"
+            text.startsWith("Template saved: ") -> "任务模板已保存: " + text.removePrefix("Template saved: ")
+            text == "template_id is empty." -> "任务模板 ID 为空。"
+            text.startsWith("Delete template failed: ") -> "删除任务模板失败: " + text.removePrefix("Delete template failed: ")
+            text == "Template deleted" -> "任务模板已删除。"
+            text == "Workflow name is empty." -> "工作流名称不能为空。"
+            text == "Select at least one template first." -> "请先至少选择一个任务模板。"
+            text.startsWith("Save workflow failed: ") -> "保存工作流失败: " + text.removePrefix("Save workflow failed: ")
+            text == "Workflow saved." -> "工作流已保存。"
+            text.startsWith("Workflow saved: ") -> "工作流已保存: " + text.removePrefix("Workflow saved: ")
+            text == "workflow_id is empty." -> "工作流 ID 为空。"
+            text.startsWith("Delete workflow failed: ") -> "删除工作流失败: " + text.removePrefix("Delete workflow failed: ")
+            text == "Workflow deleted" -> "工作流已删除。"
+            text == "This workflow has no trigger." -> "这个工作流没有触发条件。"
+            text.startsWith("Update workflow trigger failed: ") -> "更新工作流触发开关失败: " + text.removePrefix("Update workflow trigger failed: ")
+            text.startsWith("Workflow run failed: ") -> "运行工作流失败: " + text.removePrefix("Workflow run failed: ")
+            text == "Workflow submitted." -> "工作流已提交执行。"
+            text.startsWith("Workflow submitted: ") -> "工作流已提交执行: " + text.removePrefix("Workflow submitted: ")
+            text.startsWith("Portable task import failed: Invalid portable task JSON.") -> "便携任务导入失败: 便携任务 JSON 无效。"
+            text.startsWith("Portable task import failed: Unsupported portable task schema: ") -> "便携任务导入失败: 不支持的 schema: " + text.removePrefix("Portable task import failed: Unsupported portable task schema: ")
+            text.startsWith("Portable task import failed: Unsupported portable task type: ") -> "便携任务导入失败: 不支持的任务类型: " + text.removePrefix("Portable task import failed: Unsupported portable task type: ")
+            text.startsWith("Portable task import failed: Portable task route segments are missing.") -> "便携任务导入失败: 缺少路线片段。"
+            text.startsWith("Portable task import failed: Portable task_info is missing.") -> "便携任务导入失败: 缺少 task_info。"
+            text.startsWith("Portable task import failed: Portable task_config is missing.") -> "便携任务导入失败: 缺少 task_config。"
+            text.startsWith("Portable task import failed: Portable task user_task is missing.") -> "便携任务导入失败: 缺少任务描述。"
+            text.startsWith("Portable task import failed: Portable notification trigger package_list is missing.") -> "便携任务导入失败: 通知触发规则缺少监听应用。"
+            text.startsWith("Portable task import failed: Portable notification trigger condition is missing.") -> "便携任务导入失败: 通知触发规则缺少触发条件。"
+            text.startsWith("Portable task import failed: Cannot open portable task file.") -> "便携任务导入失败: 无法打开便携任务文件。"
+            text.startsWith("Portable task import failed: Import portable route failed: ") -> "便携任务导入失败: 导入路线失败: " + text.removePrefix("Portable task import failed: Import portable route failed: ")
             text.startsWith("Portable task import failed: ") -> "便携任务导入失败: " + text.removePrefix("Portable task import failed: ")
             else -> text
         }

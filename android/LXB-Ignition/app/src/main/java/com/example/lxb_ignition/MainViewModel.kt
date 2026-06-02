@@ -2549,7 +2549,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             color = Color.rgb(110, 118, 135)
             textSize = 20f
         }
-        canvas.drawText("Read digits only", 86f, 42f, guide)
+        val guideText = if (uiLang.value == "zh") "只读数字" else "Read digits only"
+        canvas.drawText(guideText, if (uiLang.value == "zh") 112f else 86f, 42f, guide)
         canvas.drawText(answer, 62f, 110f, text)
 
         val imagePng = ByteArrayOutputStream().use { out ->

@@ -131,7 +131,10 @@ class MainActivity : ComponentActivity() {
         if (!granted) {
             Toast.makeText(
                 this,
-                "Notification permission is recommended for task/runtime status.",
+                activityText(
+                    en = "Notification permission is recommended for task/runtime status.",
+                    zh = "建议开启通知权限，以显示任务和运行状态。"
+                ),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -153,7 +156,10 @@ class MainActivity : ComponentActivity() {
         if (!ok) {
             Toast.makeText(
                 this,
-                "Failed to open Developer Options automatically.",
+                activityText(
+                    en = "Failed to open Developer Options automatically.",
+                    zh = "无法自动打开开发者选项。"
+                ),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -165,7 +171,10 @@ class MainActivity : ComponentActivity() {
         if (!ok) {
             Toast.makeText(
                 this,
-                "Failed to open Wireless debugging settings automatically.",
+                activityText(
+                    en = "Failed to open Wireless debugging settings automatically.",
+                    zh = "无法自动打开无线调试设置。"
+                ),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -194,6 +203,10 @@ class MainActivity : ComponentActivity() {
         if (!granted) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    private fun activityText(en: String, zh: String): String {
+        return if (Locale.getDefault().language.equals("zh", ignoreCase = true)) zh else en
     }
 }
 
@@ -2218,7 +2231,67 @@ private val ZhMap = mapOf(
     "The rule will appear in the notification trigger list after it is saved." to "保存后，这条规则会出现在通知触发任务列表中。",
     "This page edits the route asset for one exact task only." to "这个页面只编辑某一个精确任务对应的路线资产。",
     "Replay behavior" to "回放结束后直接结束任务",
-    "Choose whether a successful replay should finish the current sub-task immediately." to "控制路线回放成功后，是否直接结束当前任务。"
+    "Choose whether a successful replay should finish the current sub-task immediately." to "控制路线回放成功后，是否直接结束当前任务。",
+    "Templates" to "任务模板",
+    "Template" to "任务模板",
+    "Workflows" to "工作流",
+    "Workflow" to "工作流",
+    "Author reusable task templates and their primary routes." to "编写可复用的任务模板，并维护它们的主路线。",
+    "Define one reusable task unit." to "定义一个可复用的任务单元。",
+    "No templates yet." to "暂无任务模板。",
+    "Create a template before composing workflows." to "请先创建任务模板，再编排工作流。",
+    "Name" to "名称",
+    "Target app" to "目标应用",
+    "Playbook" to "操作手册",
+    "Allow model decomposition" to "允许模型拆分任务",
+    "Enable the legacy TASK_DECOMPOSE stage for this template." to "为这个模板启用旧的 TASK_DECOMPOSE 阶段。",
+    "Route" to "路线",
+    "No app" to "未指定应用",
+    "No route" to "暂无路线",
+    "Route ready" to "路线已就绪",
+    "Sequence templates and attach one optional trigger." to "按顺序编排模板，并可添加一个触发条件。",
+    "Create a workflow from one or more templates." to "用一个或多个模板创建工作流。",
+    "No workflows yet." to "暂无工作流。",
+    "Select a template and optional trigger." to "选择模板并配置可选触发条件。",
+    "Steps" to "步骤",
+    "Add templates and arrange the order they should run." to "添加模板，并调整它们的执行顺序。",
+    "No steps yet." to "暂无步骤。",
+    "Add a template to start building this workflow." to "添加一个模板来开始编排这个工作流。",
+    "Add step" to "添加步骤",
+    "Trigger" to "触发方式",
+    "Choose whether this workflow runs manually only, on a schedule, or from notifications." to "选择这个工作流是仅手动执行，还是按定时或通知触发。",
+    "No trigger" to "无触发条件",
+    "Scheduled" to "定时触发",
+    "Notification" to "通知触发",
+    "Select template" to "选择模板",
+    "Choose an existing template to add to this workflow." to "选择一个已有模板加入当前工作流。",
+    "Up" to "上移",
+    "Down" to "下移",
+    "Listen app" to "监听应用",
+    "Choose which notifications should start this workflow." to "选择哪些通知可以启动这个工作流。",
+    "Title pattern" to "标题匹配",
+    "Body pattern" to "正文匹配",
+    "Cooldown seconds" to "冷却时间（秒）",
+    "Start time" to "开始时间",
+    "End time" to "结束时间",
+    "Use LLM condition" to "使用 LLM 条件",
+    "Add an extra model check after the text match." to "文本匹配后再增加一次模型判断。",
+    "Open app" to "打开应用",
+    "Record execution" to "录制执行过程",
+    "Capture screen recording after the trigger is matched." to "触发条件命中后录制屏幕。",
+    "These settings apply after a notification match." to "这些设置会在通知命中后生效。",
+    "Materialized from" to "生成来源",
+    "Materialized at" to "生成时间",
+    "Portable kind" to "便携类型",
+    "Input" to "输入",
+    "Output" to "输出",
+    "Expected" to "预期",
+    "Tap point" to "点击点",
+    "Swipe" to "滑动",
+    "Container probe" to "容器探测",
+    "Adaptation status" to "适配状态",
+    "Adaptation error" to "适配错误",
+    "Semantic descriptor" to "语义描述"
 )
 
 private data class RouteEditorTarget(
