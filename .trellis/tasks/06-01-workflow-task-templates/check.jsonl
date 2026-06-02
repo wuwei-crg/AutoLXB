@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Check backend scope and referenced quality expectations."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify JSON persistence, migration, compatibility, and atomic writes."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify command-boundary validation and ok/err responses."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify workflow trace events and logging behavior."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify protocol alignment, dependency constraints, and backend test coverage."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Check frontend scope and referenced quality expectations."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify Compose UI structure and text/layout conventions."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify ViewModel state and backend snapshot handling."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify typed parser boundaries and response validation."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify app/core contract tests and forbidden patterns."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check data flow across persistence, backend API, parser, ViewModel, and UI."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check reuse of existing schedule, notification, route, and task execution patterns."}

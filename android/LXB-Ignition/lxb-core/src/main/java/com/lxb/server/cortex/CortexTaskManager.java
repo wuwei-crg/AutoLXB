@@ -7,6 +7,9 @@ import com.lxb.server.cortex.taskmap.TaskMapAssembler;
 import com.lxb.server.cortex.taskmap.TaskMapStore;
 import com.lxb.server.cortex.taskmap.TaskRouteKey;
 import com.lxb.server.cortex.taskmap.TaskRouteRecord;
+import com.lxb.server.cortex.workflow.TaskTemplate;
+import com.lxb.server.cortex.workflow.WorkflowDef;
+import com.lxb.server.cortex.workflow.WorkflowStore;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -72,15 +75,26 @@ public class CortexTaskManager {
     private final String taskMemoryPath;
     private static final String DEFAULT_SCHEDULES_PATH = "/data/local/tmp/lxb/schedules.v1.json";
     private static final String DEFAULT_TASK_RUNS_PATH = "/data/local/tmp/lxb/task_runs.v1.json";
+    private static final String DEFAULT_TASK_TEMPLATES_PATH = "/data/local/tmp/lxb/task_templates.v1.json";
+    private static final String DEFAULT_WORKFLOWS_PATH = "/data/local/tmp/lxb/workflows.v1.json";
     private static final String DEFAULT_RECORD_ROOT = "/sdcard/Movies/lxb";
     private static final int RECORD_SEGMENT_TIME_LIMIT_SEC = 170;
     private static final long RECORD_SEGMENT_ROTATE_CHECK_MS = 1000L;
     private final String schedulesPath;
     private final String taskRunsPath;
+    private final String taskTemplatesPath;
+    private final String workflowsPath;
     private final CortexTaskPersistence persistence = new CortexTaskPersistence();
+    private final WorkflowStore workflowStore;
     // Dedicated worker/scheduler threads.
     private final Thread workerThread;
     private final Thread schedulerThread;
+    private final Thread workflowThread;
+
+    private final BlockingQueue<WorkflowRunRequest> workflowQueue =
+            new LinkedBlockingQueue<WorkflowRunRequest>();
+    private final ConcurrentHashMap<String, ActiveWorkflowRun> activeWorkflowRuns =
+            new ConcurrentHashMap<String, ActiveWorkflowRun>();
 
     // Simple global cancellation flag for the single-worker FSM. When true,
     // the current FSM run will notice and exit at the next state boundary.
@@ -96,12 +110,19 @@ public class CortexTaskManager {
         this.taskMemoryPath = resolveTaskMemoryPath();
         this.schedulesPath = resolveSchedulesPath(this.taskMemoryPath);
         this.taskRunsPath = resolveTaskRunsPath(this.taskMemoryPath);
+        this.taskTemplatesPath = resolveTaskTemplatesPath(this.taskMemoryPath);
+        this.workflowsPath = resolveWorkflowsPath(this.taskMemoryPath);
+        this.workflowStore = new WorkflowStore(persistence, taskTemplatesPath, workflowsPath);
         loadTaskMemoryFromDisk();
         loadSchedulesFromDisk();
+        migrateSchedulesToWorkflows();
         loadTaskRunsFromDisk();
         this.workerThread = new Thread(this::workerLoop, "CortexFsmWorker");
         this.workerThread.setDaemon(true);
         this.workerThread.start();
+        this.workflowThread = new Thread(this::workflowLoop, "CortexWorkflowWorker");
+        this.workflowThread.setDaemon(true);
+        this.workflowThread.start();
         this.schedulerThread = new Thread(this::schedulerLoop, "CortexFsmScheduler");
         this.schedulerThread.setDaemon(true);
         this.schedulerThread.start();
@@ -286,6 +307,44 @@ public class CortexTaskManager {
             String sourceId,
             String sourceConfigHash
     ) {
+        return submitTaskInternal(
+                userTask,
+                packageName,
+                mapPath,
+                startPage,
+                traceMode,
+                traceUdpPort,
+                source,
+                scheduleId,
+                userPlaybook,
+                recordEnabled,
+                useMapOverride,
+                taskMapMode,
+                sourceId,
+                sourceConfigHash,
+                true,
+                false
+        );
+    }
+
+    private String submitTaskInternal(
+            String userTask,
+            String packageName,
+            String mapPath,
+            String startPage,
+            String traceMode,
+            Integer traceUdpPort,
+            String source,
+            String scheduleId,
+            String userPlaybook,
+            Boolean recordEnabled,
+            Boolean useMapOverride,
+            String taskMapMode,
+            String sourceId,
+            String sourceConfigHash,
+            boolean decomposeEnabled,
+            boolean suppressAutoLockAfterTask
+    ) {
         long now = System.currentTimeMillis();
         TaskInstance instance = new TaskInstance();
         instance.taskId = UUID.randomUUID().toString();
@@ -297,6 +356,8 @@ public class CortexTaskManager {
         instance.taskMapMode = taskMapMode != null ? taskMapMode.trim() : "off";
         instance.sourceId = sourceId != null ? sourceId.trim() : "";
         instance.sourceConfigHash = "";
+        instance.decomposeEnabled = decomposeEnabled;
+        instance.suppressAutoLockAfterTask = suppressAutoLockAfterTask;
         String taskKey = buildTaskMemoryKey(instance.userTask);
         instance.taskMemoryKey = taskKey;
         Map<String, Object> memoryHint = instance.userPlaybook.isEmpty()
@@ -323,6 +384,8 @@ public class CortexTaskManager {
                 instance.taskMapMode,
                 instance.sourceId,
                 instance.sourceConfigHash,
+                decomposeEnabled,
+                suppressAutoLockAfterTask,
                 instance
         );
         try {
@@ -595,10 +658,273 @@ public class CortexTaskManager {
         return out;
     }
 
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> listTaskTemplates() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (TaskTemplate t : workflowStore.listTemplates()) {
+            out.add(t.toMap());
+        }
+        return out;
+    }
+
+    public Map<String, Object> getTaskTemplate(String templateId) {
+        TaskTemplate t = workflowStore.getTemplate(templateId);
+        return t != null ? t.toMap() : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> saveTaskTemplate(Map<String, Object> row) {
+        TaskTemplate t = TaskTemplate.fromMap(row);
+        if (t == null) {
+            t = new TaskTemplate();
+            if (row != null) {
+                t.templateId = stringOrEmpty(row.get("template_id"));
+                t.name = stringOrEmpty(row.get("name"));
+                t.description = stringOrEmpty(row.get("description"));
+                t.packageName = firstNonEmpty(stringOrEmpty(row.get("package_name")), stringOrEmpty(row.get("package")));
+                t.startPage = stringOrEmpty(row.get("start_page"));
+                t.mapPath = stringOrEmpty(row.get("map_path"));
+                t.userPlaybook = stringOrEmpty(row.get("user_playbook"));
+                t.recordEnabled = toBool(row.get("record_enabled"), false);
+                t.taskMapMode = stringOrEmpty(row.get("task_map_mode"));
+                t.routeId = stringOrEmpty(row.get("route_id"));
+                t.decomposeEnabled = toBool(row.get("decompose_enabled"), false);
+            }
+        }
+        TaskTemplate saved = workflowStore.saveTemplate(t);
+        return saved.toMap();
+    }
+
+    public boolean deleteTaskTemplate(String templateId) {
+        return workflowStore.deleteTemplate(templateId);
+    }
+
+    public List<Map<String, Object>> listWorkflows() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (WorkflowDef w : workflowStore.listWorkflows()) {
+            out.add(w.toMap());
+        }
+        return out;
+    }
+
+    public Map<String, Object> getWorkflow(String workflowId) {
+        WorkflowDef w = workflowStore.getWorkflow(workflowId);
+        return w != null ? w.toMap() : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> saveWorkflow(Map<String, Object> row) {
+        if (row == null) {
+            throw new IllegalArgumentException("workflow is required");
+        }
+        String workflowId = stringOrEmpty(row.get("workflow_id"));
+        WorkflowDef existing = workflowId.isEmpty() ? null : workflowStore.getWorkflow(workflowId);
+        WorkflowDef w = existing != null ? WorkflowDef.fromMap(existing.toMap()) : new WorkflowDef();
+
+        if (row.containsKey("workflow_id")) {
+            w.workflowId = workflowId;
+        }
+        if (row.containsKey("name")) {
+            w.name = stringOrEmpty(row.get("name"));
+        }
+        if (row.containsKey("description")) {
+            w.description = stringOrEmpty(row.get("description"));
+        }
+        if (row.containsKey("trigger_type")) {
+            w.triggerType = stringOrEmpty(row.get("trigger_type"));
+        }
+        if (row.containsKey("trigger_enabled")) {
+            w.triggerEnabled = toBool(row.get("trigger_enabled"), false);
+        } else if (existing == null) {
+            w.triggerEnabled = false;
+        }
+        if (row.containsKey("trigger_config")) {
+            w.triggerConfig.clear();
+            Object cfg = row.get("trigger_config");
+            if (cfg instanceof Map) {
+                w.triggerConfig.putAll((Map<String, Object>) cfg);
+            }
+        }
+        if (row.containsKey("failure_policy")) {
+            w.failurePolicy = stringOrEmpty(row.get("failure_policy"));
+        }
+        if (row.containsKey("steps")) {
+            w.steps.clear();
+            Object stepsObj = row.get("steps");
+            if (stepsObj instanceof List) {
+                int idx = 0;
+                for (Object o : (List<Object>) stepsObj) {
+                    if (!(o instanceof Map)) {
+                        idx++;
+                        continue;
+                    }
+                    WorkflowDef.Step step = WorkflowDef.Step.fromMap((Map<String, Object>) o, idx++);
+                    if (step != null) {
+                        w.steps.add(step);
+                    }
+                }
+            }
+        }
+        normalizeWorkflowTriggerForSave(w);
+        WorkflowDef saved = workflowStore.saveWorkflow(w);
+        return saved.toMap();
+    }
+
+    private void normalizeWorkflowTriggerForSave(WorkflowDef workflow) {
+        if (workflow == null) {
+            return;
+        }
+        workflow.triggerType = WorkflowDef.normalizeTriggerType(workflow.triggerType);
+        if (WorkflowDef.TRIGGER_NONE.equals(workflow.triggerType)) {
+            workflow.triggerEnabled = false;
+            workflow.triggerConfig = new LinkedHashMap<String, Object>();
+            return;
+        }
+        if (workflow.triggerConfig == null) {
+            workflow.triggerConfig = new LinkedHashMap<String, Object>();
+        }
+        if (WorkflowDef.TRIGGER_SCHEDULE.equals(workflow.triggerType)) {
+            Map<String, Object> config = workflow.triggerConfig;
+            long runAt = toLong(config.get("run_at"), toLong(config.get("start_at"), 0L));
+            String repeatMode = CortexScheduleTime.normalizeRepeatMode(stringOrEmpty(config.get("repeat_mode")));
+            int repeatWeekdays = toInt(config.get("repeat_weekdays"), 0) & 0x7F;
+            if ("weekly".equals(repeatMode) && repeatWeekdays == 0) {
+                repeatWeekdays = 0b0011111;
+            }
+            config.put("repeat_mode", repeatMode);
+            if ("weekly".equals(repeatMode)) {
+                config.put("repeat_weekdays", repeatWeekdays);
+            }
+            if (workflow.triggerEnabled) {
+                if (runAt <= 0L) {
+                    throw new IllegalArgumentException("run_at is required for schedule trigger");
+                }
+                long nextRunAt = CortexScheduleTime.computeFirstRunAt(
+                        runAt,
+                        repeatMode,
+                        repeatWeekdays,
+                        System.currentTimeMillis()
+                );
+                config.put("next_run_at", nextRunAt);
+            } else if (runAt > 0L && !"once".equals(repeatMode)) {
+                long nextRunAt = CortexScheduleTime.computeFirstRunAt(
+                        runAt,
+                        repeatMode,
+                        repeatWeekdays,
+                        System.currentTimeMillis()
+                );
+                config.put("next_run_at", nextRunAt);
+            }
+        }
+    }
+
+    public boolean deleteWorkflow(String workflowId) {
+        String wid = stringOrEmpty(workflowId);
+        if (wid.isEmpty()) {
+            throw new IllegalArgumentException("workflow_id is required");
+        }
+        if (activeWorkflowRuns.containsKey(wid)) {
+            throw new IllegalStateException("workflow is running: " + wid);
+        }
+        for (ActiveWorkflowRun run : activeWorkflowRuns.values()) {
+            if (run != null && wid.equals(run.workflowId) && "running".equals(run.status)) {
+                throw new IllegalStateException("workflow is running: " + wid);
+            }
+        }
+        return workflowStore.deleteWorkflow(wid);
+    }
+
+    public Map<String, Object> runTemplate(String templateId, String source) {
+        TaskTemplate template = workflowStore.getTemplate(templateId);
+        if (template == null) {
+            throw new IllegalArgumentException("template not found: " + templateId);
+        }
+        WorkflowDef temp = WorkflowDef.createNew(template.name);
+        temp.workflowId = "tmp_wf_" + UUID.randomUUID().toString();
+        temp.description = "Temporary one-step workflow";
+        WorkflowDef.Step step = new WorkflowDef.Step();
+        step.templateId = template.templateId;
+        step.name = template.name;
+        temp.steps.add(step);
+        temp.normalizeForSave();
+        return submitWorkflowRun(temp, stringOrEmpty(source).isEmpty() ? "template_manual" : source, false);
+    }
+
+    public Map<String, Object> submitWorkflow(String workflowId, String source) {
+        WorkflowDef workflow = workflowStore.getWorkflow(workflowId);
+        if (workflow == null) {
+            throw new IllegalArgumentException("workflow not found: " + workflowId);
+        }
+        return submitWorkflowRun(workflow, stringOrEmpty(source).isEmpty() ? "manual" : source, true);
+    }
+
+    public Map<String, Object> requestWorkflowCancel(String workflowRunId) {
+        String rid = stringOrEmpty(workflowRunId);
+        ActiveWorkflowRun run = activeWorkflowRuns.get(rid);
+        if (run == null) {
+            Map<String, Object> out = new LinkedHashMap<String, Object>();
+            out.put("ok", false);
+            out.put("err", "workflow_run_not_found");
+            out.put("workflow_run_id", rid);
+            return out;
+        }
+        run.cancelRequested = true;
+        String taskId = run.currentTaskId;
+        if (taskId != null && !taskId.isEmpty()) {
+            requestCancel();
+        }
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("ok", true);
+        out.put("workflow_run_id", rid);
+        out.put("status", run.status);
+        out.put("current_task_id", taskId);
+        return out;
+    }
+
+    public Map<String, Object> getWorkflowStatus(String workflowRunId) {
+        String rid = stringOrEmpty(workflowRunId);
+        ActiveWorkflowRun run = activeWorkflowRuns.get(rid);
+        if (run == null) {
+            Map<String, Object> out = new LinkedHashMap<String, Object>();
+            out.put("found", false);
+            out.put("workflow_run_id", rid);
+            return out;
+        }
+        return snapshotWorkflowRun(run);
+    }
+
+    private Map<String, Object> submitWorkflowRun(WorkflowDef workflow, String source, boolean visibleWorkflow) {
+        WorkflowRunRequest req = new WorkflowRunRequest();
+        req.workflow = workflow;
+        req.source = source;
+        req.visibleWorkflow = visibleWorkflow;
+        req.workflowRunId = "wfr_" + UUID.randomUUID().toString();
+        ActiveWorkflowRun active = new ActiveWorkflowRun(req.workflowRunId, workflow.workflowId, workflow.name, source);
+        for (WorkflowDef.Step step : workflow.steps) {
+            active.steps.add(new WorkflowStepRun(step.stepId, step.templateId, step.name));
+        }
+        activeWorkflowRuns.put(req.workflowRunId, active);
+        try {
+            workflowQueue.put(req);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            active.status = "failed";
+            active.reason = "interrupted_while_enqueuing";
+            throw new RuntimeException("Interrupted while enqueuing workflow", e);
+        }
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("ok", true);
+        out.put("workflow_run_id", req.workflowRunId);
+        out.put("workflow_id", workflow.workflowId);
+        out.put("status", "submitted");
+        return out;
+    }
+
     private void schedulerLoop() {
         for (; ; ) {
             try {
                 long now = System.currentTimeMillis();
+                runDueWorkflowSchedules(now);
                 for (ScheduledTaskDef def : scheduleRegistry.values()) {
                     if (def == null || !def.enabled) {
                         continue;
@@ -667,6 +993,230 @@ public class CortexTaskManager {
         }
     }
 
+    private void workflowLoop() {
+        for (; ; ) {
+            try {
+                WorkflowRunRequest req = workflowQueue.take();
+                executeWorkflow(req);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception ignored) {
+                // Keep workflow worker alive; per-run failures are recorded in active state.
+            }
+        }
+    }
+
+    private void executeWorkflow(WorkflowRunRequest req) {
+        if (req == null || req.workflow == null) {
+            return;
+        }
+        ActiveWorkflowRun run = activeWorkflowRuns.get(req.workflowRunId);
+        if (run == null) {
+            return;
+        }
+        run.status = "running";
+        run.startedAtMs = System.currentTimeMillis();
+        traceWorkflow("workflow_run_started", run, null, null);
+        workflowDeviceStart(run);
+
+        boolean anyFailed = false;
+        boolean cancelled = false;
+        try {
+            for (int i = 0; i < req.workflow.steps.size(); i++) {
+                WorkflowDef.Step step = req.workflow.steps.get(i);
+                WorkflowStepRun stepRun = i < run.steps.size() ? run.steps.get(i) : null;
+                if (run.cancelRequested) {
+                    cancelled = true;
+                    markRemainingSteps(run, i, "cancelled");
+                    break;
+                }
+                TaskTemplate template = workflowStore.getTemplate(step.templateId);
+                if (template == null) {
+                    anyFailed = true;
+                    if (stepRun != null) {
+                        stepRun.status = "failed";
+                        stepRun.reason = "template_not_found";
+                    }
+                    traceWorkflow("workflow_step_finished", run, stepRun, "template_not_found");
+                    if (WorkflowDef.FAILURE_STOP.equals(req.workflow.failurePolicy)) {
+                        markRemainingSteps(run, i + 1, "skipped");
+                        break;
+                    }
+                    continue;
+                }
+
+                if (stepRun != null) {
+                    stepRun.status = "running";
+                    stepRun.startedAtMs = System.currentTimeMillis();
+                }
+                traceWorkflow("workflow_step_started", run, stepRun, null);
+                String taskId = submitTaskInternal(
+                        template.description,
+                        template.packageName,
+                        template.mapPath.isEmpty() ? null : template.mapPath,
+                        template.startPage.isEmpty() ? null : template.startPage,
+                        null,
+                        null,
+                        "template",
+                        null,
+                        template.userPlaybook,
+                        Boolean.valueOf(template.recordEnabled),
+                        null,
+                        template.taskMapMode,
+                        template.routeId,
+                        "",
+                        template.decomposeEnabled,
+                        true
+                );
+                run.currentTaskId = taskId;
+                if (stepRun != null) {
+                    stepRun.taskId = taskId;
+                }
+
+                TaskState state = waitForTaskTerminal(taskId, run);
+                if (stepRun != null) {
+                    stepRun.finishedAtMs = System.currentTimeMillis();
+                }
+                run.currentTaskId = "";
+                if (run.cancelRequested || state == TaskState.CANCELLED) {
+                    cancelled = true;
+                    if (stepRun != null) {
+                        stepRun.status = "cancelled";
+                    }
+                    traceWorkflow("workflow_step_finished", run, stepRun, "cancelled");
+                    markRemainingSteps(run, i + 1, "skipped");
+                    break;
+                }
+                boolean success = state == TaskState.COMPLETED;
+                if (stepRun != null) {
+                    stepRun.status = success ? "success" : "failed";
+                    if (!success) {
+                        stepRun.reason = "task_" + (state != null ? state.name().toLowerCase(Locale.ROOT) : "failed");
+                    }
+                }
+                traceWorkflow("workflow_step_finished", run, stepRun, success ? null : "task_failed");
+                if (!success) {
+                    anyFailed = true;
+                    if (WorkflowDef.FAILURE_STOP.equals(req.workflow.failurePolicy)) {
+                        markRemainingSteps(run, i + 1, "skipped");
+                        break;
+                    }
+                }
+            }
+        } finally {
+            workflowDeviceEnd(run);
+            run.finishedAtMs = System.currentTimeMillis();
+            if (cancelled || run.cancelRequested) {
+                run.status = "cancelled";
+                traceWorkflow("workflow_run_cancelled", run, null, "cancelled");
+            } else if (anyFailed) {
+                run.status = WorkflowDef.FAILURE_CONTINUE.equals(req.workflow.failurePolicy)
+                        ? "partial_failed"
+                        : "failed";
+                traceWorkflow("workflow_run_finished", run, null, run.status);
+            } else {
+                run.status = "success";
+                traceWorkflow("workflow_run_finished", run, null, null);
+            }
+        }
+    }
+
+    private TaskState waitForTaskTerminal(String taskId, ActiveWorkflowRun run) {
+        for (; ; ) {
+            if (run.cancelRequested) {
+                requestCancel();
+            }
+            TaskInstance inst = taskRegistry.get(taskId);
+            TaskState state = inst != null ? inst.state : null;
+            if (state == TaskState.COMPLETED || state == TaskState.FAILED || state == TaskState.CANCELLED) {
+                return state;
+            }
+            try {
+                Thread.sleep(300L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                run.cancelRequested = true;
+                requestCancel();
+                return TaskState.CANCELLED;
+            }
+        }
+    }
+
+    private void markRemainingSteps(ActiveWorkflowRun run, int startIndex, String status) {
+        for (int i = Math.max(0, startIndex); i < run.steps.size(); i++) {
+            WorkflowStepRun step = run.steps.get(i);
+            if (step != null && "pending".equals(step.status)) {
+                step.status = status;
+                step.finishedAtMs = System.currentTimeMillis();
+            }
+        }
+    }
+
+    private void workflowDeviceStart(ActiveWorkflowRun run) {
+        try {
+            fsmEngine.runSystemControl(run.workflowRunId, "wake_up", new LinkedHashMap<String, Object>());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void workflowDeviceEnd(ActiveWorkflowRun run) {
+        try {
+            fsmEngine.runSystemControl(run.workflowRunId, "screen_off", new LinkedHashMap<String, Object>());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void traceWorkflow(String event, ActiveWorkflowRun run, WorkflowStepRun step, String reason) {
+        Map<String, Object> ev = new LinkedHashMap<String, Object>();
+        ev.put("workflow_run_id", run.workflowRunId);
+        ev.put("workflow_id", run.workflowId);
+        ev.put("workflow_name", run.workflowName);
+        ev.put("status", run.status);
+        ev.put("source", run.source);
+        if (step != null) {
+            ev.put("step_id", step.stepId);
+            ev.put("template_id", step.templateId);
+            ev.put("task_id", step.taskId);
+            ev.put("step_status", step.status);
+        }
+        if (reason != null && !reason.isEmpty()) {
+            ev.put("reason", reason);
+        }
+        fsmEngine.traceEvent(event, ev);
+    }
+
+    private Map<String, Object> snapshotWorkflowRun(ActiveWorkflowRun run) {
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("found", true);
+        out.put("workflow_run_id", run.workflowRunId);
+        out.put("workflow_id", run.workflowId);
+        out.put("workflow_name", run.workflowName);
+        out.put("source", run.source);
+        out.put("status", run.status);
+        out.put("reason", run.reason);
+        out.put("created_at_ms", run.createdAtMs);
+        out.put("started_at_ms", run.startedAtMs);
+        out.put("finished_at_ms", run.finishedAtMs);
+        out.put("current_task_id", run.currentTaskId);
+        out.put("cancel_requested", run.cancelRequested);
+        List<Object> steps = new ArrayList<Object>();
+        for (WorkflowStepRun step : run.steps) {
+            Map<String, Object> row = new LinkedHashMap<String, Object>();
+            row.put("step_id", step.stepId);
+            row.put("template_id", step.templateId);
+            row.put("name", step.name);
+            row.put("task_id", step.taskId);
+            row.put("status", step.status);
+            row.put("reason", step.reason);
+            row.put("started_at_ms", step.startedAtMs);
+            row.put("finished_at_ms", step.finishedAtMs);
+            steps.add(row);
+        }
+        out.put("steps", steps);
+        return out;
+    }
+
     private void workerLoop() {
         for (; ; ) {
             try {
@@ -725,7 +1275,9 @@ public class CortexTaskManager {
                             req.source,
                             req.sourceId,
                             req.sourceConfigHash,
-                            req.taskMapMode
+                            req.taskMapMode,
+                            req.decomposeEnabled,
+                            req.suppressAutoLockAfterTask
                     );
                     instance.finishedAt = System.currentTimeMillis();
                     Object finalState = out.get("state");
@@ -992,6 +1544,8 @@ public class CortexTaskManager {
         final String taskMapMode;
         final String sourceId;
         final String sourceConfigHash;
+        final boolean decomposeEnabled;
+        final boolean suppressAutoLockAfterTask;
         final TaskInstance instance;
 
         FsmTaskRequest(String userTask,
@@ -1009,6 +1563,8 @@ public class CortexTaskManager {
                        String taskMapMode,
                        String sourceId,
                        String sourceConfigHash,
+                       boolean decomposeEnabled,
+                       boolean suppressAutoLockAfterTask,
                        TaskInstance instance) {
             this.userTask = userTask;
             this.packageName = packageName;
@@ -1025,6 +1581,8 @@ public class CortexTaskManager {
             this.taskMapMode = taskMapMode;
             this.sourceId = sourceId;
             this.sourceConfigHash = sourceConfigHash;
+            this.decomposeEnabled = decomposeEnabled;
+            this.suppressAutoLockAfterTask = suppressAutoLockAfterTask;
             this.instance = instance;
         }
     }
@@ -1041,6 +1599,53 @@ public class CortexTaskManager {
         volatile long recordSegmentStartedAt;
         volatile int recordSegmentIndex;
         Thread recordRotateThread;
+    }
+
+    private static class WorkflowRunRequest {
+        String workflowRunId;
+        WorkflowDef workflow;
+        String source;
+        boolean visibleWorkflow;
+    }
+
+    private static class ActiveWorkflowRun {
+        final String workflowRunId;
+        final String workflowId;
+        final String workflowName;
+        final String source;
+        final long createdAtMs;
+        final List<WorkflowStepRun> steps = new ArrayList<WorkflowStepRun>();
+        volatile String status = "pending";
+        volatile String reason = "";
+        volatile long startedAtMs = 0L;
+        volatile long finishedAtMs = 0L;
+        volatile String currentTaskId = "";
+        volatile boolean cancelRequested = false;
+
+        ActiveWorkflowRun(String workflowRunId, String workflowId, String workflowName, String source) {
+            this.workflowRunId = workflowRunId != null ? workflowRunId : "";
+            this.workflowId = workflowId != null ? workflowId : "";
+            this.workflowName = workflowName != null ? workflowName : "";
+            this.source = source != null ? source : "";
+            this.createdAtMs = System.currentTimeMillis();
+        }
+    }
+
+    private static class WorkflowStepRun {
+        final String stepId;
+        final String templateId;
+        final String name;
+        volatile String taskId = "";
+        volatile String status = "pending";
+        volatile String reason = "";
+        volatile long startedAtMs = 0L;
+        volatile long finishedAtMs = 0L;
+
+        WorkflowStepRun(String stepId, String templateId, String name) {
+            this.stepId = stepId != null ? stepId : "";
+            this.templateId = templateId != null ? templateId : "";
+            this.name = name != null ? name : "";
+        }
     }
 
     /**
@@ -1081,6 +1686,8 @@ public class CortexTaskManager {
         String sourceId;
         String sourceConfigHash;
         String taskMapMode;
+        boolean decomposeEnabled = true;
+        boolean suppressAutoLockAfterTask = false;
         String taskMemoryKey;    // normalized key
         boolean memoryApplied;   // whether this run consumed memory hint
         boolean recordEnabled;   // schedule-controlled recording switch
@@ -1495,6 +2102,16 @@ public class CortexTaskManager {
                 updated = true;
             }
         }
+        if (!updated && "template".equals(source) && sourceId != null && !sourceId.trim().isEmpty()) {
+            for (TaskTemplate template : workflowStore.listTemplates()) {
+                if (sourceId.trim().equals(template.routeId) || sourceId.trim().equals(template.templateId)) {
+                    template.taskMapMode = normalizedMode;
+                    workflowStore.saveTemplate(template);
+                    updated = true;
+                    break;
+                }
+            }
+        }
         if (!updated && taskId != null && !taskId.trim().isEmpty()) {
             TaskInstance inst = taskRegistry.get(taskId.trim());
             if (inst != null) {
@@ -1594,6 +2211,9 @@ public class CortexTaskManager {
         if ("notify_trigger".equals(src) && !sid.isEmpty()) {
             return "notify:" + sid;
         }
+        if ("template".equals(src) && !sid.isEmpty()) {
+            return sid;
+        }
         return stringOrEmpty(taskId);
     }
 
@@ -1608,6 +2228,11 @@ public class CortexTaskManager {
 
     private static String stringOrEmpty(Object o) {
         return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    private static String firstNonEmpty(String a, String b) {
+        String av = stringOrEmpty(a);
+        return !av.isEmpty() ? av : stringOrEmpty(b);
     }
 
     private Map<String, Object> selectTaskMemoryHint(String taskKey, String scheduleId) {
@@ -1690,6 +2315,193 @@ public class CortexTaskManager {
         int n = Math.min(maxItems, in.size());
         for (int i = Math.max(0, in.size() - n); i < in.size(); i++) {
             out.add(in.get(i));
+        }
+        return out;
+    }
+
+    private void runDueWorkflowSchedules(long now) {
+        for (WorkflowDef workflow : workflowStore.listWorkflows()) {
+            if (workflow == null
+                    || !WorkflowDef.TRIGGER_SCHEDULE.equals(workflow.triggerType)
+                    || !workflow.triggerEnabled) {
+                continue;
+            }
+            Map<String, Object> config = workflow.triggerConfig != null
+                    ? workflow.triggerConfig
+                    : new LinkedHashMap<String, Object>();
+            long nextRunAt = toLong(config.get("next_run_at"), 0L);
+            long runAt = toLong(config.get("run_at"), toLong(config.get("start_at"), 0L));
+            String repeatMode = CortexScheduleTime.normalizeRepeatMode(stringOrEmpty(config.get("repeat_mode")));
+            int repeatWeekdays = toInt(config.get("repeat_weekdays"), 0) & 0x7F;
+            if ("weekly".equals(repeatMode) && repeatWeekdays == 0) {
+                repeatWeekdays = 0b0011111;
+                config.put("repeat_weekdays", repeatWeekdays);
+            }
+            if (nextRunAt <= 0L && runAt > 0L) {
+                nextRunAt = CortexScheduleTime.computeFirstRunAt(runAt, repeatMode, repeatWeekdays, now);
+                config.put("next_run_at", nextRunAt);
+                workflowStore.saveWorkflow(workflow);
+            }
+            if (nextRunAt <= 0L || now < nextRunAt) {
+                continue;
+            }
+            try {
+                submitWorkflowRun(workflow, "schedule", true);
+                config.put("last_triggered_at", now);
+                config.put("trigger_count", toLong(config.get("trigger_count"), 0L) + 1L);
+                Calendar c = Calendar.getInstance();
+                c.setTimeInMillis(runAt > 0L ? runAt : now);
+                if ("daily".equals(repeatMode)) {
+                    config.put("next_run_at", CortexScheduleTime.computeNextDailyRun(
+                            c.get(Calendar.HOUR_OF_DAY),
+                            c.get(Calendar.MINUTE),
+                            now + 1000L
+                    ));
+                } else if ("weekly".equals(repeatMode)) {
+                    config.put("next_run_at", CortexScheduleTime.computeNextWeeklyRun(
+                            c.get(Calendar.HOUR_OF_DAY),
+                            c.get(Calendar.MINUTE),
+                            repeatWeekdays,
+                            now + 1000L
+                    ));
+                } else {
+                    workflow.triggerEnabled = false;
+                    config.put("next_run_at", 0L);
+                }
+                workflow.triggerConfig = config;
+                workflowStore.saveWorkflow(workflow);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void migrateSchedulesToWorkflows() {
+        if (scheduleRegistry.isEmpty()) {
+            return;
+        }
+        boolean migrated = false;
+        for (ScheduledTaskDef def : scheduleRegistry.values()) {
+            if (def == null || def.scheduleId == null || def.scheduleId.isEmpty()) {
+                continue;
+            }
+            if (workflowStore.hasLegacyWorkflow("schedule", def.scheduleId)) {
+                migrated = true;
+                continue;
+            }
+            TaskTemplate template = TaskTemplate.createNew(
+                    !stringOrEmpty(def.name).isEmpty() ? def.name : def.userTask,
+                    def.userTask
+            );
+            template.packageName = stringOrEmpty(def.packageName);
+            template.mapPath = stringOrEmpty(def.mapPath);
+            template.startPage = stringOrEmpty(def.startPage);
+            template.userPlaybook = stringOrEmpty(def.userPlaybook);
+            template.recordEnabled = def.recordEnabled;
+            template.taskMapMode = normalizeTaskMapMode(def.taskMapMode);
+            template.routeId = "schedule:" + def.scheduleId;
+            template.legacyKind = "schedule";
+            template.legacyId = def.scheduleId;
+            template.decomposeEnabled = false;
+            workflowStore.saveTemplate(template);
+
+            WorkflowDef workflow = WorkflowDef.createNew(!stringOrEmpty(def.name).isEmpty() ? def.name : def.userTask);
+            workflow.triggerType = WorkflowDef.TRIGGER_SCHEDULE;
+            workflow.triggerEnabled = def.enabled;
+            workflow.failurePolicy = WorkflowDef.FAILURE_STOP;
+            workflow.legacyKind = "schedule";
+            workflow.legacyId = def.scheduleId;
+            workflow.triggerConfig.put("run_at", def.runAtMs);
+            workflow.triggerConfig.put("repeat_mode", def.repeatMode);
+            workflow.triggerConfig.put("repeat_weekdays", def.repeatWeekdays);
+            workflow.triggerConfig.put("next_run_at", def.nextRunAt);
+            workflow.triggerConfig.put("last_triggered_at", def.lastTriggeredAt);
+            workflow.triggerConfig.put("trigger_count", def.triggerCount);
+            workflow.triggerConfig.put("legacy_schedule_id", def.scheduleId);
+            WorkflowDef.Step step = new WorkflowDef.Step();
+            step.templateId = template.templateId;
+            step.name = template.name;
+            workflow.steps.add(step);
+            workflowStore.saveWorkflow(workflow);
+            migrated = true;
+        }
+        if (migrated) {
+            scheduleRegistry.clear();
+            synchronized (scheduleOrder) {
+                scheduleOrder.clear();
+            }
+            saveSchedulesToDisk();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void migrateNotificationRulesToWorkflows(List<Map<String, Object>> rules) {
+        if (rules == null || rules.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> rule : rules) {
+            String ruleId = stringOrEmpty(rule.get("id"));
+            if (ruleId.isEmpty() || workflowStore.hasLegacyWorkflow("notification", ruleId)) {
+                continue;
+            }
+            Object actionObj = rule.get("action");
+            Map<String, Object> action = actionObj instanceof Map
+                    ? (Map<String, Object>) actionObj
+                    : new LinkedHashMap<String, Object>();
+            String userTask = stringOrEmpty(action.get("user_task"));
+            if (userTask.isEmpty()) {
+                userTask = stringOrEmpty(rule.get("name"));
+            }
+            TaskTemplate template = TaskTemplate.createNew(
+                    firstNonEmpty(stringOrEmpty(rule.get("name")), userTask),
+                    userTask
+            );
+            template.packageName = stringOrEmpty(action.get("package"));
+            template.userPlaybook = stringOrEmpty(action.get("user_playbook"));
+            template.recordEnabled = toBool(action.get("record_enabled"), false);
+            template.taskMapMode = normalizeTaskMapMode(stringOrEmpty(action.get("task_map_mode")));
+            template.routeId = "notify:" + ruleId;
+            template.legacyKind = "notification";
+            template.legacyId = ruleId;
+            template.decomposeEnabled = false;
+            workflowStore.saveTemplate(template);
+
+            WorkflowDef workflow = WorkflowDef.createNew(firstNonEmpty(stringOrEmpty(rule.get("name")), userTask));
+            workflow.triggerType = WorkflowDef.TRIGGER_NOTIFICATION;
+            workflow.triggerEnabled = toBool(rule.get("enabled"), true);
+            workflow.failurePolicy = WorkflowDef.FAILURE_STOP;
+            workflow.legacyKind = "notification";
+            workflow.legacyId = ruleId;
+            workflow.triggerConfig.putAll(rule);
+            workflow.triggerConfig.remove("action");
+            workflow.triggerConfig.put("legacy_rule_id", ruleId);
+            WorkflowDef.Step step = new WorkflowDef.Step();
+            step.templateId = template.templateId;
+            step.name = template.name;
+            workflow.steps.add(step);
+            workflowStore.saveWorkflow(workflow);
+        }
+    }
+
+    public List<Map<String, Object>> listNotificationWorkflowRules() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (WorkflowDef workflow : workflowStore.listWorkflows()) {
+            if (workflow == null
+                    || !WorkflowDef.TRIGGER_NOTIFICATION.equals(workflow.triggerType)
+                    || !workflow.triggerEnabled) {
+                continue;
+            }
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            if (workflow.triggerConfig != null) {
+                rule.putAll(workflow.triggerConfig);
+            }
+            rule.put("id", workflow.workflowId);
+            rule.put("name", workflow.name);
+            rule.put("enabled", true);
+            Map<String, Object> action = new LinkedHashMap<String, Object>();
+            action.put("type", "run_workflow");
+            action.put("workflow_id", workflow.workflowId);
+            rule.put("action", action);
+            out.add(rule);
         }
         return out;
     }
@@ -2077,6 +2889,30 @@ public class CortexTaskManager {
             return new File(p, "task_runs.v1.json").getAbsolutePath();
         }
         return DEFAULT_TASK_RUNS_PATH;
+    }
+
+    private static String resolveTaskTemplatesPath(String taskMemoryPath) {
+        String override = System.getProperty("lxb.task.templates.path");
+        if (override != null && !override.trim().isEmpty()) {
+            return override.trim();
+        }
+        File p = new File(taskMemoryPath).getParentFile();
+        if (p != null) {
+            return new File(p, "task_templates.v1.json").getAbsolutePath();
+        }
+        return DEFAULT_TASK_TEMPLATES_PATH;
+    }
+
+    private static String resolveWorkflowsPath(String taskMemoryPath) {
+        String override = System.getProperty("lxb.workflows.path");
+        if (override != null && !override.trim().isEmpty()) {
+            return override.trim();
+        }
+        File p = new File(taskMemoryPath).getParentFile();
+        if (p != null) {
+            return new File(p, "workflows.v1.json").getAbsolutePath();
+        }
+        return DEFAULT_WORKFLOWS_PATH;
     }
 
     // Future public methods (not implemented yet):

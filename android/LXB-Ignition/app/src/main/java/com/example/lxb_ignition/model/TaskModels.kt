@@ -127,6 +127,41 @@ data class ScheduleSummary(
     val userPlaybook: String
 )
 
+data class TaskTemplateSummary(
+    val templateId: String,
+    val name: String,
+    val description: String,
+    val packageName: String,
+    val startPage: String,
+    val mapPath: String,
+    val userPlaybook: String,
+    val recordEnabled: Boolean,
+    val taskMapMode: String,
+    val routeId: String,
+    val decomposeEnabled: Boolean,
+    val createdAtMs: Long,
+    val updatedAtMs: Long
+)
+
+data class WorkflowStepSummary(
+    val stepId: String,
+    val templateId: String,
+    val name: String,
+    val order: Int
+)
+
+data class WorkflowSummary(
+    val workflowId: String,
+    val name: String,
+    val triggerType: String,
+    val triggerEnabled: Boolean,
+    val triggerSummary: String,
+    val triggerConfigJson: String,
+    val steps: List<WorkflowStepSummary>,
+    val createdAtMs: Long,
+    val updatedAtMs: Long
+)
+
 data class NotificationTriggerRuleSummary(
     val id: String,
     val name: String,

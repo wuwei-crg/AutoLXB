@@ -55,6 +55,7 @@ public class CortexFacade {
         this.fsmEngine = new CortexFsmEngine(perceptionEngine, executionEngine, mapManager, trace, taskMapStore);
         this.taskManager = new CortexTaskManager(fsmEngine, taskMapStore);
         this.notificationTriggerModule = new NotificationTriggerModule(taskManager, trace);
+        migrateLegacyNotificationRules();
     }
 
     public byte[] handleMapSetGz(byte[] payload) {
@@ -756,6 +757,173 @@ public class CortexFacade {
         }
     }
 
+    public byte[] handleCortexTemplateList(byte[] payload) {
+        try {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("items", taskManager.listTaskTemplates());
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexTemplateGet(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String templateId = stringOrEmpty(req.get("template_id"));
+            if (templateId.isEmpty()) return err("template_id is required");
+            Map<String, Object> template = taskManager.getTaskTemplate(templateId);
+            if (template == null) return err("template not found: " + templateId);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("template", template);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public byte[] handleCortexTemplateSave(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            Object obj = req.containsKey("template") ? req.get("template") : req;
+            if (!(obj instanceof Map)) return err("template is required");
+            Map<String, Object> saved = taskManager.saveTaskTemplate((Map<String, Object>) obj);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("template", saved);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexTemplateDelete(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String templateId = stringOrEmpty(req.get("template_id"));
+            if (templateId.isEmpty()) return err("template_id is required");
+            boolean deleted = taskManager.deleteTaskTemplate(templateId);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("deleted", deleted);
+            out.put("template_id", templateId);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexTemplateRun(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String templateId = stringOrEmpty(req.get("template_id"));
+            if (templateId.isEmpty()) return err("template_id is required");
+            Map<String, Object> out = taskManager.runTemplate(templateId, "manual");
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowList(byte[] payload) {
+        try {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("items", taskManager.listWorkflows());
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowGet(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String workflowId = stringOrEmpty(req.get("workflow_id"));
+            if (workflowId.isEmpty()) return err("workflow_id is required");
+            Map<String, Object> workflow = taskManager.getWorkflow(workflowId);
+            if (workflow == null) return err("workflow not found: " + workflowId);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("workflow", workflow);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public byte[] handleCortexWorkflowSave(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            Object obj = req.containsKey("workflow") ? req.get("workflow") : req;
+            if (!(obj instanceof Map)) return err("workflow is required");
+            Map<String, Object> saved = taskManager.saveWorkflow((Map<String, Object>) obj);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("workflow", saved);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowDelete(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String workflowId = stringOrEmpty(req.get("workflow_id"));
+            if (workflowId.isEmpty()) return err("workflow_id is required");
+            boolean deleted = taskManager.deleteWorkflow(workflowId);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("deleted", deleted);
+            out.put("workflow_id", workflowId);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowRun(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String workflowId = stringOrEmpty(req.get("workflow_id"));
+            if (workflowId.isEmpty()) return err("workflow_id is required");
+            Map<String, Object> out = taskManager.submitWorkflow(workflowId, "manual");
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowCancel(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String runId = stringOrEmpty(req.get("workflow_run_id"));
+            if (runId.isEmpty()) return err("workflow_run_id is required");
+            Map<String, Object> out = taskManager.requestWorkflowCancel(runId);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
+    public byte[] handleCortexWorkflowStatus(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String runId = stringOrEmpty(req.get("workflow_run_id"));
+            if (runId.isEmpty()) return err("workflow_run_id is required");
+            Map<String, Object> out = taskManager.getWorkflowStatus(runId);
+            out.put("ok", true);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
     public byte[] handleCortexTaskMap(byte[] payload) {
         try {
             String s = payload != null && payload.length > 0
@@ -871,6 +1039,30 @@ public class CortexFacade {
         o.put("ok", false);
         o.put("err", msg);
         return Json.stringify(o).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static Map<String, Object> parseJsonPayload(byte[] payload) {
+        String s = payload != null && payload.length > 0
+                ? new String(payload, StandardCharsets.UTF_8)
+                : "{}";
+        return Json.parseObject(s);
+    }
+
+    private void migrateLegacyNotificationRules() {
+        try {
+            java.util.List<Map<String, Object>> rules = notificationTriggerModule.listRules();
+            taskManager.migrateNotificationRulesToWorkflows(rules);
+            for (Map<String, Object> rule : rules) {
+                String id = stringOrEmpty(rule.get("id"));
+                if (!id.isEmpty()) {
+                    notificationTriggerModule.removeRule(id);
+                }
+            }
+        } catch (Exception e) {
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("err", String.valueOf(e));
+            trace.event("notification_workflow_migration_err", ev);
+        }
     }
 
     private static String stringOrEmpty(Object o) {

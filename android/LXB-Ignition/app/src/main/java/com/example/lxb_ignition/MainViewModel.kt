@@ -32,11 +32,13 @@ import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
 import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskMapDetail
+import com.example.lxb_ignition.model.TaskTemplateSummary
 import com.example.lxb_ignition.model.TaskSummary
 import com.example.lxb_ignition.model.TracePage
 import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
+import com.example.lxb_ignition.model.WorkflowSummary
 import com.example.lxb_ignition.schedule.ScheduleDraft
 import com.example.lxb_ignition.schedule.ScheduleFormInput
 import com.example.lxb_ignition.schedule.ScheduleUseCase
@@ -390,6 +392,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val scheduleList: StateFlow<List<ScheduleSummary>> = _scheduleList.asStateFlow()
     private val _notifyRuleList = MutableStateFlow<List<NotificationTriggerRuleSummary>>(emptyList())
     val notifyRuleList: StateFlow<List<NotificationTriggerRuleSummary>> = _notifyRuleList.asStateFlow()
+    private val _templateList = MutableStateFlow<List<TaskTemplateSummary>>(emptyList())
+    val templateList: StateFlow<List<TaskTemplateSummary>> = _templateList.asStateFlow()
+    private val _workflowList = MutableStateFlow<List<WorkflowSummary>>(emptyList())
+    val workflowList: StateFlow<List<WorkflowSummary>> = _workflowList.asStateFlow()
+
+    val templateId = MutableStateFlow("")
+    val templateName = MutableStateFlow("")
+    val templateDescription = MutableStateFlow("")
+    val templatePackage = MutableStateFlow("")
+    val templatePlaybook = MutableStateFlow("")
+    val templateDecomposeEnabled = MutableStateFlow(false)
+
+    val workflowId = MutableStateFlow("")
+    val workflowName = MutableStateFlow("")
+    val workflowStepTemplateIds = MutableStateFlow<List<String>>(emptyList())
+    val workflowTriggerType = MutableStateFlow("none")
+    val workflowRunAtMs = MutableStateFlow((System.currentTimeMillis() + 5 * 60_000L).toString())
+    val workflowRepeatMode = MutableStateFlow(REPEAT_ONCE)
+    val workflowRepeatWeekdays = MutableStateFlow(0b0011111)
+    val workflowTriggerPackage = MutableStateFlow("")
+    val workflowNotifyTitlePattern = MutableStateFlow("")
+    val workflowNotifyBodyPattern = MutableStateFlow("")
+    val workflowNotifyCooldownSeconds = MutableStateFlow("60")
+    val workflowNotifyActiveTimeStart = MutableStateFlow("")
+    val workflowNotifyActiveTimeEnd = MutableStateFlow("")
+    val workflowNotifyLlmConditionEnabled = MutableStateFlow(false)
+    val workflowNotifyLlmCondition = MutableStateFlow("")
+    val workflowNotifyActionPackage = MutableStateFlow("")
+    val workflowNotifyActionPlaybook = MutableStateFlow("")
+    val workflowNotifyActionRecordEnabled = MutableStateFlow(false)
 
     // Tasks tab: schedule form
     val scheduleName = MutableStateFlow("")
@@ -1503,6 +1535,406 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _notifyRuleList.value = result.second
                 appendLog("[NOTIFY] ${result.first}")
                 appendSystemMessage(result.first)
+            }
+        }
+    }
+
+    fun refreshTemplateListOnDevice(silent: Boolean = false) {
+        val port = currentLxbPortOrNull() ?: run {
+            if (!silent) appendSystemMessage("Invalid lxb-core port, cannot refresh templates.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TEMPLATE_LIST,
+                        "{}".toByteArray(Charsets.UTF_8),
+                        timeoutMs = 5_000
+                    )
+                    CoreApiParser.parseTemplateList(resp)
+                }
+            }.getOrElse { e -> Pair("Template list query failed: ${e.message}", emptyList<TaskTemplateSummary>()) }
+            withContext(Dispatchers.Main) {
+                _templateList.value = result.second
+                appendLog("[TEMPLATE] ${result.first}")
+                if (!silent) appendSystemMessage(result.first)
+            }
+        }
+    }
+
+    fun refreshWorkflowListOnDevice(silent: Boolean = false) {
+        val port = currentLxbPortOrNull() ?: run {
+            if (!silent) appendSystemMessage("Invalid lxb-core port, cannot refresh workflows.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_WORKFLOW_LIST,
+                        "{}".toByteArray(Charsets.UTF_8),
+                        timeoutMs = 5_000
+                    )
+                    CoreApiParser.parseWorkflowList(resp)
+                }
+            }.getOrElse { e -> Pair("Workflow list query failed: ${e.message}", emptyList<WorkflowSummary>()) }
+            withContext(Dispatchers.Main) {
+                _workflowList.value = result.second
+                appendLog("[WORKFLOW] ${result.first}")
+                if (!silent) appendSystemMessage(result.first)
+            }
+        }
+    }
+
+    fun loadTemplateForm(template: TaskTemplateSummary) {
+        templateId.value = template.templateId
+        templateName.value = template.name
+        templateDescription.value = template.description
+        templatePackage.value = template.packageName
+        templatePlaybook.value = template.userPlaybook
+        templateDecomposeEnabled.value = template.decomposeEnabled
+    }
+
+    fun resetTemplateForm() {
+        templateId.value = ""
+        templateName.value = ""
+        templateDescription.value = ""
+        templatePackage.value = ""
+        templatePlaybook.value = ""
+        templateDecomposeEnabled.value = false
+    }
+
+    fun saveTemplateOnDevice() {
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot save template.")
+            return
+        }
+        val description = templateDescription.value.trim()
+        if (description.isBlank()) {
+            appendSystemMessage("Template description is empty.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val template = org.json.JSONObject()
+                    .put("template_id", templateId.value.trim())
+                    .put("name", templateName.value.trim().ifBlank { description.take(40) })
+                    .put("description", description)
+                    .put("package_name", templatePackage.value.trim())
+                    .put("user_playbook", templatePlaybook.value.trim())
+                    .put("decompose_enabled", templateDecomposeEnabled.value)
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TEMPLATE_SAVE,
+                        org.json.JSONObject().put("template", template).toString().toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseTemplateSave(resp)
+                }
+            }.getOrElse { e -> "Save template failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[TEMPLATE] $result")
+                appendSystemMessage(result)
+                refreshTemplateListOnDevice(silent = true)
+            }
+        }
+    }
+
+    fun runTemplateOnDevice(templateId: String) {
+        runWorkflowLikeCommand(
+            commandId = CommandIds.CMD_CORTEX_TEMPLATE_RUN,
+            payload = org.json.JSONObject().put("template_id", templateId.trim())
+        )
+    }
+
+    fun loadWorkflowForm(workflow: WorkflowSummary) {
+        workflowId.value = workflow.workflowId
+        workflowName.value = workflow.name
+        workflowStepTemplateIds.value = workflow.steps.map { it.templateId }.filter { it.isNotBlank() }
+        workflowTriggerType.value = workflow.triggerType.ifBlank { "none" }
+        val config = runCatching {
+            if (workflow.triggerConfigJson.isBlank()) org.json.JSONObject() else org.json.JSONObject(workflow.triggerConfigJson)
+        }.getOrDefault(org.json.JSONObject())
+        if (workflow.triggerType == "schedule") {
+            workflowRunAtMs.value = config.optLong("run_at", config.optLong("start_at", System.currentTimeMillis() + 5 * 60_000L)).toString()
+            workflowRepeatMode.value = config.optString("repeat_mode", REPEAT_ONCE).ifBlank { REPEAT_ONCE }
+            workflowRepeatWeekdays.value = config.optInt("repeat_weekdays", 0b0011111)
+        } else if (workflow.triggerType == "notification") {
+            val packageList = config.optJSONArray("package_list")
+            workflowTriggerPackage.value = packageList?.optString(0, "") ?: ""
+            workflowNotifyTitlePattern.value = config.optString("title_pattern", "")
+            workflowNotifyBodyPattern.value = config.optString("body_pattern", "")
+            workflowNotifyCooldownSeconds.value = (config.optLong("cooldown_ms", 60_000L) / 1000L).toString()
+            workflowNotifyActiveTimeStart.value = config.optString("active_time_start", "")
+            workflowNotifyActiveTimeEnd.value = config.optString("active_time_end", "")
+            workflowNotifyLlmConditionEnabled.value = config.optBoolean("llm_condition_enabled", false)
+            workflowNotifyLlmCondition.value = config.optString("llm_condition", "")
+            val action = config.optJSONObject("action")
+            workflowNotifyActionPackage.value = action?.optString("package", "") ?: ""
+            workflowNotifyActionPlaybook.value = action?.optString("user_playbook", "") ?: ""
+            workflowNotifyActionRecordEnabled.value = action?.optBoolean("record_enabled", false) ?: false
+        }
+    }
+
+    fun resetWorkflowForm() {
+        workflowId.value = ""
+        workflowName.value = ""
+        workflowStepTemplateIds.value = emptyList()
+        workflowTriggerType.value = "none"
+        workflowRunAtMs.value = (System.currentTimeMillis() + 5 * 60_000L).toString()
+        workflowRepeatMode.value = REPEAT_ONCE
+        workflowRepeatWeekdays.value = 0b0011111
+        workflowTriggerPackage.value = ""
+        workflowNotifyTitlePattern.value = ""
+        workflowNotifyBodyPattern.value = ""
+        workflowNotifyCooldownSeconds.value = "60"
+        workflowNotifyActiveTimeStart.value = ""
+        workflowNotifyActiveTimeEnd.value = ""
+        workflowNotifyLlmConditionEnabled.value = false
+        workflowNotifyLlmCondition.value = ""
+        workflowNotifyActionPackage.value = ""
+        workflowNotifyActionPlaybook.value = ""
+        workflowNotifyActionRecordEnabled.value = false
+    }
+
+    fun saveWorkflowOnDevice() {
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot save workflow.")
+            return
+        }
+        val name = workflowName.value.trim()
+        if (name.isBlank()) {
+            appendSystemMessage("Workflow name is empty.")
+            return
+        }
+        val stepTemplateIds = workflowStepTemplateIds.value.map { it.trim() }.filter { it.isNotBlank() }
+        if (stepTemplateIds.isEmpty()) {
+            appendSystemMessage("Select at least one template first.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val triggerConfig = org.json.JSONObject()
+                if (workflowTriggerType.value == "schedule") {
+                    triggerConfig
+                        .put("run_at", workflowRunAtMs.value.trim().toLongOrNull() ?: 0L)
+                        .put("repeat_mode", workflowRepeatMode.value)
+                    if (workflowRepeatMode.value == REPEAT_WEEKLY) {
+                        triggerConfig.put("repeat_weekdays", workflowRepeatWeekdays.value)
+                    }
+                } else if (workflowTriggerType.value == "notification") {
+                    val selectedPackage = workflowTriggerPackage.value.trim()
+                    val cooldownMs = (workflowNotifyCooldownSeconds.value.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 60L) * 1000L
+                    triggerConfig
+                        .put("priority", 100)
+                        .put("package_mode", if (selectedPackage.isBlank()) "any" else "allowlist")
+                        .put("package_list", org.json.JSONArray(if (selectedPackage.isBlank()) emptyList<String>() else listOf(selectedPackage)))
+                        .put("text_mode", "contains")
+                        .put("title_pattern", workflowNotifyTitlePattern.value.trim())
+                        .put("body_pattern", workflowNotifyBodyPattern.value.trim())
+                        .put("llm_condition_enabled", workflowNotifyLlmConditionEnabled.value)
+                        .put("llm_condition", workflowNotifyLlmCondition.value.trim())
+                        .put("llm_yes_token", "yes")
+                        .put("llm_no_token", "no")
+                        .put("llm_timeout_ms", 60000L)
+                        .put("task_rewrite_enabled", true)
+                        .put("task_rewrite_instruction", "")
+                        .put("task_rewrite_timeout_ms", 60000L)
+                        .put("task_rewrite_fail_policy", "fallback_raw_task")
+                        .put("cooldown_ms", cooldownMs)
+                        .put("active_time_start", workflowNotifyActiveTimeStart.value.trim())
+                        .put("active_time_end", workflowNotifyActiveTimeEnd.value.trim())
+                        .put("stop_after_matched", true)
+                        .put(
+                            "action",
+                            org.json.JSONObject()
+                                .put("type", "run_task")
+                                .put("user_task", "")
+                                .put("package", workflowNotifyActionPackage.value.trim())
+                                .put("user_playbook", workflowNotifyActionPlaybook.value.trim())
+                                .put("record_enabled", workflowNotifyActionRecordEnabled.value)
+                        )
+                }
+                val workflow = org.json.JSONObject()
+                    .put("workflow_id", workflowId.value.trim())
+                    .put("name", name)
+                    .put("trigger_type", workflowTriggerType.value)
+                    .put("trigger_config", triggerConfig)
+                    .put(
+                        "steps",
+                        org.json.JSONArray().also { arr ->
+                            stepTemplateIds.forEach { templateId ->
+                                arr.put(
+                                    org.json.JSONObject()
+                                        .put("template_id", templateId)
+                                        .put("name", _templateList.value.firstOrNull { it.templateId == templateId }?.name.orEmpty())
+                                )
+                            }
+                        }
+                    )
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_WORKFLOW_SAVE,
+                        org.json.JSONObject().put("workflow", workflow).toString().toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseWorkflowSave(resp)
+                }
+            }.getOrElse { e -> "Save workflow failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[WORKFLOW] $result")
+                appendSystemMessage(result)
+                refreshWorkflowListOnDevice(silent = true)
+            }
+        }
+    }
+
+    fun runWorkflowOnDevice(workflowId: String) {
+        runWorkflowLikeCommand(
+            commandId = CommandIds.CMD_CORTEX_WORKFLOW_RUN,
+            payload = org.json.JSONObject().put("workflow_id", workflowId.trim())
+        )
+    }
+
+    fun deleteTemplateOnDevice(templateId: String) {
+        val tid = templateId.trim()
+        if (tid.isEmpty()) {
+            appendSystemMessage("template_id is empty.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot delete template.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_TEMPLATE_DELETE,
+                        org.json.JSONObject().put("template_id", tid).toString().toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseSimpleOkMessage(resp, "Template deleted")
+                }
+            }.getOrElse { e -> "Delete template failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[TEMPLATE] $result")
+                appendSystemMessage(result)
+                refreshTemplateListOnDevice(silent = true)
+            }
+        }
+    }
+
+    fun deleteWorkflowOnDevice(workflowId: String) {
+        val wid = workflowId.trim()
+        if (wid.isEmpty()) {
+            appendSystemMessage("workflow_id is empty.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot delete workflow.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_WORKFLOW_DELETE,
+                        org.json.JSONObject().put("workflow_id", wid).toString().toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseSimpleOkMessage(resp, "Workflow deleted")
+                }
+            }.getOrElse { e -> "Delete workflow failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[WORKFLOW] $result")
+                appendSystemMessage(result)
+                refreshWorkflowListOnDevice(silent = true)
+            }
+        }
+    }
+
+    fun toggleWorkflowTriggerEnabledOnDevice(workflow: WorkflowSummary, enabled: Boolean) {
+        if (workflow.triggerType == "none") {
+            appendSystemMessage("This workflow has no trigger.")
+            return
+        }
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot update workflow trigger.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val workflowPayload = org.json.JSONObject()
+                        .put("workflow_id", workflow.workflowId)
+                        .put("trigger_enabled", enabled)
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_WORKFLOW_SAVE,
+                        org.json.JSONObject().put("workflow", workflowPayload).toString().toByteArray(Charsets.UTF_8),
+                        timeoutMs = 6_000
+                    )
+                    CoreApiParser.parseWorkflowSave(resp)
+                }
+            }.getOrElse { e -> "Update workflow trigger failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[WORKFLOW] $result")
+                appendSystemMessage(result)
+                refreshWorkflowListOnDevice(silent = true)
+            }
+        }
+    }
+
+    fun addWorkflowStepTemplate(templateId: String) {
+        val tid = templateId.trim()
+        if (tid.isBlank()) return
+        val current = workflowStepTemplateIds.value.toMutableList()
+        if (!current.contains(tid)) {
+            current.add(tid)
+        }
+        workflowStepTemplateIds.value = current
+    }
+
+    fun removeWorkflowStepAt(index: Int) {
+        val current = workflowStepTemplateIds.value.toMutableList()
+        if (index !in current.indices) return
+        current.removeAt(index)
+        workflowStepTemplateIds.value = current
+    }
+
+    fun moveWorkflowStepUp(index: Int) {
+        val current = workflowStepTemplateIds.value.toMutableList()
+        if (index !in current.indices || index == 0) return
+        val item = current.removeAt(index)
+        current.add(index - 1, item)
+        workflowStepTemplateIds.value = current
+    }
+
+    fun moveWorkflowStepDown(index: Int) {
+        val current = workflowStepTemplateIds.value.toMutableList()
+        if (index !in current.indices || index == current.lastIndex) return
+        val item = current.removeAt(index)
+        current.add(index + 1, item)
+        workflowStepTemplateIds.value = current
+    }
+
+    private fun runWorkflowLikeCommand(commandId: Byte, payload: org.json.JSONObject) {
+        val port = currentLxbPortOrNull() ?: run {
+            appendSystemMessage("Invalid lxb-core port, cannot run workflow.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(commandId, payload.toString().toByteArray(Charsets.UTF_8), timeoutMs = 6_000)
+                    CoreApiParser.parseWorkflowRun(resp).message
+                }
+            }.getOrElse { e -> "Workflow run failed: ${e.message}" }
+            withContext(Dispatchers.Main) {
+                appendLog("[WORKFLOW] $result")
+                appendSystemMessage(result)
+                refreshTaskListOnDevice(silent = true)
             }
         }
     }

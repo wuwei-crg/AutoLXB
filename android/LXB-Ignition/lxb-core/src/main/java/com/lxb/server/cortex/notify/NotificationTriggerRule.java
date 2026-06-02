@@ -16,6 +16,7 @@ public class NotificationTriggerRule {
         public final boolean recordEnabled;
         public final Boolean useMapOverride;
         public final String taskMapMode;
+        public final String workflowId;
 
         public Action(
                 String type,
@@ -24,7 +25,8 @@ public class NotificationTriggerRule {
                 String userPlaybook,
                 boolean recordEnabled,
                 Boolean useMapOverride,
-                String taskMapMode
+                String taskMapMode,
+                String workflowId
         ) {
             this.type = type != null ? type : "run_task";
             this.userTask = userTask != null ? userTask : "";
@@ -33,6 +35,7 @@ public class NotificationTriggerRule {
             this.recordEnabled = recordEnabled;
             this.useMapOverride = useMapOverride;
             this.taskMapMode = normalizeTaskMapMode(taskMapMode);
+            this.workflowId = workflowId != null ? workflowId : "";
         }
     }
 
@@ -109,7 +112,7 @@ public class NotificationTriggerRule {
         this.activeTimeStart = normalizeTimeOfDay(activeTimeStart);
         this.activeTimeEnd = normalizeTimeOfDay(activeTimeEnd);
         this.stopAfterMatched = stopAfterMatched;
-        this.action = action != null ? action : new Action("run_task", "", "", "", false, null, "off");
+        this.action = action != null ? action : new Action("run_task", "", "", "", false, null, "off", "");
     }
 
     @SuppressWarnings("unchecked")
@@ -149,7 +152,7 @@ public class NotificationTriggerRule {
         Object actionObj = map.get("action");
         Action action = actionObj instanceof Map
                 ? parseAction((Map<String, Object>) actionObj)
-                : new Action("run_task", "", "", "", false, null, "off");
+                : new Action("run_task", "", "", "", false, null, "off", "");
         return new NotificationTriggerRule(
                 id,
                 name,
@@ -180,7 +183,7 @@ public class NotificationTriggerRule {
     @SuppressWarnings("unchecked")
     private static Action parseAction(Map<String, Object> m) {
         if (m == null) {
-            return new Action("run_task", "", "", "", false, null, "off");
+            return new Action("run_task", "", "", "", false, null, "off", "");
         }
         String type = stringOrEmpty(m.get("type"));
         if (type.isEmpty()) type = "run_task";
@@ -193,7 +196,8 @@ public class NotificationTriggerRule {
             useMapOverride = Boolean.valueOf(toBool(m.get("use_map"), true));
         }
         String taskMapMode = stringOrEmpty(m.get("task_map_mode"));
-        return new Action(type, userTask, packageName, userPlaybook, recordEnabled, useMapOverride, taskMapMode);
+        String workflowId = stringOrEmpty(m.get("workflow_id"));
+        return new Action(type, userTask, packageName, userPlaybook, recordEnabled, useMapOverride, taskMapMode, workflowId);
     }
 
     private static String normalizePackageMode(String s) {

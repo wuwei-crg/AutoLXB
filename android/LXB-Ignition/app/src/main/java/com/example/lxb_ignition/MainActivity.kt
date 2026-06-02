@@ -44,6 +44,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -96,6 +97,8 @@ import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskMapSegmentSnapshot
 import com.example.lxb_ignition.model.TaskMapSnapshot
 import com.example.lxb_ignition.model.TaskMapStepSnapshot
+import com.example.lxb_ignition.model.TaskTemplateSummary
+import com.example.lxb_ignition.model.WorkflowSummary
 import com.example.lxb_ignition.model.TaskRouteActionSnapshot
 import com.example.lxb_ignition.model.TaskRouteRecordSnapshot
 import com.example.lxb_ignition.model.TaskSummary
@@ -2239,6 +2242,8 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val portableTaskExportUiState by viewModel.portableTaskExportUiState.collectAsState()
     val schedules by viewModel.scheduleList.collectAsState()
     val notifyRules by viewModel.notifyRuleList.collectAsState()
+    val templates by viewModel.templateList.collectAsState()
+    val workflows by viewModel.workflowList.collectAsState()
     val installedApps by viewModel.installedAppList.collectAsState()
     val taskRuntime by viewModel.taskRuntimeUiStatus.collectAsState()
     val scheduleName by viewModel.scheduleName.collectAsState()
@@ -2277,6 +2282,28 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val notifyActionRecordEnabled by viewModel.notifyActionRecordEnabled.collectAsState()
     val notifyActionTaskMapMode by viewModel.notifyActionTaskMapMode.collectAsState()
     val notifyActionUseMapMode by viewModel.notifyActionUseMapMode.collectAsState()
+    val templateName by viewModel.templateName.collectAsState()
+    val templateDescription by viewModel.templateDescription.collectAsState()
+    val templatePackage by viewModel.templatePackage.collectAsState()
+    val templatePlaybook by viewModel.templatePlaybook.collectAsState()
+    val templateDecomposeEnabled by viewModel.templateDecomposeEnabled.collectAsState()
+    val workflowName by viewModel.workflowName.collectAsState()
+    val workflowStepTemplateIds by viewModel.workflowStepTemplateIds.collectAsState()
+    val workflowTriggerType by viewModel.workflowTriggerType.collectAsState()
+    val workflowRunAtMs by viewModel.workflowRunAtMs.collectAsState()
+    val workflowRepeatMode by viewModel.workflowRepeatMode.collectAsState()
+    val workflowRepeatWeekdays by viewModel.workflowRepeatWeekdays.collectAsState()
+    val workflowTriggerPackage by viewModel.workflowTriggerPackage.collectAsState()
+    val workflowNotifyTitlePattern by viewModel.workflowNotifyTitlePattern.collectAsState()
+    val workflowNotifyBodyPattern by viewModel.workflowNotifyBodyPattern.collectAsState()
+    val workflowNotifyCooldownSeconds by viewModel.workflowNotifyCooldownSeconds.collectAsState()
+    val workflowNotifyActiveTimeStart by viewModel.workflowNotifyActiveTimeStart.collectAsState()
+    val workflowNotifyActiveTimeEnd by viewModel.workflowNotifyActiveTimeEnd.collectAsState()
+    val workflowNotifyLlmConditionEnabled by viewModel.workflowNotifyLlmConditionEnabled.collectAsState()
+    val workflowNotifyLlmCondition by viewModel.workflowNotifyLlmCondition.collectAsState()
+    val workflowNotifyActionPackage by viewModel.workflowNotifyActionPackage.collectAsState()
+    val workflowNotifyActionPlaybook by viewModel.workflowNotifyActionPlaybook.collectAsState()
+    val workflowNotifyActionRecordEnabled by viewModel.workflowNotifyActionRecordEnabled.collectAsState()
     var page by rememberSaveable { mutableIntStateOf(0) }
     var editingScheduleId by rememberSaveable { mutableStateOf("") }
     var editingNotifyRuleId by rememberSaveable { mutableStateOf("") }
@@ -2304,11 +2331,16 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val pageNotifyRuleForm = 5
     val pageTaskRouteEditor = 6
     val pageQuickTask = 7
+    val pageTemplateList = 8
+    val pageTemplateForm = 9
+    val pageWorkflowList = 10
+    val pageWorkflowForm = 11
+    val pageTemplatePicker = 12
 
     LaunchedEffect(Unit) {
         viewModel.refreshInstalledAppSnapshotOnDevice()
-        viewModel.refreshScheduleListOnDevice()
-        viewModel.refreshNotifyRuleListOnDevice()
+        viewModel.refreshTemplateListOnDevice(silent = true)
+        viewModel.refreshWorkflowListOnDevice(silent = true)
         viewModel.refreshTaskListOnDevice()
     }
 
@@ -2345,8 +2377,8 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     primaryActionLabel = tr("Refresh All"),
                     onPrimaryAction = {
                         viewModel.refreshInstalledAppSnapshotOnDevice()
-                        viewModel.refreshScheduleListOnDevice()
-                        viewModel.refreshNotifyRuleListOnDevice()
+                        viewModel.refreshTemplateListOnDevice()
+                        viewModel.refreshWorkflowListOnDevice()
                         viewModel.refreshTaskListOnDevice()
                     }
                 )
@@ -2356,66 +2388,16 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onStop = { viewModel.cancelCurrentTaskOnDevice() }
                 )
 
-                SheetHeader(
-                    title = tr("Direct task"),
-                    subtitle = tr("Open the quick task page when you want to tell the phone what to do right now.")
-                )
-                ProductEntryCard(
-                    title = tr("Quick task"),
-                    description = tr("Describe what you want the phone to do right now. This is the fastest way to try the product."),
-                    meta = tr("Direct task"),
-                    glyph = "⌨",
-                    onClick = { page = pageQuickTask }
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                CompactEntryRow(title = tr("Quick task"), meta = tr("Direct task"), onClick = { page = pageQuickTask })
+                CompactEntryRow(title = tr("Templates"), meta = "${templates.size} ${tr("items")}", onClick = { page = pageTemplateList })
+                CompactEntryRow(title = tr("Workflows"), meta = "${workflows.size} ${tr("items")}", onClick = { page = pageWorkflowList })
+                CompactEntryRow(title = tr("Recent Runs"), meta = "${tasks.size} ${tr("items")}", onClick = { page = pageRecentRuns })
+                OutlinedButton(
+                    onClick = { portableImportLauncher.launch(arrayOf("application/json", "text/plain")) },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    SheetHeader(
-                        title = tr("Automation"),
-                        subtitle = tr("Build repeatable workflows after you are comfortable with direct tasks.")
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    OutlinedButton(
-                        onClick = { portableImportLauncher.launch(arrayOf("application/json", "text/plain")) }
-                    ) {
-                        Text(tr("Import"))
-                    }
+                    Text(tr("Import"))
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ProductEntryCard(
-                        title = tr("Schedules"),
-                        description = tr("Manage scheduled tasks and create new ones."),
-                        meta = "${schedules.size} ${tr("items")}",
-                        glyph = "\u23F0",
-                        onClick = { page = pageScheduleList },
-                        modifier = Modifier.weight(1f)
-                    )
-                    ProductEntryCard(
-                        title = tr("Notification Triggers"),
-                        description = tr("Manage notification-triggered tasks and create new ones."),
-                        meta = "${notifyRules.size} ${tr("items")}",
-                        glyph = "\u2709",
-                        onClick = { page = pageNotifyRuleList },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                SheetHeader(
-                    title = tr("Recent results"),
-                    subtitle = tr("Review recent task runs, failures, and learned routes.")
-                )
-                ProductEntryCard(
-                    title = tr("Recent Runs"),
-                    description = tr("View recent execution records."),
-                    meta = "${tasks.size} ${tr("items")}",
-                    glyph = "☰",
-                    onClick = { page = pageRecentRuns }
-                )
             }
         }
 
@@ -2434,6 +2416,352 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onBack = { page = pageHome }
                 )
                 TaskSessionCard(viewModel = viewModel)
+            }
+        }
+
+        pageTemplateList -> {
+            val listState = rememberLazyListState()
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                PageHeaderBlock(
+                    title = tr("Templates"),
+                    subtitle = tr("Author reusable task templates and their primary routes."),
+                    glyph = "▣",
+                    onBack = { page = pageHome },
+                    primaryActionLabel = tr("New"),
+                    onPrimaryAction = {
+                        viewModel.resetTemplateForm()
+                        page = pageTemplateForm
+                    },
+                    secondaryActionLabel = tr("Refresh"),
+                    onSecondaryAction = { viewModel.refreshTemplateListOnDevice() }
+                )
+                SurfacePanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    background = MaterialTheme.colorScheme.surface,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
+                ) {
+                    if (templates.isEmpty()) {
+                        EmptyStateBox(
+                            title = tr("No templates yet."),
+                            detail = tr("Create a template before composing workflows.")
+                        )
+                    } else {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                            itemsIndexed(templates, key = { _, it -> it.templateId }) { index, template ->
+                                TemplateRow(
+                                    template = template,
+                                    onEdit = {
+                                        viewModel.loadTemplateForm(template)
+                                        page = pageTemplateForm
+                                    },
+                                    onRoute = {
+                                        routeEditorTarget = RouteEditorTarget(
+                                            title = template.name.ifBlank { template.description },
+                                            source = "template",
+                                            sourceId = template.routeId,
+                                            packageName = template.packageName,
+                                            userTask = template.description,
+                                            userPlaybook = template.userPlaybook,
+                                            mode = template.taskMapMode
+                                        )
+                                        page = pageTaskRouteEditor
+                                    },
+                                    onDelete = { viewModel.deleteTemplateOnDevice(template.templateId) }
+                                )
+                                if (index < templates.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pageTemplateForm -> {
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                PageHeaderBlock(
+                    title = tr("Template"),
+                    subtitle = tr("Define one reusable task unit."),
+                    glyph = "▣",
+                    onBack = { page = pageTemplateList },
+                    primaryActionLabel = tr("Save"),
+                    onPrimaryAction = {
+                        viewModel.saveTemplateOnDevice()
+                        page = pageTemplateList
+                    }
+                )
+                OutlinedTextField(
+                    value = templateName,
+                    onValueChange = { viewModel.templateName.value = it },
+                    label = { Text(tr("Name")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = templateDescription,
+                    onValueChange = { viewModel.templateDescription.value = it },
+                    label = { Text(tr("Task description")) },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = templatePackage,
+                    onValueChange = { viewModel.templatePackage.value = it },
+                    label = { Text(tr("Target app")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = templatePlaybook,
+                    onValueChange = { viewModel.templatePlaybook.value = it },
+                    label = { Text(tr("Playbook")) },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                PreferenceSwitchRow(
+                    title = tr("Allow model decomposition"),
+                    detail = tr("Enable the legacy TASK_DECOMPOSE stage for this template."),
+                    checked = templateDecomposeEnabled,
+                    onCheckedChange = { viewModel.templateDecomposeEnabled.value = it }
+                )
+                OutlinedButton(
+                    onClick = {
+                        routeEditorTarget = RouteEditorTarget(
+                            title = templateName.ifBlank { templateDescription },
+                            source = "template",
+                            sourceId = if (viewModel.templateId.value.isBlank()) "" else "template:${viewModel.templateId.value}",
+                            packageName = templatePackage,
+                            userTask = templateDescription,
+                            userPlaybook = templatePlaybook,
+                            mode = "manual"
+                        )
+                        page = pageTaskRouteEditor
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(tr("Open task route editor"))
+                }
+            }
+        }
+
+        pageWorkflowList -> {
+            val listState = rememberLazyListState()
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                PageHeaderBlock(
+                    title = tr("Workflows"),
+                    subtitle = tr("Sequence templates and attach one optional trigger."),
+                    glyph = "↳",
+                    onBack = { page = pageHome },
+                    primaryActionLabel = tr("New"),
+                    onPrimaryAction = {
+                        viewModel.resetWorkflowForm()
+                        page = pageWorkflowForm
+                    },
+                    secondaryActionLabel = tr("Refresh"),
+                    onSecondaryAction = { viewModel.refreshWorkflowListOnDevice() }
+                )
+                SurfacePanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    background = MaterialTheme.colorScheme.surface,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
+                ) {
+                    if (workflows.isEmpty()) {
+                        EmptyStateBox(
+                            title = tr("No workflows yet."),
+                            detail = tr("Create a workflow from one or more templates.")
+                        )
+                    } else {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                            itemsIndexed(workflows, key = { _, it -> it.workflowId }) { index, workflow ->
+                                WorkflowRow(
+                                    workflow = workflow,
+                                    onRun = { viewModel.runWorkflowOnDevice(workflow.workflowId) },
+                                    onEdit = {
+                                        viewModel.loadWorkflowForm(workflow)
+                                        page = pageWorkflowForm
+                                    },
+                                    onToggleEnabled = { checked -> viewModel.toggleWorkflowTriggerEnabledOnDevice(workflow, checked) },
+                                    onDelete = { viewModel.deleteWorkflowOnDevice(workflow.workflowId) }
+                                )
+                                if (index < workflows.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pageWorkflowForm -> {
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                PageHeaderBlock(
+                    title = tr("Workflow"),
+                    subtitle = tr("Select a template and optional trigger."),
+                    glyph = "↳",
+                    onBack = { page = pageWorkflowList },
+                    primaryActionLabel = tr("Save"),
+                    onPrimaryAction = {
+                        viewModel.saveWorkflowOnDevice()
+                        page = pageWorkflowList
+                    }
+                )
+                OutlinedTextField(
+                    value = workflowName,
+                    onValueChange = { viewModel.workflowName.value = it },
+                    label = { Text(tr("Name")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SheetHeader(
+                    title = tr("Steps"),
+                    subtitle = tr("Add templates and arrange the order they should run.")
+                )
+                if (workflowStepTemplateIds.isEmpty()) {
+                    EmptyStateBox(
+                        title = tr("No steps yet."),
+                        detail = tr("Add a template to start building this workflow.")
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        workflowStepTemplateIds.forEachIndexed { index, templateId ->
+                            val template = templates.firstOrNull { it.templateId == templateId }
+                            WorkflowStepEditorRow(
+                                index = index,
+                                templateName = template?.name.orEmpty().ifBlank { template?.description.orEmpty() },
+                                packageName = template?.packageName.orEmpty(),
+                                onOpen = {
+                                    template?.let {
+                                        viewModel.loadTemplateForm(it)
+                                        page = pageTemplateForm
+                                    }
+                                },
+                                onMoveUp = { viewModel.moveWorkflowStepUp(index) },
+                                onMoveDown = { viewModel.moveWorkflowStepDown(index) },
+                                onDelete = { viewModel.removeWorkflowStepAt(index) }
+                            )
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = { page = pageTemplatePicker },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(tr("Add step"))
+                }
+                SheetHeader(
+                    title = tr("Trigger"),
+                    subtitle = tr("Choose whether this workflow runs manually only, on a schedule, or from notifications.")
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("none", "schedule", "notification").forEach { type ->
+                        FilterChip(
+                            selected = workflowTriggerType == type,
+                            onClick = { viewModel.workflowTriggerType.value = type },
+                            label = { Text(tr(type.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() })) }
+                        )
+                    }
+                }
+                if (workflowTriggerType == "schedule") {
+                    ScheduleTriggerEditor(
+                        runAtMs = workflowRunAtMs,
+                        repeatMode = workflowRepeatMode,
+                        repeatWeekdays = workflowRepeatWeekdays,
+                        onRunAtChange = { viewModel.workflowRunAtMs.value = it },
+                        onRepeatModeChange = { viewModel.workflowRepeatMode.value = it },
+                        onRepeatWeekdaysChange = { viewModel.workflowRepeatWeekdays.value = it }
+                    )
+                } else if (workflowTriggerType == "notification") {
+                    NotificationTriggerEditor(
+                        installedApps = installedApps,
+                        triggerPackage = workflowTriggerPackage,
+                        titlePattern = workflowNotifyTitlePattern,
+                        bodyPattern = workflowNotifyBodyPattern,
+                        cooldownSeconds = workflowNotifyCooldownSeconds,
+                        activeTimeStart = workflowNotifyActiveTimeStart,
+                        activeTimeEnd = workflowNotifyActiveTimeEnd,
+                        llmConditionEnabled = workflowNotifyLlmConditionEnabled,
+                        llmCondition = workflowNotifyLlmCondition,
+                        actionPackage = workflowNotifyActionPackage,
+                        actionPlaybook = workflowNotifyActionPlaybook,
+                        actionRecordEnabled = workflowNotifyActionRecordEnabled,
+                        onTriggerPackageChange = { viewModel.workflowTriggerPackage.value = it },
+                        onTitlePatternChange = { viewModel.workflowNotifyTitlePattern.value = it },
+                        onBodyPatternChange = { viewModel.workflowNotifyBodyPattern.value = it },
+                        onCooldownSecondsChange = { viewModel.workflowNotifyCooldownSeconds.value = it },
+                        onActiveTimeStartChange = { viewModel.workflowNotifyActiveTimeStart.value = it },
+                        onActiveTimeEndChange = { viewModel.workflowNotifyActiveTimeEnd.value = it },
+                        onLlmConditionEnabledChange = { viewModel.workflowNotifyLlmConditionEnabled.value = it },
+                        onLlmConditionChange = { viewModel.workflowNotifyLlmCondition.value = it },
+                        onActionPackageChange = { viewModel.workflowNotifyActionPackage.value = it },
+                        onActionPlaybookChange = { viewModel.workflowNotifyActionPlaybook.value = it },
+                        onActionRecordEnabledChange = { viewModel.workflowNotifyActionRecordEnabled.value = it }
+                    )
+                }
+            }
+        }
+
+        pageTemplatePicker -> {
+            val listState = rememberLazyListState()
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                PageHeaderBlock(
+                    title = tr("Select template"),
+                    subtitle = tr("Choose an existing template to add to this workflow."),
+                    glyph = "▣",
+                    onBack = { page = pageWorkflowForm }
+                )
+                SurfacePanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    background = MaterialTheme.colorScheme.surface,
+                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
+                ) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        itemsIndexed(templates, key = { _, it -> it.templateId }) { index, template ->
+                            CompactEntryRow(
+                                title = template.name.ifBlank { template.description },
+                                meta = template.packageName.ifBlank { tr("No app") },
+                                onClick = {
+                                    viewModel.addWorkflowStepTemplate(template.templateId)
+                                    page = pageWorkflowForm
+                                }
+                            )
+                            if (index < templates.lastIndex) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -4260,6 +4588,315 @@ private fun TaskRouteActionDetailDialog(
 private fun DetailTextLine(label: String, value: String) {
     if (value.isBlank()) return
     Text("$label=$value", fontSize = 11.sp)
+}
+
+@Composable
+fun TemplateRow(
+    template: TaskTemplateSummary,
+    onEdit: () -> Unit,
+    onRoute: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = template.name.ifBlank { template.description },
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = template.description,
+                fontSize = 11.sp,
+                color = scheme.onSurface.copy(alpha = 0.72f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = buildString {
+                    append(if (template.packageName.isBlank()) tr("No app") else template.packageName)
+                    append("  •  ")
+                    append(if (template.routeId.isBlank()) tr("No route") else tr("Route ready"))
+                },
+                fontSize = 10.sp,
+                color = scheme.onSurface.copy(alpha = 0.58f)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton(onClick = onRoute) { Text(tr("Route")) }
+            TextButton(onClick = onDelete) { Text(tr("Delete")) }
+        }
+    }
+}
+
+@Composable
+fun WorkflowRow(
+    workflow: WorkflowSummary,
+    onRun: () -> Unit,
+    onEdit: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit,
+    onDelete: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val listToggleColors = SwitchDefaults.colors(
+        checkedThumbColor = scheme.surface,
+        checkedTrackColor = AppSuccess,
+        checkedBorderColor = AppSuccess,
+        uncheckedThumbColor = scheme.surface,
+        uncheckedTrackColor = scheme.primary.copy(alpha = 0.22f).compositeOver(scheme.surface),
+        uncheckedBorderColor = scheme.primary.copy(alpha = 0.45f)
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = workflow.name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = workflow.triggerSummary.ifBlank {
+                    when (workflow.triggerType) {
+                        "none" -> tr("No trigger")
+                        "schedule" -> tr("Scheduled")
+                        "notification" -> tr("Notification")
+                        else -> workflow.triggerType
+                    }
+                },
+                fontSize = 11.sp,
+                color = scheme.onSurface.copy(alpha = 0.72f)
+            )
+        }
+        Switch(
+            checked = workflow.triggerEnabled,
+            onCheckedChange = onToggleEnabled,
+            enabled = workflow.triggerType != "none",
+            colors = listToggleColors
+        )
+        TextButton(onClick = onRun) { Text(tr("Run")) }
+        TextButton(onClick = onDelete) { Text(tr("Delete")) }
+    }
+}
+
+@Composable
+fun CompactEntryRow(title: String, meta: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(meta, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(tr("Open"), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+fun WorkflowStepEditorRow(
+    index: Int,
+    templateName: String,
+    packageName: String,
+    onOpen: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("${index + 1}. $templateName", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(packageName.ifBlank { tr("No app") }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f))
+        }
+        TextButton(onClick = onMoveUp, enabled = index > 0) { Text(tr("Up")) }
+        TextButton(onClick = onMoveDown) { Text(tr("Down")) }
+        TextButton(onClick = onDelete) { Text(tr("Delete")) }
+    }
+}
+
+@Composable
+fun ScheduleTriggerEditor(
+    runAtMs: String,
+    repeatMode: String,
+    repeatWeekdays: Int,
+    onRunAtChange: (String) -> Unit,
+    onRepeatModeChange: (String) -> Unit,
+    onRepeatWeekdaysChange: (Int) -> Unit
+) {
+    val context = LocalContext.current
+    val selectedRunAt = runAtMs.toLongOrNull()?.takeIf { it > 0L } ?: (System.currentTimeMillis() + 5 * 60_000L)
+    var showTimeWheel by rememberSaveable { mutableStateOf(false) }
+    Text(
+        text = "${tr("Run time")}: ${formatTsFull(selectedRunAt)}",
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+    )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = {
+                val cal = Calendar.getInstance().apply { timeInMillis = selectedRunAt }
+                DatePickerDialog(
+                    context,
+                    { _, y, m, d ->
+                        val next = Calendar.getInstance().apply {
+                            timeInMillis = selectedRunAt
+                            set(Calendar.YEAR, y)
+                            set(Calendar.MONTH, m)
+                            set(Calendar.DAY_OF_MONTH, d)
+                        }
+                        onRunAtChange(next.timeInMillis.toString())
+                    },
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH),
+                    cal.get(Calendar.DAY_OF_MONTH)
+                ).show()
+            },
+            modifier = Modifier.weight(1f)
+        ) { Text(tr("Pick Date")) }
+        OutlinedButton(onClick = { showTimeWheel = true }, modifier = Modifier.weight(1f)) { Text(tr("Pick Time")) }
+    }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(MainViewModel.REPEAT_ONCE, MainViewModel.REPEAT_DAILY, MainViewModel.REPEAT_WEEKLY).forEach { mode ->
+            RepeatModeButton(
+                text = tr(mode.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }),
+                selected = repeatMode == mode,
+                onClick = { onRepeatModeChange(mode) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+    if (repeatMode == MainViewModel.REPEAT_WEEKLY) {
+        val labels = listOf(tr("Mon"), tr("Tue"), tr("Wed"), tr("Thu"), tr("Fri"), tr("Sat"), tr("Sun"))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (i in 0..6) {
+                WeekdayButton(
+                    text = labels[i],
+                    selected = ((repeatWeekdays shr i) and 1) == 1,
+                    onClick = { onRepeatWeekdaysChange(repeatWeekdays xor (1 shl i)) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+    if (showTimeWheel) {
+        val cal = Calendar.getInstance().apply { timeInMillis = selectedRunAt }
+        WheelTimePickerDialog(
+            initialHour = cal.get(Calendar.HOUR_OF_DAY),
+            initialMinute = cal.get(Calendar.MINUTE),
+            onDismiss = { showTimeWheel = false },
+            onConfirm = { hour, minute ->
+                val next = Calendar.getInstance().apply {
+                    timeInMillis = selectedRunAt
+                    set(Calendar.HOUR_OF_DAY, hour)
+                    set(Calendar.MINUTE, minute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                onRunAtChange(next.timeInMillis.toString())
+                showTimeWheel = false
+            }
+        )
+    }
+}
+
+@Composable
+fun NotificationTriggerEditor(
+    installedApps: List<AppPackageOption>,
+    triggerPackage: String,
+    titlePattern: String,
+    bodyPattern: String,
+    cooldownSeconds: String,
+    activeTimeStart: String,
+    activeTimeEnd: String,
+    llmConditionEnabled: Boolean,
+    llmCondition: String,
+    actionPackage: String,
+    actionPlaybook: String,
+    actionRecordEnabled: Boolean,
+    onTriggerPackageChange: (String) -> Unit,
+    onTitlePatternChange: (String) -> Unit,
+    onBodyPatternChange: (String) -> Unit,
+    onCooldownSecondsChange: (String) -> Unit,
+    onActiveTimeStartChange: (String) -> Unit,
+    onActiveTimeEndChange: (String) -> Unit,
+    onLlmConditionEnabledChange: (Boolean) -> Unit,
+    onLlmConditionChange: (String) -> Unit,
+    onActionPackageChange: (String) -> Unit,
+    onActionPlaybookChange: (String) -> Unit,
+    onActionRecordEnabledChange: (Boolean) -> Unit
+) {
+    var showAppPicker by rememberSaveable { mutableStateOf(false) }
+    SheetHeader(title = tr("Trigger conditions"), subtitle = tr("Choose which notifications should start this workflow."))
+    PackageSelectField(
+        title = tr("Listen app"),
+        selectedPackage = triggerPackage,
+        options = installedApps,
+        onOpen = { showAppPicker = true },
+        onClear = { onTriggerPackageChange("") }
+    )
+    OutlinedTextField(value = titlePattern, onValueChange = onTitlePatternChange, label = { Text(tr("Title pattern")) }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(value = bodyPattern, onValueChange = onBodyPatternChange, label = { Text(tr("Body pattern")) }, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(value = cooldownSeconds, onValueChange = onCooldownSecondsChange, label = { Text(tr("Cooldown seconds")) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(value = activeTimeStart, onValueChange = onActiveTimeStartChange, label = { Text(tr("Start time")) }, modifier = Modifier.weight(1f))
+        OutlinedTextField(value = activeTimeEnd, onValueChange = onActiveTimeEndChange, label = { Text(tr("End time")) }, modifier = Modifier.weight(1f))
+    }
+    PreferenceSwitchRow(
+        title = tr("Use LLM condition"),
+        detail = tr("Add an extra model check after the text match."),
+        checked = llmConditionEnabled,
+        onCheckedChange = onLlmConditionEnabledChange
+    )
+    if (llmConditionEnabled) {
+        OutlinedTextField(value = llmCondition, onValueChange = onLlmConditionChange, label = { Text(tr("LLM condition")) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
+    SheetHeader(title = tr("Execution preference"), subtitle = tr("These settings apply after a notification match."))
+    PackageSelectField(
+        title = tr("Open app"),
+        selectedPackage = actionPackage,
+        options = installedApps,
+        onOpen = { showAppPicker = true },
+        onClear = { onActionPackageChange("") }
+    )
+    OutlinedTextField(value = actionPlaybook, onValueChange = onActionPlaybookChange, label = { Text(tr("Playbook")) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+    PreferenceSwitchRow(
+        title = tr("Record execution"),
+        detail = tr("Capture screen recording after the trigger is matched."),
+        checked = actionRecordEnabled,
+        onCheckedChange = onActionRecordEnabledChange
+    )
+    if (showAppPicker) {
+        PackagePickerDialog(
+            options = installedApps,
+            onDismiss = { showAppPicker = false },
+            onSelect = {
+                onTriggerPackageChange(it.packageName)
+                showAppPicker = false
+            }
+        )
+    }
 }
 
 @Composable

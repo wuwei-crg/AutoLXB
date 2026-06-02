@@ -271,7 +271,7 @@ public class NotificationTriggerModule {
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
-                List<NotificationTriggerRule> rules = ruleStore.loadRules();
+                List<NotificationTriggerRule> rules = loadAllRules();
                 List<NotificationTriggerRule> enabledRules = filterEnabledRules(rules);
                 if (enabledRules.isEmpty()) {
                     sleepQuietly(pollIntervalMs);
@@ -391,6 +391,23 @@ public class NotificationTriggerModule {
             String baseTask = pickBaseTask(rule);
             String finalTask = baseTask;
             String rewriteRaw = "";
+            if (rule.action != null && "run_workflow".equals(rule.action.type)) {
+                try {
+                    Map<String, Object> submitted = taskManager.submitWorkflow(rule.action.workflowId, "notification");
+                    ruleLastTriggeredMs.put(rule.id, now);
+                    clearRuleFailure(rule.id);
+                    Map<String, Object> extra = new LinkedHashMap<String, Object>();
+                    extra.putAll(submitted);
+                    logEvent("notify_workflow_submitted", event, rule, "", null, extra);
+                    if (rule.stopAfterMatched) {
+                        return;
+                    }
+                } catch (Exception e) {
+                    recordRuleFailure(rule.id);
+                    logEvent("notify_workflow_submit_failed", event, rule, "", String.valueOf(e));
+                }
+                continue;
+            }
             if (rule.taskRewriteEnabled) {
                 NotificationTaskRewriter.RewriteResult rewrite =
                         taskRewriter.rewriteTask(
@@ -458,6 +475,23 @@ public class NotificationTriggerModule {
             if (isCircuitOpen(rule.id, nowMs)) continue;
             if (isInCooldown(rule.id, nowMs, rule.cooldownMs)) continue;
             out.add(rule);
+        }
+        return out;
+    }
+
+    private List<NotificationTriggerRule> loadAllRules() {
+        List<NotificationTriggerRule> out = new ArrayList<NotificationTriggerRule>();
+        out.addAll(ruleStore.loadRules());
+        try {
+            List<Map<String, Object>> workflowRules = taskManager.listNotificationWorkflowRules();
+            int idx = 100000;
+            for (Map<String, Object> row : workflowRules) {
+                NotificationTriggerRule rule = NotificationTriggerRule.fromMap(row, idx++);
+                if (rule != null) {
+                    out.add(rule);
+                }
+            }
+        } catch (Exception ignored) {
         }
         return out;
     }
@@ -894,6 +928,9 @@ public class NotificationTriggerModule {
             action.put("use_map", r.action.useMapOverride.booleanValue());
         }
         action.put("task_map_mode", r.action.taskMapMode);
+        if (r.action.workflowId != null && !r.action.workflowId.isEmpty()) {
+            action.put("workflow_id", r.action.workflowId);
+        }
         m.put("action", action);
         return m;
     }

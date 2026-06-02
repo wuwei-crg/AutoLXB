@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend entry point for lxb-core daemon changes."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "New backend stores, command handlers, and workflow runner must follow existing module boundaries."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Task templates and workflows introduce new JSON persistence and legacy migration."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "New JSON commands must return compact ok/err responses at command boundaries."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Workflow execution must emit trace events for history/debugging."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Command ids, dispatcher, protocol contracts, and backend tests must remain aligned."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point for Android app changes."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Template/workflow UI, parsers, and ViewModel state must fit app layout."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "New Templates and Workflows screens must follow Compose component conventions."}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "User actions that call lxb-core must use ViewModel coroutines and existing gateway patterns."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "New template/workflow state belongs in ViewModel/StateFlow and must sync with backend snapshots."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "New JSON response shapes need typed parser boundaries and tests."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "App/core command contract and parser tests must be kept aligned."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature crosses persistence, backend commands, parser, ViewModel, and Compose UI."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Migration should reuse existing schedule, notification, route, and task execution patterns."}

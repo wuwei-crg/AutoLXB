@@ -44,6 +44,20 @@ public final class CommandIds {
     public static final byte CMD_SCREENSHOT = 0x60;
     public static final byte CMD_IMG_REQ = 0x61;
 
+    // Cortex workflow/template layer (JSON payloads)
+    public static final byte CMD_CORTEX_TEMPLATE_LIST = 0x50;
+    public static final byte CMD_CORTEX_TEMPLATE_GET = 0x51;
+    public static final byte CMD_CORTEX_TEMPLATE_SAVE = 0x52;
+    public static final byte CMD_CORTEX_TEMPLATE_DELETE = 0x53;
+    public static final byte CMD_CORTEX_WORKFLOW_LIST = 0x54;
+    public static final byte CMD_CORTEX_WORKFLOW_GET = 0x55;
+    public static final byte CMD_CORTEX_WORKFLOW_SAVE = 0x56;
+    public static final byte CMD_CORTEX_WORKFLOW_DELETE = 0x57;
+    public static final byte CMD_CORTEX_WORKFLOW_RUN = 0x58;
+    public static final byte CMD_CORTEX_WORKFLOW_CANCEL = 0x59;
+    public static final byte CMD_CORTEX_WORKFLOW_STATUS = 0x5A;
+    public static final byte CMD_CORTEX_TEMPLATE_RUN = 0x5B;
+
     // Cortex/Map debug layer (0x70-0x7F) - end-side cortex migration bootstrap
     // NOTE: keep aligned with Python constants when PC-side support is added.
     public static final byte CMD_MAP_SET_GZ = 0x70;          // burn map (gzip json)

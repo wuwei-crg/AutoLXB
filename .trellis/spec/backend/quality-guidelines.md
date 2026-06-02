@@ -58,3 +58,83 @@ cd android/LXB-Ignition
 
 If a change affects app/core contracts, add or update tests on both sides where
 possible.
+
+## Scenario: Cortex Task Templates And Workflows
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing Cortex task-template/workflow authoring,
+  persistence, migration, or command APIs.
+- Applies to `lxb-core` workflow/template models, `CortexTaskManager`,
+  `CortexFacade`, `CommandDispatcher`, app-side `CoreApiParser`, and Task tab
+  UI flows.
+
+### 2. Signatures
+
+- Persistence:
+  - `task_templates.v1.json` root key `templates`
+  - `workflows.v1.json` root key `workflows`
+- Command ids:
+  - `CMD_CORTEX_TEMPLATE_LIST/GET/SAVE/DELETE/RUN`
+  - `CMD_CORTEX_WORKFLOW_LIST/GET/SAVE/DELETE/RUN/CANCEL/STATUS`
+- Runtime adapter:
+  - template task runs use `source="template"` and `source_id=<route_id>`.
+  - `resolveRouteId("template", sourceId, taskId)` must return `sourceId`.
+
+### 3. Contracts
+
+- `TaskTemplate` fields use snake_case:
+  `template_id`, `name`, `description`, `package_name`, `start_page`,
+  `map_path`, `user_playbook`, `record_enabled`, `task_map_mode`, `route_id`,
+  `decompose_enabled`, `created_at_ms`, `updated_at_ms`.
+- New templates default `decompose_enabled=false`; if `route_id` is omitted,
+  save normalizes it to `template:<template_id>`.
+- `Workflow` fields use snake_case:
+  `workflow_id`, `name`, `description`, `steps`, `failure_policy`,
+  `trigger_type`, `trigger_enabled`, `trigger_config`, timestamps.
+- `trigger_enabled` controls automatic triggering only. Manual workflow run
+  must work regardless of trigger state.
+- JSON responses follow `{"ok":true,...}` or `{"ok":false,"err":"..."}`;
+  list responses use `{"ok":true,"items":[...]}`.
+
+### 4. Validation & Error Matrix
+
+- Missing `description` on template save -> `description is required`.
+- Workflow save with zero steps -> `workflow must have at least one step`.
+- Workflow step with missing/unknown template -> validation error naming the
+  missing `template_id`.
+- Delete referenced template -> reject with the referencing `workflow_id`.
+- Delete running workflow -> reject until the workflow run is cancelled.
+- Workflow cancel/status without `workflow_run_id` -> command error.
+
+### 5. Good/Base/Bad Cases
+
+- Good: create one template, create one workflow with one step, run workflow,
+  route lookup uses the template route id.
+- Base: no automatic trigger, `trigger_type="none"`, `trigger_enabled=false`,
+  empty `trigger_config`.
+- Bad: creating separate persisted trigger rows or making schedule/notification
+  lists the primary frontend entry again.
+
+### 6. Tests Required
+
+- Backend store tests assert template default route/decompose values and
+  referenced-template delete rejection.
+- Command id uniqueness test must include new template/workflow ids.
+- App parser tests assert template/workflow list and workflow run response
+  parsing.
+- Execution changes should preserve existing `:lxb-core:test` and
+  `:app:testDebugUnitTest`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Persist a schedule as a standalone schedule row and also show it in a separate
+Schedules list after workflow migration.
+
+#### Correct
+
+Migrate the legacy schedule into one `TaskTemplate` plus one visible
+`Workflow` whose embedded `trigger_config` carries the schedule fields, then
+clear the legacy schedule row to avoid duplicate automatic firing.

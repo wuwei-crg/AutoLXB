@@ -131,6 +131,44 @@ public class CommandDispatcher {
                     response = new byte[]{0x00};
                     break;
 
+                // Cortex workflow/template layer
+                case CommandIds.CMD_CORTEX_TEMPLATE_LIST:
+                    response = cortexFacade.handleCortexTemplateList(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_TEMPLATE_GET:
+                    response = cortexFacade.handleCortexTemplateGet(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_TEMPLATE_SAVE:
+                    response = cortexFacade.handleCortexTemplateSave(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_TEMPLATE_DELETE:
+                    response = cortexFacade.handleCortexTemplateDelete(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_TEMPLATE_RUN:
+                    response = cortexFacade.handleCortexTemplateRun(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_LIST:
+                    response = cortexFacade.handleCortexWorkflowList(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_GET:
+                    response = cortexFacade.handleCortexWorkflowGet(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_SAVE:
+                    response = cortexFacade.handleCortexWorkflowSave(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_DELETE:
+                    response = cortexFacade.handleCortexWorkflowDelete(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_RUN:
+                    response = cortexFacade.handleCortexWorkflowRun(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_CANCEL:
+                    response = cortexFacade.handleCortexWorkflowCancel(payload);
+                    break;
+                case CommandIds.CMD_CORTEX_WORKFLOW_STATUS:
+                    response = cortexFacade.handleCortexWorkflowStatus(payload);
+                    break;
+
                 // Cortex/Map debug layer (bootstrap)
                 case CommandIds.CMD_MAP_SET_GZ:
                     response = cortexFacade.handleMapSetGz(payload);

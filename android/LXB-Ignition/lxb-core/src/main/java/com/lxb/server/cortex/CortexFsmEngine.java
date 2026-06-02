@@ -153,6 +153,8 @@ public class CortexFsmEngine {
         public boolean unlockedByFsm = false;
         public UnlockReadyCallback unlockReadyCallback = null;
         public boolean unlockReadyNotified = false;
+        public boolean decomposeEnabled = true;
+        public boolean suppressAutoLockAfterTask = false;
         public String source = "manual";
         public String sourceId = "";
         public String sourceConfigHash = "";
@@ -279,6 +281,10 @@ public class CortexFsmEngine {
         return out;
     }
 
+    public void traceEvent(String eventName, Map<String, Object> fields) {
+        trace.event(eventName, fields != null ? fields : new LinkedHashMap<String, Object>());
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> parseSystemControlResponse(byte[] resp, String action) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -385,7 +391,9 @@ public class CortexFsmEngine {
                 "manual",
                 "",
                 "",
-                "off"
+                "off",
+                true,
+                false
         );
     }
 
@@ -407,6 +415,48 @@ public class CortexFsmEngine {
             String sourceConfigHash,
             String taskMapMode
     ) {
+        return run(
+                userTask,
+                packageName,
+                mapPath,
+                startPage,
+                traceMode,
+                traceUdpPort,
+                userPlaybook,
+                taskMemoryHint,
+                useMapOverride,
+                taskIdOverride,
+                cancellationChecker,
+                unlockReadyCallback,
+                source,
+                sourceId,
+                sourceConfigHash,
+                taskMapMode,
+                true,
+                false
+        );
+    }
+
+    public Map<String, Object> run(
+            String userTask,
+            String packageName,
+            String mapPath,
+            String startPage,
+            String traceMode,
+            Integer traceUdpPort,
+            String userPlaybook,
+            Map<String, Object> taskMemoryHint,
+            Boolean useMapOverride,
+            String taskIdOverride,
+            CancellationChecker cancellationChecker,
+            UnlockReadyCallback unlockReadyCallback,
+            String source,
+            String sourceId,
+            String sourceConfigHash,
+            String taskMapMode,
+            boolean decomposeEnabled,
+            boolean suppressAutoLockAfterTask
+    ) {
         String effectiveTaskId = (taskIdOverride != null && !taskIdOverride.isEmpty())
                 ? taskIdOverride
                 : UUID.randomUUID().toString();
@@ -422,6 +472,8 @@ public class CortexFsmEngine {
         ctx.sourceId = sourceId != null ? sourceId.trim() : "";
         ctx.sourceConfigHash = "";
         ctx.taskMapMode = taskMapMode != null ? taskMapMode.trim().toLowerCase(Locale.ROOT) : "off";
+        ctx.decomposeEnabled = decomposeEnabled;
+        ctx.suppressAutoLockAfterTask = suppressAutoLockAfterTask;
         if (ctx.taskMapMode.isEmpty()) {
             ctx.taskMapMode = "off";
         }
@@ -1109,7 +1161,7 @@ public class CortexFsmEngine {
             ctx.taskMapRootHit = false;
             ctx.hasTaskRoute = false;
             ctx.taskRouteStatus = "off";
-            return State.TASK_DECOMPOSE;
+            return ctx.decomposeEnabled ? State.TASK_DECOMPOSE : State.DEVICE_PREPARE;
         }
 
         TaskMap map = taskMapStore != null ? taskMapStore.loadMap(ctx.taskRouteKeyHash) : null;
@@ -1122,7 +1174,7 @@ public class CortexFsmEngine {
             miss.put("route_id", ctx.taskRouteKeyHash);
             miss.put("reason", map == null ? "map_missing" : "map_unusable");
             trace.event("task_route_lookup_miss", miss);
-            return State.TASK_DECOMPOSE;
+            return ctx.decomposeEnabled ? State.TASK_DECOMPOSE : State.DEVICE_PREPARE;
         }
 
         ctx.taskMapRootHit = true;
@@ -3752,6 +3804,14 @@ public class CortexFsmEngine {
     }
 
     private void tryAutoLockAfterTask(Context ctx, State finalState) {
+        if (ctx.suppressAutoLockAfterTask) {
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("task_id", ctx.taskId);
+            ev.put("final_state", finalState.name());
+            ev.put("result", "skip_workflow_child");
+            trace.event("fsm_auto_lock", ev);
+            return;
+        }
         if (!ctx.autoLockAfterTask || !ctx.unlockedByFsm) {
             return;
         }

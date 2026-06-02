@@ -61,6 +61,48 @@ class CoreApiParserTest {
     }
 
     @Test
+    fun parseTemplateList_readsTemplateFields() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .put(
+                "items",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("template_id", "tpl-1")
+                        .put("name", "Open app")
+                        .put("description", "Open demo app")
+                        .put("package_name", "com.demo")
+                        .put("task_map_mode", "manual")
+                        .put("route_id", "template:tpl-1")
+                        .put("decompose_enabled", false)
+                        .put("updated_at_ms", 10L)
+                )
+            )
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseTemplateList(payload).second.single()
+
+        assertEquals("tpl-1", parsed.templateId)
+        assertEquals("template:tpl-1", parsed.routeId)
+        assertEquals(false, parsed.decomposeEnabled)
+    }
+
+    @Test
+    fun parseWorkflowRun_success() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .put("workflow_run_id", "wfr-1")
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseWorkflowRun(payload)
+
+        assertEquals("wfr-1", parsed.workflowRunId)
+        assertTrue(parsed.message.startsWith("Workflow submitted: "))
+    }
+
+    @Test
     fun parseSystemControl_emptyPayload() {
         val parsed = CoreApiParser.parseSystemControl(ByteArray(0))
         assertEquals(false, parsed.ok)

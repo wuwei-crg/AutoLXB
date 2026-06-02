@@ -10,9 +10,12 @@ import com.example.lxb_ignition.model.TaskMapStepSnapshot
 import com.example.lxb_ignition.model.TaskRouteActionSnapshot
 import com.example.lxb_ignition.model.TaskRouteRecordSnapshot
 import com.example.lxb_ignition.model.TaskSummary
+import com.example.lxb_ignition.model.TaskTemplateSummary
 import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TraceMetaItem
 import com.example.lxb_ignition.model.TracePage
+import com.example.lxb_ignition.model.WorkflowStepSummary
+import com.example.lxb_ignition.model.WorkflowSummary
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,6 +33,11 @@ data class ScheduleTriggerParsed(
 data class SystemControlParsed(
     val ok: Boolean,
     val detail: String
+)
+
+data class WorkflowRunParsed(
+    val message: String,
+    val workflowRunId: String
 )
 
 object CoreApiParser {
@@ -167,6 +175,128 @@ object CoreApiParser {
         }
         val items = dedup.values.sortedByDescending { it.nextRunAt }
         return Pair("Schedule list refreshed: ${items.size} items.", items)
+    }
+
+    fun parseTemplateList(payload: ByteArray): Pair<String, List<TaskTemplateSummary>> {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+            ?: return Pair("Invalid template list response: ${text.take(160)}", emptyList())
+        if (!obj.optBoolean("ok", false)) {
+            return Pair("Template list query failed: ${text.take(160)}", emptyList())
+        }
+        val arr = obj.optJSONArray("items") ?: JSONArray()
+        val items = buildList {
+            for (i in 0 until arr.length()) {
+                val t = arr.optJSONObject(i) ?: continue
+                val id = t.optString("template_id", "")
+                if (id.isBlank()) continue
+                add(
+                    TaskTemplateSummary(
+                        templateId = id,
+                        name = t.optString("name", ""),
+                        description = t.optString("description", ""),
+                        packageName = t.optString("package_name", ""),
+                        startPage = t.optString("start_page", ""),
+                        mapPath = t.optString("map_path", ""),
+                        userPlaybook = t.optString("user_playbook", ""),
+                        recordEnabled = t.optBoolean("record_enabled", false),
+                        taskMapMode = t.optString("task_map_mode", "off"),
+                        routeId = t.optString("route_id", ""),
+                        decomposeEnabled = t.optBoolean("decompose_enabled", false),
+                        createdAtMs = t.optLong("created_at_ms", 0L),
+                        updatedAtMs = t.optLong("updated_at_ms", 0L)
+                    )
+                )
+            }
+        }.sortedByDescending { it.updatedAtMs }
+        return Pair("Template list refreshed: ${items.size} items.", items)
+    }
+
+    fun parseWorkflowList(payload: ByteArray): Pair<String, List<WorkflowSummary>> {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+            ?: return Pair("Invalid workflow list response: ${text.take(160)}", emptyList())
+        if (!obj.optBoolean("ok", false)) {
+            return Pair("Workflow list query failed: ${text.take(160)}", emptyList())
+        }
+        val arr = obj.optJSONArray("items") ?: JSONArray()
+        val items = buildList {
+            for (i in 0 until arr.length()) {
+                val w = arr.optJSONObject(i) ?: continue
+                val id = w.optString("workflow_id", "")
+                if (id.isBlank()) continue
+                val stepsArr = w.optJSONArray("steps") ?: JSONArray()
+                val steps = buildList {
+                    for (j in 0 until stepsArr.length()) {
+                        val s = stepsArr.optJSONObject(j) ?: continue
+                        add(
+                            WorkflowStepSummary(
+                                stepId = s.optString("step_id", ""),
+                                templateId = s.optString("template_id", ""),
+                                name = s.optString("name", ""),
+                                order = s.optInt("order", j)
+                            )
+                        )
+                    }
+                }
+                add(
+                    WorkflowSummary(
+                        workflowId = id,
+                        name = w.optString("name", ""),
+                        triggerType = w.optString("trigger_type", "none"),
+                        triggerEnabled = w.optBoolean("trigger_enabled", false),
+                        triggerSummary = w.optString("trigger_summary", ""),
+                        triggerConfigJson = w.optJSONObject("trigger_config")?.toString() ?: "",
+                        steps = steps,
+                        createdAtMs = w.optLong("created_at_ms", 0L),
+                        updatedAtMs = w.optLong("updated_at_ms", 0L)
+                    )
+                )
+            }
+        }.sortedByDescending { it.updatedAtMs }
+        return Pair("Workflow list refreshed: ${items.size} items.", items)
+    }
+
+    fun parseTemplateSave(payload: ByteArray): String {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return "Save template failed: ${text.take(220)}"
+        }
+        val id = obj.optJSONObject("template")?.optString("template_id", "").orEmpty()
+        return if (id.isBlank()) "Template saved." else "Template saved: $id"
+    }
+
+    fun parseWorkflowSave(payload: ByteArray): String {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return "Save workflow failed: ${text.take(220)}"
+        }
+        val id = obj.optJSONObject("workflow")?.optString("workflow_id", "").orEmpty()
+        return if (id.isBlank()) "Workflow saved." else "Workflow saved: $id"
+    }
+
+    fun parseWorkflowRun(payload: ByteArray): WorkflowRunParsed {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return WorkflowRunParsed("Workflow run failed: ${text.take(220)}", "")
+        }
+        val runId = obj.optString("workflow_run_id", "")
+        return WorkflowRunParsed(
+            message = if (runId.isBlank()) "Workflow submitted." else "Workflow submitted: $runId",
+            workflowRunId = runId
+        )
+    }
+
+    fun parseSimpleOkMessage(payload: ByteArray, successPrefix: String): String {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return "${successPrefix.replace("deleted", "failed").replace("Deleted", "Failed")}: ${text.take(220)}"
+        }
+        return obj.optString("message", "").takeIf { it.isNotBlank() } ?: successPrefix
     }
 
     fun parseScheduleAdd(payload: ByteArray): String {
