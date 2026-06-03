@@ -9,6 +9,7 @@ import com.lxb.server.cortex.taskmap.TaskRouteKey;
 import com.lxb.server.cortex.taskmap.TaskRouteRecord;
 import com.lxb.server.cortex.workflow.TaskTemplate;
 import com.lxb.server.cortex.workflow.WorkflowDef;
+import com.lxb.server.cortex.workflow.WorkflowPortableCodec;
 import com.lxb.server.cortex.workflow.WorkflowStore;
 
 import java.io.File;
@@ -891,6 +892,67 @@ public class CortexTaskManager {
             return out;
         }
         return snapshotWorkflowRun(run);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> handlePortable(String action, Map<String, Object> req) {
+        String normalized = stringOrEmpty(action).toLowerCase(Locale.ROOT);
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        if ("export_template".equals(normalized)) {
+            String templateId = stringOrEmpty(req.get("template_id"));
+            if (templateId.isEmpty()) {
+                throw new IllegalArgumentException("template_id is required");
+            }
+            TaskTemplate template = workflowStore.getTemplate(templateId);
+            if (template == null) {
+                throw new IllegalArgumentException("template not found: " + templateId);
+            }
+            Map<String, Object> bundle = WorkflowPortableCodec.exportTemplate(template, taskMapStore);
+            out.put("ok", true);
+            out.put("schema", WorkflowPortableCodec.SCHEMA_TEMPLATE_BUNDLE);
+            out.put("version", WorkflowPortableCodec.VERSION);
+            out.put("bundle", bundle);
+            out.put("bundle_json", Json.stringify(bundle));
+            out.put("template_id", template.templateId);
+            return out;
+        }
+        if ("export_workflow".equals(normalized)) {
+            String workflowId = stringOrEmpty(req.get("workflow_id"));
+            if (workflowId.isEmpty()) {
+                throw new IllegalArgumentException("workflow_id is required");
+            }
+            WorkflowDef workflow = workflowStore.getWorkflow(workflowId);
+            if (workflow == null) {
+                throw new IllegalArgumentException("workflow not found: " + workflowId);
+            }
+            Map<String, Object> bundle = WorkflowPortableCodec.exportWorkflow(workflow, workflowStore, taskMapStore);
+            out.put("ok", true);
+            out.put("schema", WorkflowPortableCodec.SCHEMA_WORKFLOW_BUNDLE);
+            out.put("version", WorkflowPortableCodec.VERSION);
+            out.put("bundle", bundle);
+            out.put("bundle_json", Json.stringify(bundle));
+            out.put("workflow_id", workflow.workflowId);
+            return out;
+        }
+        if ("import".equals(normalized)) {
+            Object bundleObj = req.get("bundle");
+            if (!(bundleObj instanceof Map)) {
+                String bundleJson = stringOrEmpty(req.get("bundle_json"));
+                if (bundleJson.isEmpty()) {
+                    throw new IllegalArgumentException("bundle is required");
+                }
+                bundleObj = Json.parseObject(bundleJson);
+            }
+            WorkflowPortableCodec.ImportResult imported = WorkflowPortableCodec.importPortable(
+                    (Map<String, Object>) bundleObj,
+                    workflowStore,
+                    taskMapStore
+            );
+            out.put("ok", true);
+            out.putAll(imported.toMap());
+            return out;
+        }
+        throw new IllegalArgumentException("unsupported portable action: " + normalized);
     }
 
     private Map<String, Object> submitWorkflowRun(WorkflowDef workflow, String source, boolean visibleWorkflow) {

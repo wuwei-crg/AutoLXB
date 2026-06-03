@@ -1,8 +1,6 @@
 package com.example.lxb_ignition.core
 
 import com.example.lxb_ignition.model.AppPackageOption
-import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
-import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskMapSegmentSnapshot
 import com.example.lxb_ignition.model.TaskMapSnapshot
@@ -24,12 +22,6 @@ data class TaskSubmitParsed(
     val taskId: String
 )
 
-data class ScheduleTriggerParsed(
-    val message: String,
-    val taskId: String,
-    val scheduleId: String
-)
-
 data class SystemControlParsed(
     val ok: Boolean,
     val detail: String
@@ -38,6 +30,18 @@ data class SystemControlParsed(
 data class WorkflowRunParsed(
     val message: String,
     val workflowRunId: String
+)
+
+data class PortableExportParsed(
+    val message: String,
+    val bundleJson: String
+)
+
+data class PortableImportParsed(
+    val message: String,
+    val importedType: String,
+    val workflowId: String,
+    val templateId: String
 )
 
 object CoreApiParser {
@@ -133,50 +137,6 @@ object CoreApiParser {
         return Pair("Task list refreshed: ${items.size} items.", items)
     }
 
-    fun parseScheduleList(
-        payload: ByteArray,
-        repeatDaily: String,
-        repeatOnce: String
-    ): Pair<String, List<ScheduleSummary>> {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-            ?: return Pair("Invalid schedule list response: ${text.take(160)}", emptyList())
-        if (!obj.optBoolean("ok", false)) {
-            return Pair("Schedule list query failed: ${text.take(160)}", emptyList())
-        }
-        val arr = obj.optJSONArray("schedules") ?: JSONArray()
-        val dedup = linkedMapOf<String, ScheduleSummary>()
-        for (i in 0 until arr.length()) {
-            val s = arr.optJSONObject(i) ?: continue
-            val id = s.optString("schedule_id", "")
-            if (id.isEmpty()) continue
-            val summary = ScheduleSummary(
-                scheduleId = id,
-                name = s.optString("name", ""),
-                userTask = s.optString("user_task", ""),
-                packageName = s.optString("package", ""),
-                startPage = s.optString("start_page", ""),
-                recordEnabled = s.optBoolean("record_enabled", false),
-                taskMapMode = s.optString("task_map_mode", "off"),
-                runAtMs = s.optLong("run_at", 0L),
-                repeatMode = s.optString(
-                    "repeat_mode",
-                    if (s.optBoolean("repeat_daily", false)) repeatDaily else repeatOnce
-                ),
-                repeatWeekdays = s.optInt("repeat_weekdays", 0),
-                nextRunAt = s.optLong("next_run_at", 0L),
-                lastTriggeredAt = s.optLong("last_triggered_at", 0L),
-                triggerCount = s.optLong("trigger_count", 0L),
-                enabled = s.optBoolean("enabled", true),
-                createdAt = s.optLong("created_at", 0L),
-                userPlaybook = s.optString("user_playbook", "")
-            )
-            dedup[id] = summary
-        }
-        val items = dedup.values.sortedByDescending { it.nextRunAt }
-        return Pair("Schedule list refreshed: ${items.size} items.", items)
-    }
-
     fun parseTemplateList(payload: ByteArray): Pair<String, List<TaskTemplateSummary>> {
         val text = payload.toString(Charsets.UTF_8)
         val obj = runCatching { JSONObject(text) }.getOrNull()
@@ -210,6 +170,21 @@ object CoreApiParser {
             }
         }.sortedByDescending { it.updatedAtMs }
         return Pair("Template list refreshed: ${items.size} items.", items)
+    }
+
+    fun parseTemplateGet(payload: ByteArray): Pair<String, TaskTemplateSummary?> {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+            ?: return Pair("Invalid template response: ${text.take(160)}", null)
+        if (!obj.optBoolean("ok", false)) {
+            return Pair("Template query failed: ${text.take(220)}", null)
+        }
+        val template = parseTemplateObject(obj.optJSONObject("template"))
+        return if (template == null) {
+            Pair("Template query failed: template missing.", null)
+        } else {
+            Pair("Template loaded: ${template.templateId}", template)
+        }
     }
 
     fun parseWorkflowList(payload: ByteArray): Pair<String, List<WorkflowSummary>> {
@@ -257,6 +232,21 @@ object CoreApiParser {
         return Pair("Workflow list refreshed: ${items.size} items.", items)
     }
 
+    fun parseWorkflowGet(payload: ByteArray): Pair<String, WorkflowSummary?> {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+            ?: return Pair("Invalid workflow response: ${text.take(160)}", null)
+        if (!obj.optBoolean("ok", false)) {
+            return Pair("Workflow query failed: ${text.take(220)}", null)
+        }
+        val workflow = parseWorkflowObject(obj.optJSONObject("workflow"))
+        return if (workflow == null) {
+            Pair("Workflow query failed: workflow missing.", null)
+        } else {
+            Pair("Workflow loaded: ${workflow.workflowId}", workflow)
+        }
+    }
+
     fun parseTemplateSave(payload: ByteArray): String {
         val text = payload.toString(Charsets.UTF_8)
         val obj = runCatching { JSONObject(text) }.getOrNull()
@@ -290,6 +280,37 @@ object CoreApiParser {
         )
     }
 
+    fun parsePortableExport(payload: ByteArray): PortableExportParsed {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return PortableExportParsed("导出失败：${text.take(220)}", "")
+        }
+        val bundleJson = obj.optString("bundle_json", "")
+        return if (bundleJson.isBlank()) {
+            PortableExportParsed("导出失败：导出内容为空", "")
+        } else {
+            PortableExportParsed("导出成功", bundleJson)
+        }
+    }
+
+    fun parsePortableImport(payload: ByteArray): PortableImportParsed {
+        val text = payload.toString(Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull()
+        if (obj == null || !obj.optBoolean("ok", false)) {
+            return PortableImportParsed("导入失败：${text.take(220)}", "", "", "")
+        }
+        val importedType = obj.optString("imported_type", "")
+        val workflowId = obj.optString("workflow_id", "")
+        val templateId = obj.optString("template_id", "")
+        val importedId = if (importedType == "workflow") workflowId else templateId
+        return if (importedType.isBlank() || importedId.isBlank()) {
+            PortableImportParsed("导入失败：导入结果不完整", "", "", "")
+        } else {
+            PortableImportParsed("导入成功", importedType, workflowId, templateId)
+        }
+    }
+
     fun parseSimpleOkMessage(payload: ByteArray, successPrefix: String): String {
         val text = payload.toString(Charsets.UTF_8)
         val obj = runCatching { JSONObject(text) }.getOrNull()
@@ -299,148 +320,56 @@ object CoreApiParser {
         return obj.optString("message", "").takeIf { it.isNotBlank() } ?: successPrefix
     }
 
-    fun parseScheduleAdd(payload: ByteArray): String {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-        if (obj == null || !obj.optBoolean("ok", false)) {
-            return "Add schedule failed: ${text.take(220)}"
-        }
-        val scheduleObj = obj.optJSONObject("schedule")
-        val sid = scheduleObj?.optString("schedule_id", "") ?: ""
-        return if (sid.isNotEmpty()) "Schedule added: $sid" else "Schedule added."
-    }
-
-    fun parseScheduleUpdate(payload: ByteArray, scheduleId: String): String {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-        return if (obj == null || !obj.optBoolean("ok", false)) {
-            "Update schedule failed: ${text.take(220)}"
-        } else {
-            "Schedule updated: $scheduleId"
-        }
-    }
-
-    fun parseScheduleRemove(payload: ByteArray, scheduleId: String): String {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-        return if (obj == null || !obj.optBoolean("ok", false)) {
-            "Remove schedule failed: ${text.take(220)}"
-        } else if (obj.optBoolean("removed", false)) {
-            "Schedule removed: $scheduleId"
-        } else {
-            "Schedule not found: $scheduleId"
-        }
-    }
-
-    fun parseScheduleTrigger(payload: ByteArray, scheduleId: String): ScheduleTriggerParsed {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-        if (obj == null || !obj.optBoolean("ok", false) || !obj.optBoolean("submitted", false)) {
-            return ScheduleTriggerParsed(
-                message = "Trigger schedule failed: ${text.take(220)}",
-                taskId = "",
-                scheduleId = scheduleId
-            )
-        }
-        val sid = obj.optString("schedule_id", scheduleId)
-        val taskId = obj.optString("task_id", "")
-        return if (taskId.isNotBlank()) {
-            ScheduleTriggerParsed(
-                message = "Schedule triggered: $sid (task: $taskId)",
-                taskId = taskId,
-                scheduleId = sid
-            )
-        } else {
-            ScheduleTriggerParsed(
-                message = "Trigger schedule failed: ${text.take(220)}",
-                taskId = "",
-                scheduleId = sid
-            )
-        }
-    }
-
-    fun parseNotifyRuleList(payload: ByteArray): Pair<String, List<NotificationTriggerRuleSummary>> {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-            ?: return Pair("Invalid notify rule list response: ${text.take(160)}", emptyList())
-        if (!obj.optBoolean("ok", false)) {
-            return Pair("Notify rule list query failed: ${text.take(160)}", emptyList())
-        }
-        val arr = obj.optJSONArray("rules") ?: JSONArray()
-        val dedup = linkedMapOf<String, NotificationTriggerRuleSummary>()
-        for (i in 0 until arr.length()) {
-            val r = arr.optJSONObject(i) ?: continue
-            val id = r.optString("id", "")
-            if (id.isBlank()) continue
-            val action = r.optJSONObject("action") ?: JSONObject()
-            val summary = NotificationTriggerRuleSummary(
-                id = id,
-                name = r.optString("name", ""),
-                enabled = r.optBoolean("enabled", true),
-                priority = r.optInt("priority", 100),
-                packageMode = r.optString("package_mode", "any"),
-                packageList = jsonArrayToStringList(r.optJSONArray("package_list")),
-                textMode = r.optString("text_mode", "contains"),
-                titlePattern = r.optString("title_pattern", ""),
-                bodyPattern = r.optString("body_pattern", ""),
-                llmConditionEnabled = r.optBoolean("llm_condition_enabled", false),
-                llmCondition = r.optString("llm_condition", ""),
-                llmYesToken = r.optString("llm_yes_token", "yes"),
-                llmNoToken = r.optString("llm_no_token", "no"),
-                llmTimeoutMs = r.optLong("llm_timeout_ms", 60000L),
-                taskRewriteEnabled = r.optBoolean("task_rewrite_enabled", false),
-                taskRewriteInstruction = r.optString("task_rewrite_instruction", ""),
-                taskRewriteTimeoutMs = r.optLong("task_rewrite_timeout_ms", 60000L),
-                taskRewriteFailPolicy = r.optString("task_rewrite_fail_policy", "fallback_raw_task"),
-                cooldownMs = r.optLong("cooldown_ms", 60_000L),
-                activeTimeStart = r.optString("active_time_start", ""),
-                activeTimeEnd = r.optString("active_time_end", ""),
-                stopAfterMatched = r.optBoolean("stop_after_matched", true),
-                actionType = action.optString("type", "run_task"),
-                actionUserTask = action.optString("user_task", ""),
-                actionPackage = action.optString("package", ""),
-                actionUserPlaybook = action.optString("user_playbook", ""),
-                actionRecordEnabled = action.optBoolean("record_enabled", false),
-                actionTaskMapMode = action.optString("task_map_mode", "off"),
-                actionUseMap = if (action.has("use_map")) action.optBoolean("use_map", true) else null
-            )
-            dedup[id] = summary
-        }
-        val items = dedup.values.sortedWith(
-            compareByDescending<NotificationTriggerRuleSummary> { it.priority }
-                .thenBy { it.id }
+    private fun parseTemplateObject(t: JSONObject?): TaskTemplateSummary? {
+        t ?: return null
+        val id = t.optString("template_id", "")
+        if (id.isBlank()) return null
+        return TaskTemplateSummary(
+            templateId = id,
+            name = t.optString("name", ""),
+            description = t.optString("description", ""),
+            packageName = t.optString("package_name", ""),
+            startPage = t.optString("start_page", ""),
+            mapPath = t.optString("map_path", ""),
+            userPlaybook = t.optString("user_playbook", ""),
+            recordEnabled = t.optBoolean("record_enabled", false),
+            taskMapMode = t.optString("task_map_mode", "off"),
+            routeId = t.optString("route_id", ""),
+            decomposeEnabled = t.optBoolean("decompose_enabled", false),
+            createdAtMs = t.optLong("created_at_ms", 0L),
+            updatedAtMs = t.optLong("updated_at_ms", 0L)
         )
-        return Pair("Notify rules refreshed: ${items.size} items.", items)
     }
 
-    fun parseNotifyRuleUpsert(payload: ByteArray): Pair<String, String> {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-            ?: return Pair("Upsert notify rule failed: ${text.take(220)}", "")
-        if (!obj.optBoolean("ok", false)) {
-            return Pair("Upsert notify rule failed: ${text.take(220)}", "")
+    private fun parseWorkflowObject(w: JSONObject?): WorkflowSummary? {
+        w ?: return null
+        val id = w.optString("workflow_id", "")
+        if (id.isBlank()) return null
+        val stepsArr = w.optJSONArray("steps") ?: JSONArray()
+        val steps = buildList {
+            for (j in 0 until stepsArr.length()) {
+                val s = stepsArr.optJSONObject(j) ?: continue
+                add(
+                    WorkflowStepSummary(
+                        stepId = s.optString("step_id", ""),
+                        templateId = s.optString("template_id", ""),
+                        name = s.optString("name", ""),
+                        order = s.optInt("order", j)
+                    )
+                )
+            }
         }
-        val updated = obj.optBoolean("updated", false)
-        val ruleObj = obj.optJSONObject("rule")
-        val id = ruleObj?.optString("id", "").orEmpty()
-        val msg = if (updated) {
-            if (id.isNotBlank()) "Notify rule updated: $id" else "Notify rule updated."
-        } else {
-            if (id.isNotBlank()) "Notify rule added: $id" else "Notify rule added."
-        }
-        return Pair(msg, id)
-    }
-
-    fun parseNotifyRuleRemove(payload: ByteArray, ruleId: String): String {
-        val text = payload.toString(Charsets.UTF_8)
-        val obj = runCatching { JSONObject(text) }.getOrNull()
-        return if (obj == null || !obj.optBoolean("ok", false)) {
-            "Remove notify rule failed: ${text.take(220)}"
-        } else if (obj.optBoolean("removed", false)) {
-            "Notify rule removed: $ruleId"
-        } else {
-            "Notify rule not found: $ruleId"
-        }
+        return WorkflowSummary(
+            workflowId = id,
+            name = w.optString("name", ""),
+            triggerType = w.optString("trigger_type", "none"),
+            triggerEnabled = w.optBoolean("trigger_enabled", false),
+            triggerSummary = w.optString("trigger_summary", ""),
+            triggerConfigJson = w.optJSONObject("trigger_config")?.toString() ?: "",
+            steps = steps,
+            createdAtMs = w.optLong("created_at_ms", 0L),
+            updatedAtMs = w.optLong("updated_at_ms", 0L)
+        )
     }
 
     fun parseTraceLines(payload: ByteArray): Pair<String, TracePage> {

@@ -270,6 +270,19 @@ triggers one by one.
       migration.
 - [ ] Route editing is available from template detail and not duplicated as a
       workflow-step editor.
+- [ ] Users can import a portable bundle from the Task tab home.
+- [ ] Portable import detects workflow bundle, template bundle, legacy
+      schedule/notification portable files, and legacy route assets without
+      asking the user to choose the type first.
+- [ ] Portable workflow/template imports generate new local ids and never
+      overwrite, merge, rename, or reject objects because of name conflicts.
+- [ ] Portable workflow import is atomic and fails without writing partial data
+      when references or embedded assets are invalid.
+- [ ] Imported workflows start with no trigger and automatic triggering disabled.
+- [ ] Users can export a workflow from the workflow edit page.
+- [ ] Users can export a template from the template edit page.
+- [ ] Import/export visible copy uses Chinese-first wording and no longer uses
+      the old "Portable Task" concept for new workflow/template flows.
 
 ## Definition of Done
 
@@ -351,6 +364,125 @@ triggers one by one.
 - Keep route ownership on template.
 - Keep workflow run history out of persistence; use active memory state and
   trace.
+- Existing portable import/export is route-centric and legacy task-centric. The
+  new template/workflow architecture needs a separate import/export decision
+  because route assets now belong to templates and workflows can reference
+  multiple templates.
+- First-version portable workflow export uses workflow-with-embedded-templates
+  as the primary object model.
+- Portable workflow bundle uses exported object ids for internal references
+  inside the file; import regenerates local ids and rewrites references.
+- Portable workflow bundle uses both `schema` and `version`: `schema` identifies
+  the portable object type, and `version` identifies the schema revision for
+  parser adaptation.
+
+## Import And Export Discussion
+
+### Current Backend Facts
+
+- Existing export uses `CMD_CORTEX_TASK_MAP` with `action=export_portable`.
+- Existing portable route schema is `task_route_asset.v1`.
+- Existing portable route export contains task route behavior and segments, not
+  schedule metadata.
+- Existing app-side export wraps the route bundle with old task config metadata
+  for legacy `schedule` and `notify_trigger` import paths.
+- Existing import only supports legacy `schedule` and `notify_trigger` task
+  types from the app-side portable wrapper.
+- New `TaskTemplate` owns the primary route, so route-only export is no longer
+  the best top-level user-facing export object.
+- New `Workflow` can reference multiple templates, so workflow export must
+  decide whether it also carries referenced templates.
+
+### Backend Question Queue
+
+- Decide the first-version portable object model:
+  - template-only export
+  - workflow export with embedded templates: selected for the first version
+  - route-only legacy compatibility
+  - combined package format
+
+### Confirmed Import/Export Decisions
+
+- The first-version primary portable format exports one workflow plus all
+  templates it references.
+- Embedded templates include their primary routes so imported workflows are not
+  broken by missing local template references.
+- Route-only export remains a legacy compatibility concept, not the new primary
+  user-facing export object.
+- Import creates local ids for every imported workflow and template. It does not
+  reuse portable object ids as local ids.
+- Imported ids are regenerated in the local id/hash space so repeated imports do
+  not overwrite existing user data.
+- Portable workflow/template import does not preserve original object ids as
+  source metadata. The portable file expresses reusable content, not provenance.
+- Imported local objects do not store `imported_from_*` or original-id metadata
+  in the first version.
+- Inside the portable file, workflow steps reference embedded templates by the
+  exported template id. The importer builds an in-memory exported-id to new-local-id
+  mapping, then rewrites workflow step references before saving.
+- No extra portable-local reference field such as `ref`, array index reference,
+  or template-name reference is added in the first version.
+- The first-version portable workflow schema is `workflow_bundle` with
+  `version=1` rather than encoding the full version only in the schema string.
+- Import parsing should be implemented as a dedicated portable workflow parser
+  module with version-specific adapters instead of a one-off inline parser.
+- Future workflow format changes such as loop logic, conditional branches, retry
+  policy, or richer step graph semantics should be handled by adding new
+  version adapters.
+- Portable workflow export does not include workflow trigger configuration.
+- Imported portable workflows always start with `trigger_type=none` and
+  `trigger_enabled=false`.
+- Portable import/export transfers reusable workflow orchestration content, not
+  automatic execution conditions.
+- Legacy portable `schedule` and `notify_trigger` files remain importable.
+- Legacy portable import is handled by a legacy adapter that converts the old
+  task/route content into one imported template plus one imported workflow with
+  no trigger.
+- The portable import module dispatches by `schema`/`version` for new formats,
+  and by legacy wrapper/schema/type detection for old formats.
+- Each supported portable version or legacy format should have its own adapter
+  module that outputs the same internal import result shape before persistence.
+- Portable workflow import is atomic. If the workflow, any embedded template,
+  or any embedded route asset fails validation, the importer writes nothing.
+- Partial portable import is not supported in the first version.
+- Template-only portable export/import is supported as a secondary format.
+- Template-only portable export uses `schema="task_template_bundle"` and
+  `version=1`.
+- Template-only import creates a local template and its route asset, but does
+  not automatically create a workflow.
+- Workflow bundle remains the primary user-facing portable format for workflow
+  export.
+- Add a unified portable command surface for new import/export behavior, for
+  example `CMD_CORTEX_PORTABLE` with JSON actions such as `export_workflow`,
+  `export_template`, and `import`.
+- New portable import/export should not be added to the legacy
+  `CMD_CORTEX_TASK_MAP export_portable/import_portable` command path.
+- Legacy task-map portable commands remain only for route compatibility.
+- The new importer accepts pure legacy `task_route_asset.v1` route bundles.
+- A pure route bundle imports into one local template with that route asset and
+  does not create a workflow.
+- For pure route imports, template name/description are derived from portable
+  `task_info` when available.
+- Templates without a route are exportable.
+- A template bundle may have an empty or missing route payload.
+- A workflow bundle may embed templates that do not have route assets.
+- Importing a template without a route still creates the template; it simply has
+  no reusable route until the user records or learns one locally.
+- Workflow bundle imports require every workflow step template reference to
+  resolve to an embedded template in the same bundle.
+- If any workflow step references a missing embedded template, the whole import
+  fails atomically.
+- Workflow bundle import must not bind steps to local templates by matching ids
+  or names.
+- Workflow bundle imports reject embedded templates that are not referenced by
+  any workflow step.
+- Importing unreferenced extra templates from a workflow bundle is out of scope;
+  future multi-asset packages should use a separate schema if needed.
+- Import allows duplicate workflow/template names.
+- Import never overwrites, renames, merges, or rejects objects because of name
+  conflicts.
+- Newly generated local ids are the only identity boundary for imported
+  workflows and templates.
 
 ## Product And Frontend Constraints
 
@@ -376,6 +508,8 @@ layer unless explicitly called out.
 - Users must not manage file-system paths such as `map_path`.
 - Users must not enter epoch/timestamp values directly for schedule/workflow
   trigger time.
+- Users must not manually type app package names for normal template/workflow
+  authoring flows.
 - Backend DTOs must not be used directly as Compose form state for template or
   workflow editing.
 
@@ -417,6 +551,16 @@ layer unless explicitly called out.
   - decompose enabled
 - Do not expose route ids, map paths, or similar storage/runtime internals in
   the template edit form.
+- Template target app must use the existing installed-app snapshot picker
+  interaction instead of a raw package-name text field.
+- Template target app selection reads the local installed-app snapshot and lets
+  the user search by app label or package name.
+- Template target app selection should reuse the existing `PackageSelectField`
+  and `PackagePickerDialog` pattern where practical.
+- Template target app is the new owner of the old "schedule open app" and
+  "notification action open app" semantics.
+- Do not duplicate old schedule/notification action app fields in workflow
+  trigger forms.
 - Template list items open directly into the working edit page.
 - Do not add a separate read-only template detail layer in the first version.
 - The template page combines editable task fields with the existing route entry
@@ -473,11 +617,13 @@ layer unless explicitly called out.
 
 - Compact template list items should prioritize navigation over inline actions.
 - First-version template list items should support:
+  - run now / trigger immediately
   - enter detail/edit
   - route state display
-- Do not overload the first-version template list item with extra action
-  buttons such as run now, delete, or large overflow affordances unless later
-  discussion explicitly adds them.
+  - open route editor
+  - delete
+- Keep template list actions compact; do not use large cards or overflow menus
+  for first-version template actions.
 
 ### Trigger Editing
 
@@ -509,35 +655,40 @@ layer unless explicitly called out.
 
 ### Inherit Existing Schedule/Notification Form Design
 
-- This migration must reuse the existing schedule and notification form
-  structure wherever possible instead of inventing a new trigger editor from
-  scratch.
-- Existing schedule editor structure to preserve in the workflow trigger section:
-  - basic info / task intent
-  - execution target
-  - execution preference
-- Existing schedule affordances to preserve:
+- This migration must reuse proven existing controls and interaction patterns
+  where they still match the new template/workflow ownership model.
+- Do not copy the old schedule and notification forms wholesale into workflow
+  editing.
+- Old task/action fields move to `TaskTemplate`; workflow trigger forms only
+  edit trigger conditions.
+- Existing schedule trigger controls to preserve:
   - date picker
   - time picker
   - repeat mode selector
   - weekday picker for weekly repeat
-  - app picker instead of raw package-name-oriented workflow UX
+- The old schedule "open app" field is represented by the selected workflow
+  step templates' target apps, not by a separate schedule-trigger app field.
 - Existing notification editor structure to preserve in the workflow trigger
   section:
-  - basic info
   - trigger conditions
-  - triggered action / execution preferences
 - Existing notification capabilities that must remain editable after migration:
   - package/app targeting
   - title/body matching
   - cooldown
   - active time window
   - LLM condition settings
-  - triggered action task description / app / playbook
-  - recording and route-related execution preferences
+- Notification triggered action task description / app / playbook and
+  recording/route-related execution preferences belong to referenced templates,
+  not the notification trigger form.
 - Workflow migration must not reduce existing editable schedule/notification
   capability merely because the surrounding container changes from schedule/rule
   to workflow.
+- Workflow trigger app fields must use the installed-app snapshot picker:
+  - notification listening app
+- Workflow trigger app fields must not be raw package-name text inputs in the
+  first-version UI.
+- If the installed-app snapshot is empty, opening an app picker should refresh
+  the snapshot using the existing `refreshInstalledAppSnapshotOnDevice()` flow.
 
 ### Workflow Editing Scope
 
@@ -573,6 +724,55 @@ layer unless explicitly called out.
   - trigger enable/disable toggle
 - The list toggle is the trigger toggle. It must not be presented as a workflow
   enable/disable control.
+
+### Portable Import/Export UX
+
+- Portable import is a global action on the Task tab home.
+- The global import action accepts workflow bundle, template bundle, legacy
+  schedule/notification portable files, and legacy route assets.
+- Users do not choose the portable type before import; the importer detects the
+  format.
+- After successful import, the frontend navigates to the relevant area:
+  workflows for workflow imports, templates for template or route imports.
+- After successful import, the frontend opens the newly imported object's edit
+  page directly:
+  - workflow bundle import opens the imported workflow edit page
+  - template bundle or route import opens the imported template edit page
+- Import/export success and failure must produce immediate system feedback
+  through a Toast/dialog-style popup. Users must not need to inspect a tab,
+  status panel, or system message stream to know whether import/export
+  succeeded or where the export was written.
+- First-version export actions live on the corresponding edit page as secondary
+  actions:
+  - template edit page: export template
+  - workflow edit page: export workflow
+- First-version export actions do not appear as always-visible compact list row
+  buttons.
+- Do not introduce a new overflow/more-menu interaction pattern solely for
+  portable export in the first version.
+- User-visible portable copy:
+  - Task home import action: `导入便携包`
+  - Template edit export action: `导出模板`
+  - Workflow edit export action: `导出工作流`
+  - Import success: `导入成功`
+  - Export success: `导出成功`
+  - Import failure: `导入失败：...`
+  - Export failure: `导出失败：...`
+- New workflow/template portable UI copy must not use the old "Portable Task" /
+  "便携任务" wording.
+- The old portable-task frontend status panel and old schedule/notification task
+  frontend surfaces are removed from the first-version UI.
+
+### Installed App Picker Reuse
+
+- Preserve the old installed-app selection UX for new template/workflow forms.
+- The app reads the installed-app snapshot from core and stores it in
+  `installedAppList`.
+- App selection uses a searchable picker over the installed-app snapshot, not
+  free-form package-name entry.
+- Search matches both app label and package name.
+- Selected values are still persisted as package names below the UI layer, but
+  users interact with app labels and searchable app rows.
 
 ## Confirmed Decisions From Discussion
 

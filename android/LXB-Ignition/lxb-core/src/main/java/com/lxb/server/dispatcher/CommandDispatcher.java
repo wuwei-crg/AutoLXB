@@ -168,6 +168,9 @@ public class CommandDispatcher {
                 case CommandIds.CMD_CORTEX_WORKFLOW_STATUS:
                     response = cortexFacade.handleCortexWorkflowStatus(payload);
                     break;
+                case CommandIds.CMD_CORTEX_PORTABLE:
+                    response = cortexFacade.handleCortexPortable(payload);
+                    break;
 
                 // Cortex/Map debug layer (bootstrap)
                 case CommandIds.CMD_MAP_SET_GZ:

@@ -57,6 +57,7 @@ public final class CommandIds {
     public static final byte CMD_CORTEX_WORKFLOW_CANCEL = 0x59;
     public static final byte CMD_CORTEX_WORKFLOW_STATUS = 0x5A;
     public static final byte CMD_CORTEX_TEMPLATE_RUN = 0x5B;
+    public static final byte CMD_CORTEX_PORTABLE = 0x5C;
 
     // Cortex/Map debug layer (0x70-0x7F) - end-side cortex migration bootstrap
     // NOTE: keep aligned with Python constants when PC-side support is added.

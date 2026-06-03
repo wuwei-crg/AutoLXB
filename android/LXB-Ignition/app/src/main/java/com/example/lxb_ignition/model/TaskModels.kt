@@ -108,25 +108,6 @@ data class TaskRouteActionSnapshot(
     val visionFields: List<TraceMetaItem>
 )
 
-data class ScheduleSummary(
-    val scheduleId: String,
-    val name: String,
-    val userTask: String,
-    val packageName: String,
-    val startPage: String,
-    val recordEnabled: Boolean,
-    val taskMapMode: String,
-    val runAtMs: Long,
-    val repeatMode: String,
-    val repeatWeekdays: Int,
-    val nextRunAt: Long,
-    val lastTriggeredAt: Long,
-    val triggerCount: Long,
-    val enabled: Boolean,
-    val createdAt: Long,
-    val userPlaybook: String
-)
-
 data class TaskTemplateSummary(
     val templateId: String,
     val name: String,
@@ -160,38 +141,6 @@ data class WorkflowSummary(
     val steps: List<WorkflowStepSummary>,
     val createdAtMs: Long,
     val updatedAtMs: Long
-)
-
-data class NotificationTriggerRuleSummary(
-    val id: String,
-    val name: String,
-    val enabled: Boolean,
-    val priority: Int,
-    val packageMode: String,
-    val packageList: List<String>,
-    val textMode: String,
-    val titlePattern: String,
-    val bodyPattern: String,
-    val llmConditionEnabled: Boolean,
-    val llmCondition: String,
-    val llmYesToken: String,
-    val llmNoToken: String,
-    val llmTimeoutMs: Long,
-    val taskRewriteEnabled: Boolean,
-    val taskRewriteInstruction: String,
-    val taskRewriteTimeoutMs: Long,
-    val taskRewriteFailPolicy: String,
-    val cooldownMs: Long,
-    val activeTimeStart: String,
-    val activeTimeEnd: String,
-    val stopAfterMatched: Boolean,
-    val actionType: String,
-    val actionUserTask: String,
-    val actionPackage: String,
-    val actionUserPlaybook: String,
-    val actionRecordEnabled: Boolean,
-    val actionTaskMapMode: String,
-    val actionUseMap: Boolean?
 )
 
 data class AppPackageOption(

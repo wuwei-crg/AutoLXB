@@ -29,38 +29,6 @@ class CoreApiParserTest {
     }
 
     @Test
-    fun parseScheduleTrigger_success() {
-        val payload = JSONObject()
-            .put("ok", true)
-            .put("submitted", true)
-            .put("schedule_id", "sid-1")
-            .put("task_id", "task-1")
-            .toString()
-            .toByteArray(Charsets.UTF_8)
-
-        val parsed = CoreApiParser.parseScheduleTrigger(payload, "fallback")
-
-        assertEquals("sid-1", parsed.scheduleId)
-        assertEquals("task-1", parsed.taskId)
-        assertEquals("Schedule triggered: sid-1 (task: task-1)", parsed.message)
-    }
-
-    @Test
-    fun parseScheduleTrigger_failure() {
-        val payload = JSONObject()
-            .put("ok", false)
-            .put("error", "missing")
-            .toString()
-            .toByteArray(Charsets.UTF_8)
-
-        val parsed = CoreApiParser.parseScheduleTrigger(payload, "sid-1")
-
-        assertEquals("sid-1", parsed.scheduleId)
-        assertEquals("", parsed.taskId)
-        assertTrue(parsed.message.startsWith("Trigger schedule failed: "))
-    }
-
-    @Test
     fun parseTemplateList_readsTemplateFields() {
         val payload = JSONObject()
             .put("ok", true)
@@ -100,6 +68,36 @@ class CoreApiParserTest {
 
         assertEquals("wfr-1", parsed.workflowRunId)
         assertTrue(parsed.message.startsWith("Workflow submitted: "))
+    }
+
+    @Test
+    fun parsePortableImport_workflowSuccess() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .put("imported_type", "workflow")
+            .put("workflow_id", "wf-new")
+            .put("template_id", "tpl-new")
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parsePortableImport(payload)
+
+        assertEquals("workflow", parsed.importedType)
+        assertEquals("wf-new", parsed.workflowId)
+        assertEquals("导入成功", parsed.message)
+    }
+
+    @Test
+    fun parsePortableExport_requiresBundleJson() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parsePortableExport(payload)
+
+        assertEquals("", parsed.bundleJson)
+        assertTrue(parsed.message.startsWith("导出失败"))
     }
 
     @Test

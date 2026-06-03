@@ -91,8 +91,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.CoreRuntimeStatus
-import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
-import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskMapSegmentSnapshot
 import com.example.lxb_ignition.model.TaskMapSnapshot
@@ -115,6 +113,7 @@ import com.example.lxb_ignition.ui.theme.AppWarning
 import com.example.lxb_ignition.ui.theme.AppWarningSoft
 import com.lxb.server.cortex.LlmClient
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -548,14 +547,14 @@ private fun ControlOverviewPage(
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
                 FeatureBullet(
-                    title = tr("Scheduled task"),
-                    detail = tr("Run the same task later or on a recurring schedule."),
+                    title = tr("Scheduled workflow"),
+                    detail = tr("Run the same workflow later or on a recurring schedule."),
                     glyph = "⏰"
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
                 FeatureBullet(
-                    title = tr("Notification trigger"),
-                    detail = tr("Listen to one app's notifications and fire a task automatically."),
+                    title = tr("Notification workflow"),
+                    detail = tr("Listen to one app's notifications and fire a workflow automatically."),
                     glyph = "✉"
                 )
             }
@@ -1678,12 +1677,10 @@ private val ZhMap = mapOf(
     "Trace export failed" to "追踪导出失败",
     "No trace to export." to "没有可导出的追踪。",
     "Saved to" to "已保存到",
-    "Import Portable Task" to "导入便携任务",
     "Import" to "导入",
-    "Export Portable Task" to "导出便携任务",
-    "Exporting portable task..." to "正在导出便携任务...",
-    "Portable task exported" to "便携任务已导出",
-    "Portable task export failed" to "便携任务导出失败",
+    "Import Portable Bundle" to "导入便携包",
+    "Export Template" to "导出模板",
+    "Export Workflow" to "导出工作流",
     "Trace Details" to "追踪详情",
     "Load older traces..." to "正在加载更早的追踪...",
     "No trace details." to "没有更多追踪详情。",
@@ -1708,18 +1705,11 @@ private val ZhMap = mapOf(
     "Anytime" to "任意时段",
     "Package (select from local snapshot)" to "包名（从本地快照选择）",
     "Clear" to "清空",
-    "Manage scheduled tasks and create new ones." to "管理定时任务并创建新任务。",
+    "Manage scheduled workflows and create new ones." to "管理定时工作流并创建新工作流。",
     "View recent execution records." to "查看最近执行记录。",
-    "No runs yet. Submit a task from Task Session or wait for schedules." to "暂无执行记录。可在任务会话中提交任务，或等待定时任务执行。",
-    "Schedules" to "定时任务",
-    "Notification Triggers" to "通知触发任务",
+    "No runs yet. Submit a task from Task Session or wait for workflow triggers." to "暂无执行记录。可在任务会话中提交任务，或等待工作流触发。",
     "Recent Runs" to "最近执行",
-    "Schedule overview" to "定时任务概览",
-    "Trigger overview" to "通知规则概览",
     "Run history" to "执行记录概览",
-    "No schedules yet." to "暂无定时任务。",
-    "Edit Schedule" to "编辑定时任务",
-    "Create Schedule" to "新建定时任务",
     "Run time" to "运行时间",
     "Repeat" to "重复",
     "Once" to "单次",
@@ -1733,12 +1723,6 @@ private val ZhMap = mapOf(
     "Sat" to "周六",
     "Sun" to "周日",
     "Selected days" to "已选日期",
-    "Manage notification-triggered tasks and create new ones." to "管理通知触发任务并创建新规则。",
-    "No notification triggers yet." to "暂无通知触发规则。",
-    "Edit Notification Trigger" to "编辑通知触发任务",
-    "Create Notification Trigger" to "新建通知触发任务",
-    "Rule name" to "规则名称",
-    "Task description (what to do after trigger)" to "任务描述（触发后执行什么）",
     "Rule settings" to "规则设置",
     "Package match (required)" to "Package 匹配（必填）",
     "Package match (optional)" to "Package 匹配（可选）",
@@ -1776,13 +1760,6 @@ private val ZhMap = mapOf(
     "Skip trigger when rewrite fails" to "重写失败则跳过触发",
     "Cooldown ms" to "冷却时间（毫秒）",
     "Stop after matched" to "命中后停止继续匹配",
-    "Action package (optional)" to "任务目标包名（可选）",
-    "Action task (required if rewrite is empty)" to "任务描述（当重写为空时必填）",
-    "Action playbook (optional)" to "任务操作文档（可选）",
-    "Action use-map override" to "是否覆盖 Use-Map",
-    "Inherit global setting" to "继承全局设置",
-    "Force use map" to "强制使用地图",
-    "Force no map" to "强制不使用地图",
     "Back" to "返回",
     "Close" to "关闭",
     "New" to "新建",
@@ -1900,7 +1877,6 @@ private val ZhMap = mapOf(
     "User playbook (optional)" to "用户操作文档（可选）",
     "Record task screen" to "录制任务屏幕",
     "Save task recording to Movies/lxb." to "将任务录屏保存到 Movies/lxb。",
-    "Record screen for triggered task" to "为通知触发任务录屏",
     "Save" to "保存",
     "Submit" to "提交",
     "Cancel" to "取消",
@@ -2168,13 +2144,9 @@ private val ZhMap = mapOf(
     "Run a task now, manage automation, or review recent results." to "立即执行任务、管理自动化，或查看最近结果。",
     "Build repeatable workflows after you are comfortable with direct tasks." to "熟悉直接任务后，再把常用流程做成自动化。",
     "items" to "项",
-    "Repeat a task later or keep it running on a schedule." to "让同一任务稍后执行，或按计划重复执行。",
-    "Watch one app's notifications and launch a task when a rule matches." to "监听某个应用的通知，并在命中规则时自动执行任务。",
     "Review what just ran, what failed, and what route data was captured." to "查看刚刚执行了什么、哪里失败了，以及沉淀了哪些路线数据。",
     "Review recent task runs, failures, and learned routes." to "查看最近任务执行、失败情况，以及路线数据。",
-    "Create one when you want the phone to repeat the same task automatically." to "当你希望手机自动重复执行同一任务时，在这里创建。",
-    "Create one after you know which app and message pattern should trigger the task." to "当你确定要监听哪个应用、哪类消息时，在这里创建。",
-    "Submit a quick task, or wait for a schedule or notification trigger to fire." to "先提交一次快速任务，或等待定时任务或通知触发任务执行。",
+    "Submit a quick task, or wait for a workflow trigger to fire." to "先提交一次快速任务，或等待工作流触发。",
     "No runs yet." to "暂无运行记录。",
     "Enabled" to "已启用",
     "Paused" to "已暂停",
@@ -2198,10 +2170,10 @@ private val ZhMap = mapOf(
     "Direct task" to "直接任务",
     "Type a requirement and let the phone complete it for you." to "输入一句需求，让手机自己完成操作。",
     "Open the quick task page when you want to tell the phone what to do right now." to "如果你现在就想告诉手机去做什么，就从这里进入快速任务页。",
-    "Scheduled task" to "定时任务",
-    "Run the same task later or on a recurring schedule." to "让同一个任务稍后执行，或按周期重复执行。",
-    "Notification trigger" to "通知触发任务",
-    "Listen to one app's notifications and fire a task automatically." to "监听某个应用的通知，并自动触发任务。",
+    "Scheduled workflow" to "定时工作流",
+    "Run the same workflow later or on a recurring schedule." to "让同一个工作流稍后执行，或按周期重复执行。",
+    "Notification workflow" to "通知触发工作流",
+    "Listen to one app's notifications and fire a workflow automatically." to "监听某个应用的通知，并自动触发工作流。",
     "Detailed steps stay inside each startup page." to "详细步骤保留在各自的启动页面中。",
     "Current status" to "当前状态",
     "Idle" to "空闲",
@@ -2213,22 +2185,10 @@ private val ZhMap = mapOf(
     "For rooted phones" to "适用于已 Root 手机",
     "Root startup is shorter, but it still depends on root permission being granted in time." to "Root 启动路径更短，但仍依赖系统及时授予 root 权限。",
     "Use root startup only after you confirm root is available on this phone." to "请在确认本机 root 可用后，再使用 root 启动。",
-    "Set what to do, when to run it, and which app it should open." to "设置要做什么、什么时候执行，以及需要先打开哪个应用。",
     "Basic info" to "基本信息",
-    "Name the rule and describe what the phone should do." to "给规则命名，并描述手机要执行的任务。",
     "Execution target" to "执行目标",
-    "Choose when the task runs and which app it should open first." to "选择任务的执行时间，以及它应先打开哪个应用。",
     "Execution preference" to "执行偏好",
-    "These settings affect recording and manual route review for this schedule." to "这些设置会影响该定时任务的录屏和手动路线审查。",
-    "Save schedule" to "保存定时任务",
-    "Your schedule will appear in the list after it is saved." to "保存后，这条定时任务会出现在列表中。",
-    "Set which notifications to listen for, then define what task should run." to "先设置监听哪些通知，再定义命中后执行什么任务。",
-    "Name the rule and describe the task that should run after a match." to "给规则命名，并描述命中后要执行的任务。",
     "Trigger conditions" to "触发条件",
-    "The rule checks package first, then title/body matching, then optional LLM condition." to "规则会先检查包名，再检查标题/正文匹配，最后再看可选的 LLM 条件。",
-    "These settings affect manual route review and recording after the trigger is matched." to "这些设置会影响规则命中后的手动路线审查和录屏行为。",
-    "Save trigger" to "保存触发规则",
-    "The rule will appear in the notification trigger list after it is saved." to "保存后，这条规则会出现在通知触发任务列表中。",
     "This page edits the route asset for one exact task only." to "这个页面只编辑某一个精确任务对应的路线资产。",
     "Replay behavior" to "回放结束后直接结束任务",
     "Choose whether a successful replay should finish the current sub-task immediately." to "控制路线回放成功后，是否直接结束当前任务。",
@@ -2308,53 +2268,15 @@ private data class RouteEditorTarget(
 
 @Composable
 fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val tasks by viewModel.taskList.collectAsState()
     val taskMapDetail by viewModel.taskMapDetail.collectAsState()
     val taskMapDetailLoading by viewModel.taskMapDetailLoading.collectAsState()
     val taskMapSaving by viewModel.taskMapSaving.collectAsState()
-    val portableTaskExportUiState by viewModel.portableTaskExportUiState.collectAsState()
-    val schedules by viewModel.scheduleList.collectAsState()
-    val notifyRules by viewModel.notifyRuleList.collectAsState()
     val templates by viewModel.templateList.collectAsState()
     val workflows by viewModel.workflowList.collectAsState()
     val installedApps by viewModel.installedAppList.collectAsState()
     val taskRuntime by viewModel.taskRuntimeUiStatus.collectAsState()
-    val scheduleName by viewModel.scheduleName.collectAsState()
-    val scheduleTask by viewModel.scheduleTask.collectAsState()
-    val scheduleStartAtMs by viewModel.scheduleStartAtMs.collectAsState()
-    val scheduleRepeatMode by viewModel.scheduleRepeatMode.collectAsState()
-    val scheduleRepeatWeekdays by viewModel.scheduleRepeatWeekdays.collectAsState()
-    val schedulePackage by viewModel.schedulePackage.collectAsState()
-    val schedulePlaybook by viewModel.schedulePlaybook.collectAsState()
-    val scheduleRecordEnabled by viewModel.scheduleRecordEnabled.collectAsState()
-    val scheduleTaskMapMode by viewModel.scheduleTaskMapMode.collectAsState()
-    val notifyName by viewModel.notifyName.collectAsState()
-    val notifyEnabled by viewModel.notifyEnabled.collectAsState()
-    val notifyPriority by viewModel.notifyPriority.collectAsState()
-    val notifyPackageMode by viewModel.notifyPackageMode.collectAsState()
-    val notifyPackageListRaw by viewModel.notifyPackageListRaw.collectAsState()
-    val notifyTextMode by viewModel.notifyTextMode.collectAsState()
-    val notifyTitlePattern by viewModel.notifyTitlePattern.collectAsState()
-    val notifyBodyPattern by viewModel.notifyBodyPattern.collectAsState()
-    val notifyLlmConditionEnabled by viewModel.notifyLlmConditionEnabled.collectAsState()
-    val notifyLlmCondition by viewModel.notifyLlmCondition.collectAsState()
-    val notifyLlmYesToken by viewModel.notifyLlmYesToken.collectAsState()
-    val notifyLlmNoToken by viewModel.notifyLlmNoToken.collectAsState()
-    val notifyLlmTimeoutMs by viewModel.notifyLlmTimeoutMs.collectAsState()
-    val notifyTaskRewriteEnabled by viewModel.notifyTaskRewriteEnabled.collectAsState()
-    val notifyTaskRewriteInstruction by viewModel.notifyTaskRewriteInstruction.collectAsState()
-    val notifyTaskRewriteTimeoutMs by viewModel.notifyTaskRewriteTimeoutMs.collectAsState()
-    val notifyTaskRewriteFailPolicy by viewModel.notifyTaskRewriteFailPolicy.collectAsState()
-    val notifyCooldownMs by viewModel.notifyCooldownMs.collectAsState()
-    val notifyActiveTimeStart by viewModel.notifyActiveTimeStart.collectAsState()
-    val notifyActiveTimeEnd by viewModel.notifyActiveTimeEnd.collectAsState()
-    val notifyStopAfterMatched by viewModel.notifyStopAfterMatched.collectAsState()
-    val notifyActionUserTask by viewModel.notifyActionUserTask.collectAsState()
-    val notifyActionPackage by viewModel.notifyActionPackage.collectAsState()
-    val notifyActionUserPlaybook by viewModel.notifyActionUserPlaybook.collectAsState()
-    val notifyActionRecordEnabled by viewModel.notifyActionRecordEnabled.collectAsState()
-    val notifyActionTaskMapMode by viewModel.notifyActionTaskMapMode.collectAsState()
-    val notifyActionUseMapMode by viewModel.notifyActionUseMapMode.collectAsState()
     val templateName by viewModel.templateName.collectAsState()
     val templateDescription by viewModel.templateDescription.collectAsState()
     val templatePackage by viewModel.templatePackage.collectAsState()
@@ -2374,47 +2296,46 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val workflowNotifyActiveTimeEnd by viewModel.workflowNotifyActiveTimeEnd.collectAsState()
     val workflowNotifyLlmConditionEnabled by viewModel.workflowNotifyLlmConditionEnabled.collectAsState()
     val workflowNotifyLlmCondition by viewModel.workflowNotifyLlmCondition.collectAsState()
-    val workflowNotifyActionPackage by viewModel.workflowNotifyActionPackage.collectAsState()
-    val workflowNotifyActionPlaybook by viewModel.workflowNotifyActionPlaybook.collectAsState()
-    val workflowNotifyActionRecordEnabled by viewModel.workflowNotifyActionRecordEnabled.collectAsState()
     var page by rememberSaveable { mutableIntStateOf(0) }
-    var editingScheduleId by rememberSaveable { mutableStateOf("") }
-    var editingNotifyRuleId by rememberSaveable { mutableStateOf("") }
     var selectedTask by remember { mutableStateOf<TaskSummary?>(null) }
     var routeEditorTarget by remember { mutableStateOf<RouteEditorTarget?>(null) }
+    val pageHome = 0
+    val pageRecentRuns = 1
+    val pageTaskRouteEditor = 2
+    val pageQuickTask = 3
+    val pageTemplateList = 4
+    val pageTemplateForm = 5
+    val pageWorkflowList = 6
+    val pageWorkflowForm = 7
+    val pageTemplatePicker = 8
     val portableImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            viewModel.importPortableTaskFromUri(
+            viewModel.importPortableBundleFromUri(
                 uri = uri
-            ) {
-                viewModel.refreshScheduleListOnDevice()
-                viewModel.refreshNotifyRuleListOnDevice()
-                viewModel.refreshTaskListOnDevice(silent = true)
+            ) { importedType, _ ->
+                when (importedType) {
+                    "workflow" -> page = pageWorkflowForm
+                    "template" -> page = pageTemplateForm
+                }
+                viewModel.refreshTemplateListOnDevice(silent = true)
+                viewModel.refreshWorkflowListOnDevice(silent = true)
             }
         }
     }
-
-    val pageHome = 0
-    val pageScheduleList = 1
-    val pageNotifyRuleList = 2
-    val pageRecentRuns = 3
-    val pageScheduleForm = 4
-    val pageNotifyRuleForm = 5
-    val pageTaskRouteEditor = 6
-    val pageQuickTask = 7
-    val pageTemplateList = 8
-    val pageTemplateForm = 9
-    val pageWorkflowList = 10
-    val pageWorkflowForm = 11
-    val pageTemplatePicker = 12
 
     LaunchedEffect(Unit) {
         viewModel.refreshInstalledAppSnapshotOnDevice()
         viewModel.refreshTemplateListOnDevice(silent = true)
         viewModel.refreshWorkflowListOnDevice(silent = true)
         viewModel.refreshTaskListOnDevice()
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.portableOperationNotice.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     LaunchedEffect(selectedTask?.taskId, selectedTask?.routeId) {
@@ -2469,7 +2390,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onClick = { portableImportLauncher.launch(arrayOf("application/json", "text/plain")) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(tr("Import"))
+                    Text(tr("Import Portable Bundle"))
                 }
             }
         }
@@ -2530,6 +2451,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             itemsIndexed(templates, key = { _, it -> it.templateId }) { index, template ->
                                 TemplateRow(
                                     template = template,
+                                    onRun = { viewModel.runTemplateOnDevice(template.templateId) },
                                     onEdit = {
                                         viewModel.loadTemplateForm(template)
                                         page = pageTemplateForm
@@ -2559,6 +2481,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         }
 
         pageTemplateForm -> {
+            var showTemplateAppPicker by rememberSaveable { mutableStateOf(false) }
             Column(
                 modifier = modifier
                     .fillMaxSize()
@@ -2575,6 +2498,10 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onPrimaryAction = {
                         viewModel.saveTemplateOnDevice()
                         page = pageTemplateList
+                    },
+                    secondaryActionLabel = tr("Export Template"),
+                    onSecondaryAction = {
+                        viewModel.exportPortableTemplateOnDevice(viewModel.templateId.value)
                     }
                 )
                 OutlinedTextField(
@@ -2590,11 +2517,17 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = templatePackage,
-                    onValueChange = { viewModel.templatePackage.value = it },
-                    label = { Text(tr("Target app")) },
-                    modifier = Modifier.fillMaxWidth()
+                PackageSelectField(
+                    title = tr("Target app"),
+                    selectedPackage = templatePackage,
+                    options = installedApps,
+                    onOpen = {
+                        if (installedApps.isEmpty()) {
+                            viewModel.refreshInstalledAppSnapshotOnDevice()
+                        }
+                        showTemplateAppPicker = true
+                    },
+                    onClear = { viewModel.templatePackage.value = "" }
                 )
                 OutlinedTextField(
                     value = templatePlaybook,
@@ -2625,6 +2558,16 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(tr("Open task route editor"))
+                }
+                if (showTemplateAppPicker) {
+                    PackagePickerDialog(
+                        options = installedApps,
+                        onDismiss = { showTemplateAppPicker = false },
+                        onSelect = {
+                            viewModel.templatePackage.value = it.packageName
+                            showTemplateAppPicker = false
+                        }
+                    )
                 }
             }
         }
@@ -2702,6 +2645,10 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onPrimaryAction = {
                         viewModel.saveWorkflowOnDevice()
                         page = pageWorkflowList
+                    },
+                    secondaryActionLabel = tr("Export Workflow"),
+                    onSecondaryAction = {
+                        viewModel.exportPortableWorkflowOnDevice(viewModel.workflowId.value)
                     }
                 )
                 OutlinedTextField(
@@ -2779,9 +2726,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         activeTimeEnd = workflowNotifyActiveTimeEnd,
                         llmConditionEnabled = workflowNotifyLlmConditionEnabled,
                         llmCondition = workflowNotifyLlmCondition,
-                        actionPackage = workflowNotifyActionPackage,
-                        actionPlaybook = workflowNotifyActionPlaybook,
-                        actionRecordEnabled = workflowNotifyActionRecordEnabled,
+                        onRefreshApps = { viewModel.refreshInstalledAppSnapshotOnDevice() },
                         onTriggerPackageChange = { viewModel.workflowTriggerPackage.value = it },
                         onTitlePatternChange = { viewModel.workflowNotifyTitlePattern.value = it },
                         onBodyPatternChange = { viewModel.workflowNotifyBodyPattern.value = it },
@@ -2789,10 +2734,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         onActiveTimeStartChange = { viewModel.workflowNotifyActiveTimeStart.value = it },
                         onActiveTimeEndChange = { viewModel.workflowNotifyActiveTimeEnd.value = it },
                         onLlmConditionEnabledChange = { viewModel.workflowNotifyLlmConditionEnabled.value = it },
-                        onLlmConditionChange = { viewModel.workflowNotifyLlmCondition.value = it },
-                        onActionPackageChange = { viewModel.workflowNotifyActionPackage.value = it },
-                        onActionPlaybookChange = { viewModel.workflowNotifyActionPlaybook.value = it },
-                        onActionRecordEnabledChange = { viewModel.workflowNotifyActionRecordEnabled.value = it }
+                        onLlmConditionChange = { viewModel.workflowNotifyLlmCondition.value = it }
                     )
                 }
             }
@@ -2838,155 +2780,6 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        pageScheduleList -> {
-            val scheduleListState = rememberLazyListState()
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                PageHeaderBlock(
-                    title = tr("Schedules"),
-                    subtitle = tr("Repeat a task later or keep it running on a schedule."),
-                    glyph = "⏰",
-                    onBack = { page = pageHome },
-                    primaryActionLabel = tr("New"),
-                    onPrimaryAction = {
-                        editingScheduleId = ""
-                        viewModel.resetScheduleForm()
-                        page = pageScheduleForm
-                    },
-                    secondaryActionLabel = tr("Refresh"),
-                    onSecondaryAction = { viewModel.refreshScheduleListOnDevice() }
-                )
-
-                SummaryInfoStrip(
-                    glyph = "⏰",
-                    title = tr("Schedule overview"),
-                    primaryMetric = "${tr("items")}: ${schedules.size}",
-                    secondaryMetric = "${tr("Enabled")}: ${schedules.count { it.enabled }}"
-                )
-
-                SurfacePanel(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    background = MaterialTheme.colorScheme.surface,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
-                ) {
-                    if (schedules.isEmpty()) {
-                        EmptyStateBox(
-                            title = tr("No schedules yet."),
-                            detail = tr("Create one when you want the phone to repeat the same task automatically.")
-                        )
-                    } else {
-                        LazyColumn(
-                            state = scheduleListState,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            itemsIndexed(schedules, key = { _, it -> it.scheduleId }) { index, schedule ->
-                                ScheduleRow(
-                                    schedule = schedule,
-                                    onToggleEnabled = { checked ->
-                                        viewModel.toggleScheduleEnabledOnDevice(schedule, checked)
-                                    },
-                                    onTriggerNow = {
-                                        viewModel.triggerScheduleNowOnDevice(schedule.scheduleId)
-                                    },
-                                    onEdit = {
-                                        editingScheduleId = schedule.scheduleId
-                                        viewModel.loadScheduleForm(schedule)
-                                        page = pageScheduleForm
-                                    },
-                                    onDelete = { viewModel.removeScheduleOnDevice(schedule.scheduleId) }
-                                )
-                                if (index < schedules.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 18.dp),
-                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        pageNotifyRuleList -> {
-            val notifyListState = rememberLazyListState()
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                PageHeaderBlock(
-                    title = tr("Notification Triggers"),
-                    subtitle = tr("Watch one app's notifications and launch a task when a rule matches."),
-                    glyph = "✉",
-                    onBack = { page = pageHome },
-                    primaryActionLabel = tr("New"),
-                    onPrimaryAction = {
-                        editingNotifyRuleId = ""
-                        viewModel.resetNotifyRuleForm()
-                        page = pageNotifyRuleForm
-                    },
-                    secondaryActionLabel = tr("Refresh"),
-                    onSecondaryAction = { viewModel.refreshNotifyRuleListOnDevice() }
-                )
-
-                SummaryInfoStrip(
-                    glyph = "✉",
-                    title = tr("Trigger overview"),
-                    primaryMetric = "${tr("items")}: ${notifyRules.size}",
-                    secondaryMetric = "${tr("Enabled")}: ${notifyRules.count { it.enabled }}"
-                )
-
-                SurfacePanel(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    background = MaterialTheme.colorScheme.surface,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
-                ) {
-                    if (notifyRules.isEmpty()) {
-                        EmptyStateBox(
-                            title = tr("No notification triggers yet."),
-                            detail = tr("Create one after you know which app and message pattern should trigger the task.")
-                        )
-                    } else {
-                        LazyColumn(
-                            state = notifyListState,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            itemsIndexed(notifyRules, key = { _, it -> it.id }) { index, rule ->
-                                NotificationRuleRow(
-                                    rule = rule,
-                                    onToggleEnabled = { checked ->
-                                        viewModel.toggleNotifyRuleEnabledOnDevice(rule, checked)
-                                    },
-                                    onEdit = {
-                                        editingNotifyRuleId = rule.id
-                                        viewModel.loadNotifyRuleForm(rule)
-                                        page = pageNotifyRuleForm
-                                    },
-                                    onDelete = { viewModel.removeNotifyRuleOnDevice(rule.id) }
-                                )
-                                if (index < notifyRules.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 18.dp),
-                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         pageRecentRuns -> {
             val taskListState = rememberLazyListState()
             Column(
@@ -3022,7 +2815,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     if (tasks.isEmpty()) {
                         EmptyStateBox(
                             title = tr("No runs yet."),
-                            detail = tr("Submit a quick task, or wait for a schedule or notification trigger to fire.")
+                            detail = tr("Submit a quick task, or wait for a workflow trigger to fire.")
                         )
                     } else {
                         LazyColumn(
@@ -3041,686 +2834,6 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         }
                     }
                 }
-            }
-        }
-
-        pageScheduleForm -> {
-            val context = LocalContext.current
-            val selectedRunAt = scheduleStartAtMs.toLongOrNull()?.takeIf { it > 0L }
-                ?: (System.currentTimeMillis() + 5 * 60_000L)
-            var showTimeWheel by rememberSaveable { mutableStateOf(false) }
-            var showSchedulePackagePicker by rememberSaveable { mutableStateOf(false) }
-            val isEditing = editingScheduleId.isNotEmpty()
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                PageHeaderBlock(
-                    title = if (isEditing) tr("Edit Schedule") else tr("Create Schedule"),
-                    subtitle = tr("Set what to do, when to run it, and which app it should open."),
-                    glyph = "⏰",
-                    onBack = {
-                        page = pageScheduleList
-                        editingScheduleId = ""
-                    }
-                )
-
-                SurfacePanel(
-                    modifier = Modifier.fillMaxWidth(),
-                    background = MaterialTheme.colorScheme.surface,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        SheetHeader(
-                            title = tr("Basic info"),
-                            subtitle = tr("Name the rule and describe what the phone should do.")
-                        )
-                        OutlinedTextField(
-                            value = scheduleName,
-                            onValueChange = { viewModel.scheduleName.value = it },
-                            label = { Text(tr("Name (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = scheduleTask,
-                            onValueChange = { viewModel.scheduleTask.value = it },
-                            label = { Text(tr("Task description (required)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 3
-                        )
-                        OutlinedTextField(
-                            value = schedulePlaybook,
-                            onValueChange = { viewModel.schedulePlaybook.value = it },
-                            label = { Text(tr("User playbook (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 4
-                        )
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
-
-                        SheetHeader(
-                            title = tr("Execution target"),
-                            subtitle = tr("Choose when the task runs and which app it should open first.")
-                        )
-                        Text(
-                            text = "${tr("Run time")}: ${formatTsFull(selectedRunAt)}",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    val cal = Calendar.getInstance().apply { timeInMillis = selectedRunAt }
-                                    DatePickerDialog(
-                                        context,
-                                        { _, y, m, d ->
-                                            val next = Calendar.getInstance().apply {
-                                                timeInMillis = selectedRunAt
-                                                set(Calendar.YEAR, y)
-                                                set(Calendar.MONTH, m)
-                                                set(Calendar.DAY_OF_MONTH, d)
-                                            }
-                                            viewModel.scheduleStartAtMs.value = next.timeInMillis.toString()
-                                        },
-                                        cal.get(Calendar.YEAR),
-                                        cal.get(Calendar.MONTH),
-                                        cal.get(Calendar.DAY_OF_MONTH)
-                                    ).show()
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr("Pick Date"))
-                            }
-                            OutlinedButton(
-                                onClick = { showTimeWheel = true },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr("Pick Time"))
-                            }
-                        }
-                        Text(
-                            text = tr("Repeat"),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RepeatModeButton(
-                                text = tr("Once"),
-                                selected = scheduleRepeatMode == MainViewModel.REPEAT_ONCE,
-                                onClick = { viewModel.scheduleRepeatMode.value = MainViewModel.REPEAT_ONCE },
-                                modifier = Modifier.weight(1f)
-                            )
-                            RepeatModeButton(
-                                text = tr("Daily"),
-                                selected = scheduleRepeatMode == MainViewModel.REPEAT_DAILY,
-                                onClick = { viewModel.scheduleRepeatMode.value = MainViewModel.REPEAT_DAILY },
-                                modifier = Modifier.weight(1f)
-                            )
-                            RepeatModeButton(
-                                text = tr("Weekly"),
-                                selected = scheduleRepeatMode == MainViewModel.REPEAT_WEEKLY,
-                                onClick = { viewModel.scheduleRepeatMode.value = MainViewModel.REPEAT_WEEKLY },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (scheduleRepeatMode == MainViewModel.REPEAT_WEEKLY) {
-                            val labels = listOf(
-                                tr("Mon"),
-                                tr("Tue"),
-                                tr("Wed"),
-                                tr("Thu"),
-                                tr("Fri"),
-                                tr("Sat"),
-                                tr("Sun")
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                for (i in 0 until 4) {
-                                    val selected = ((scheduleRepeatWeekdays shr i) and 1) == 1
-                                    WeekdayButton(
-                                        text = labels[i],
-                                        selected = selected,
-                                        onClick = {
-                                            viewModel.scheduleRepeatWeekdays.value = scheduleRepeatWeekdays xor (1 shl i)
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                for (i in 4..6) {
-                                    val selected = ((scheduleRepeatWeekdays shr i) and 1) == 1
-                                    WeekdayButton(
-                                        text = labels[i],
-                                        selected = selected,
-                                        onClick = {
-                                            viewModel.scheduleRepeatWeekdays.value = scheduleRepeatWeekdays xor (1 shl i)
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                            Text(
-                                text = "${tr("Selected days")}: ${formatWeekdayMask(scheduleRepeatWeekdays)}",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
-                            )
-                        }
-                        PackageSelectField(
-                            title = tr("Package (select from local snapshot)"),
-                            selectedPackage = schedulePackage,
-                            options = installedApps,
-                            onOpen = {
-                                if (installedApps.isEmpty()) {
-                                    viewModel.refreshInstalledAppSnapshotOnDevice()
-                                }
-                                showSchedulePackagePicker = true
-                            },
-                            onClear = { viewModel.schedulePackage.value = "" }
-                        )
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
-
-                        SheetHeader(
-                            title = tr("Execution preference"),
-                            subtitle = tr("These settings affect recording and manual route review for this schedule.")
-                        )
-                        Text(
-                            text = tr("Task route mode"),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RepeatModeButton(
-                                text = tr("Off"),
-                                selected = scheduleTaskMapMode == MainViewModel.TASK_MAP_MODE_OFF,
-                                onClick = { viewModel.scheduleTaskMapMode.value = MainViewModel.TASK_MAP_MODE_OFF },
-                                modifier = Modifier.weight(1f)
-                            )
-                            RepeatModeButton(
-                                text = tr("On"),
-                                selected = scheduleTaskMapMode == MainViewModel.TASK_MAP_MODE_MANUAL,
-                                onClick = { viewModel.scheduleTaskMapMode.value = MainViewModel.TASK_MAP_MODE_MANUAL },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (isEditing) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        routeEditorTarget = RouteEditorTarget(
-                                            title = if (scheduleName.isNotBlank()) scheduleName else scheduleTask,
-                                            source = "schedule",
-                                            sourceId = editingScheduleId,
-                                            packageName = schedulePackage,
-                                            userTask = scheduleTask,
-                                            userPlaybook = schedulePlaybook,
-                                            mode = scheduleTaskMapMode
-                                        )
-                                        page = pageTaskRouteEditor
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(tr("Open task route editor"))
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        viewModel.exportPortableTaskMapByKey(
-                                            routeId = "",
-                                            source = "schedule",
-                                            sourceId = editingScheduleId,
-                                            packageName = schedulePackage,
-                                            userTask = scheduleTask,
-                                            userPlaybook = schedulePlaybook,
-                                            mode = scheduleTaskMapMode,
-                                            taskName = scheduleName,
-                                            taskConfig = org.json.JSONObject()
-                                                .put("type", "schedule")
-                                                .put("name", scheduleName)
-                                                .put("user_task", scheduleTask)
-                                                .put("package_name", schedulePackage)
-                                                .put("user_playbook", schedulePlaybook)
-                                                .put("task_map_mode", scheduleTaskMapMode)
-                                        )
-                                    },
-                                    enabled = !taskMapSaving,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(tr("Export Portable Task"))
-                                }
-                            }
-                            PortableTaskExportStatus(exportUiState = portableTaskExportUiState)
-                        } else {
-                            Text(
-                                text = tr("Task route editing is available after the task config has been saved once."),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = tr("Record task screen"),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = tr("Save task recording to Movies/lxb."),
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                )
-                            }
-                            Switch(
-                                checked = scheduleRecordEnabled,
-                                onCheckedChange = { viewModel.scheduleRecordEnabled.value = it }
-                            )
-                        }
-                    }
-                }
-
-                SurfacePanel(
-                    modifier = Modifier.fillMaxWidth(),
-                    background = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        SheetHeader(
-                            title = tr("Save schedule"),
-                            subtitle = tr("Your schedule will appear in the list after it is saved.")
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    if (isEditing) {
-                                        viewModel.updateScheduleOnDevice(editingScheduleId)
-                                    } else {
-                                        viewModel.addScheduleOnDevice()
-                                    }
-                                    page = pageScheduleList
-                                    editingScheduleId = ""
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr(if (isEditing) "Save" else "Submit"))
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    page = pageScheduleList
-                                    editingScheduleId = ""
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr("Cancel"))
-                            }
-                        }
-                    }
-                }
-            }
-            if (showTimeWheel) {
-                val cal = Calendar.getInstance().apply { timeInMillis = selectedRunAt }
-                WheelTimePickerDialog(
-                    initialHour = cal.get(Calendar.HOUR_OF_DAY),
-                    initialMinute = cal.get(Calendar.MINUTE),
-                    onDismiss = { showTimeWheel = false },
-                    onConfirm = { hour, minute ->
-                        val next = Calendar.getInstance().apply {
-                            timeInMillis = selectedRunAt
-                            set(Calendar.HOUR_OF_DAY, hour)
-                            set(Calendar.MINUTE, minute)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
-                        }
-                        viewModel.scheduleStartAtMs.value = next.timeInMillis.toString()
-                        showTimeWheel = false
-                    }
-                )
-            }
-            if (showSchedulePackagePicker) {
-                PackagePickerDialog(
-                    options = installedApps,
-                    onDismiss = { showSchedulePackagePicker = false },
-                    onSelect = { item ->
-                        viewModel.schedulePackage.value = item.packageName
-                        showSchedulePackagePicker = false
-                    }
-                )
-            }
-        }
-
-        pageNotifyRuleForm -> {
-            val isEditing = editingNotifyRuleId.isNotEmpty()
-            var showNotifyPackagePicker by rememberSaveable { mutableStateOf(false) }
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                PageHeaderBlock(
-                    title = tr(if (isEditing) "Edit Notification Trigger" else "Create Notification Trigger"),
-                    subtitle = tr("Set which notifications to listen for, then define what task should run."),
-                    glyph = "✉",
-                    onBack = {
-                        page = pageNotifyRuleList
-                        editingNotifyRuleId = ""
-                    }
-                )
-
-                SurfacePanel(
-                    modifier = Modifier.fillMaxWidth(),
-                    background = MaterialTheme.colorScheme.surface,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        SheetHeader(
-                            title = tr("Basic info"),
-                            subtitle = tr("Name the rule and describe the task that should run after a match.")
-                        )
-                        OutlinedTextField(
-                            value = notifyName,
-                            onValueChange = { viewModel.notifyName.value = it },
-                            label = { Text(tr("Rule name")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = notifyActionUserTask,
-                            onValueChange = { viewModel.notifyActionUserTask.value = it },
-                            label = { Text(tr("Task description (what to do after trigger)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 4
-                        )
-                        OutlinedTextField(
-                            value = notifyActionUserPlaybook,
-                            onValueChange = { viewModel.notifyActionUserPlaybook.value = it },
-                            label = { Text(tr("Action playbook (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 8
-                        )
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
-
-                        SheetHeader(
-                            title = tr("Trigger conditions"),
-                            subtitle = tr("The rule checks package first, then title/body matching, then optional LLM condition.")
-                        )
-                        PackageSelectField(
-                            title = "${tr("Package match (required)")} - ${tr("Select App")}",
-                            selectedPackage = notifyPackageListRaw,
-                            options = installedApps,
-                            onOpen = {
-                                if (installedApps.isEmpty()) {
-                                    viewModel.refreshInstalledAppSnapshotOnDevice()
-                                }
-                                showNotifyPackagePicker = true
-                            },
-                            onClear = { viewModel.notifyPackageListRaw.value = "" }
-                        )
-                        OutlinedTextField(
-                            value = notifyTitlePattern,
-                            onValueChange = { viewModel.notifyTitlePattern.value = it },
-                            label = { Text(tr("Title match (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 2
-                        )
-                        OutlinedTextField(
-                            value = notifyBodyPattern,
-                            onValueChange = { viewModel.notifyBodyPattern.value = it },
-                            label = { Text(tr("Body match (optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 4
-                        )
-                        OutlinedTextField(
-                            value = notifyCooldownMs,
-                            onValueChange = { viewModel.notifyCooldownMs.value = it },
-                            label = { Text(tr("Trigger interval (seconds)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-                        OutlinedTextField(
-                            value = notifyActiveTimeStart,
-                            onValueChange = { viewModel.notifyActiveTimeStart.value = it },
-                            label = { Text(tr("Trigger time start (HH:mm, optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = notifyActiveTimeEnd,
-                            onValueChange = { viewModel.notifyActiveTimeEnd.value = it },
-                            label = { Text(tr("Trigger time end (HH:mm, optional)")) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        Text(
-                            text = tr("Leave either field empty to allow triggering at any time."),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = tr("Enable LLM condition"),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Switch(
-                                checked = notifyLlmConditionEnabled,
-                                onCheckedChange = { viewModel.notifyLlmConditionEnabled.value = it }
-                            )
-                        }
-                        if (notifyLlmConditionEnabled) {
-                            OutlinedTextField(
-                                value = notifyLlmCondition,
-                                onValueChange = { viewModel.notifyLlmCondition.value = it },
-                                label = { Text(tr("LLM condition (optional)")) },
-                                modifier = Modifier.fillMaxWidth(),
-                                maxLines = 4
-                            )
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
-
-                        SheetHeader(
-                            title = tr("Execution preference"),
-                            subtitle = tr("These settings affect manual route review and recording after the trigger is matched.")
-                        )
-                        Text(
-                            text = tr("Task route mode"),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            RepeatModeButton(
-                                text = tr("Off"),
-                                selected = notifyActionTaskMapMode == MainViewModel.TASK_MAP_MODE_OFF,
-                                onClick = { viewModel.notifyActionTaskMapMode.value = MainViewModel.TASK_MAP_MODE_OFF },
-                                modifier = Modifier.weight(1f)
-                            )
-                            RepeatModeButton(
-                                text = tr("On"),
-                                selected = notifyActionTaskMapMode == MainViewModel.TASK_MAP_MODE_MANUAL,
-                                onClick = { viewModel.notifyActionTaskMapMode.value = MainViewModel.TASK_MAP_MODE_MANUAL },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (isEditing) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        routeEditorTarget = RouteEditorTarget(
-                                            title = if (notifyName.isNotBlank()) notifyName else notifyActionUserTask,
-                                            source = "notify_trigger",
-                                            sourceId = editingNotifyRuleId,
-                                            packageName = notifyActionPackage,
-                                            userTask = notifyActionUserTask,
-                                            userPlaybook = notifyActionUserPlaybook,
-                                            mode = notifyActionTaskMapMode
-                                        )
-                                        page = pageTaskRouteEditor
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(tr("Open task route editor"))
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        viewModel.exportPortableTaskMapByKey(
-                                            routeId = "",
-                                            source = "notify_trigger",
-                                            sourceId = editingNotifyRuleId,
-                                            packageName = notifyActionPackage,
-                                            userTask = notifyActionUserTask,
-                                            userPlaybook = notifyActionUserPlaybook,
-                                            mode = notifyActionTaskMapMode,
-                                            taskName = notifyName,
-                                            taskConfig = org.json.JSONObject()
-                                                .put("type", "notify_trigger")
-                                                .put("name", notifyName)
-                                                .put("user_task", notifyActionUserTask)
-                                                .put("package_name", notifyActionPackage)
-                                                .put("user_playbook", notifyActionUserPlaybook)
-                                                .put("task_map_mode", notifyActionTaskMapMode)
-                                                .put("package_mode", notifyPackageMode)
-                                                .put("package_list", org.json.JSONArray().put(notifyPackageListRaw))
-                                                .put("text_mode", notifyTextMode)
-                                                .put("title_pattern", notifyTitlePattern)
-                                                .put("body_pattern", notifyBodyPattern)
-                                                .put("llm_condition_enabled", notifyLlmConditionEnabled)
-                                                .put("llm_condition", notifyLlmCondition)
-                                                .put("task_rewrite_enabled", notifyTaskRewriteEnabled)
-                                                .put("task_rewrite_instruction", notifyTaskRewriteInstruction)
-                                                .put("task_rewrite_fail_policy", notifyTaskRewriteFailPolicy)
-                                                .put("stop_after_matched", notifyStopAfterMatched)
-                                                .put("action_use_map", notifyActionUseMapMode)
-                                        )
-                                    },
-                                    enabled = !taskMapSaving,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(tr("Export Portable Task"))
-                                }
-                            }
-                            PortableTaskExportStatus(exportUiState = portableTaskExportUiState)
-                        } else {
-                            Text(
-                                text = tr("Task route editing is available after the task config has been saved once."),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = tr("Record screen for triggered task"),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Switch(
-                                checked = notifyActionRecordEnabled,
-                                onCheckedChange = { viewModel.notifyActionRecordEnabled.value = it }
-                            )
-                        }
-                    }
-                }
-
-                SurfacePanel(
-                    modifier = Modifier.fillMaxWidth(),
-                    background = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        SheetHeader(
-                            title = tr("Save trigger"),
-                            subtitle = tr("The rule will appear in the notification trigger list after it is saved.")
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    viewModel.upsertNotifyRuleOnDevice(editingNotifyRuleId)
-                                    page = pageNotifyRuleList
-                                    editingNotifyRuleId = ""
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr(if (isEditing) "Save" else "Submit"))
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    page = pageNotifyRuleList
-                                    editingNotifyRuleId = ""
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(tr("Cancel"))
-                            }
-                        }
-                    }
-                }
-            }
-            if (showNotifyPackagePicker) {
-                PackagePickerDialog(
-                    options = installedApps,
-                    onDismiss = { showNotifyPackagePicker = false },
-                    onSelect = { item ->
-                        viewModel.notifyPackageListRaw.value = item.packageName
-                        showNotifyPackagePicker = false
-                    }
-                )
             }
         }
 
@@ -3763,8 +2876,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     saving = taskMapSaving,
                     onBack = {
                         page = when (target.source) {
-                            "schedule" -> pageScheduleForm
-                            "notify_trigger" -> pageNotifyRuleForm
+                            "template" -> pageTemplateForm
                             else -> pageHome
                         }
                     },
@@ -3881,43 +2993,6 @@ private fun TaskDetailDialog(
             }
         }
     )
-}
-
-@Composable
-private fun PortableTaskExportStatus(exportUiState: MainViewModel.PortableTaskExportUiState) {
-    when {
-        exportUiState.exporting -> {
-            StatusNotice(
-                text = tr("Exporting portable task..."),
-                accentColor = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        exportUiState.status == "success" -> {
-            StatusNotice(
-                text = buildString {
-                    append(tr("Portable task exported"))
-                    append(": ")
-                    append(tr("Saved to"))
-                    append(" ")
-                    append(exportUiState.savedPath)
-                    append(" (locator=")
-                    append(exportUiState.locatorStepCount)
-                    append(", semantic=")
-                    append(exportUiState.semanticStepCount)
-                    append(")")
-                },
-                accentColor = AppSuccess
-            )
-        }
-
-        exportUiState.status == "failure" -> {
-            StatusNotice(
-                text = "${tr("Portable task export failed")}: ${exportUiState.error}",
-                accentColor = AppError
-            )
-        }
-    }
 }
 
 @Composable
@@ -4666,45 +3741,61 @@ private fun DetailTextLine(label: String, value: String) {
 @Composable
 fun TemplateRow(
     template: TaskTemplateSummary,
+    onRun: () -> Unit,
     onEdit: () -> Unit,
     onRoute: () -> Unit,
     onDelete: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onEdit)
             .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = template.name.ifBlank { template.description },
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = template.description,
-                fontSize = 11.sp,
-                color = scheme.onSurface.copy(alpha = 0.72f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = buildString {
-                    append(if (template.packageName.isBlank()) tr("No app") else template.packageName)
-                    append("  •  ")
-                    append(if (template.routeId.isBlank()) tr("No route") else tr("Route ready"))
-                },
-                fontSize = 10.sp,
-                color = scheme.onSurface.copy(alpha = 0.58f)
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton(onClick = onRoute) { Text(tr("Route")) }
-            TextButton(onClick = onDelete) { Text(tr("Delete")) }
+        Text(
+            text = template.name.ifBlank { template.description },
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = template.description,
+            fontSize = 11.sp,
+            color = scheme.onSurface.copy(alpha = 0.72f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = buildString {
+                append(if (template.packageName.isBlank()) tr("No app") else template.packageName)
+                append("  •  ")
+                append(if (template.routeId.isBlank()) tr("No route") else tr("Route ready"))
+            },
+            fontSize = 10.sp,
+            color = scheme.onSurface.copy(alpha = 0.58f)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = onRun,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp)
+            ) { Text(tr("Trigger now"), fontSize = 13.sp, maxLines = 1) }
+            TextButton(
+                onClick = onRoute,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp)
+            ) { Text(tr("Route"), fontSize = 13.sp, maxLines = 1) }
+            TextButton(
+                onClick = onDelete,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp)
+            ) { Text(tr("Delete"), fontSize = 13.sp, maxLines = 1, color = scheme.error) }
         }
     }
 }
@@ -4904,9 +3995,7 @@ fun NotificationTriggerEditor(
     activeTimeEnd: String,
     llmConditionEnabled: Boolean,
     llmCondition: String,
-    actionPackage: String,
-    actionPlaybook: String,
-    actionRecordEnabled: Boolean,
+    onRefreshApps: () -> Unit,
     onTriggerPackageChange: (String) -> Unit,
     onTitlePatternChange: (String) -> Unit,
     onBodyPatternChange: (String) -> Unit,
@@ -4914,10 +4003,7 @@ fun NotificationTriggerEditor(
     onActiveTimeStartChange: (String) -> Unit,
     onActiveTimeEndChange: (String) -> Unit,
     onLlmConditionEnabledChange: (Boolean) -> Unit,
-    onLlmConditionChange: (String) -> Unit,
-    onActionPackageChange: (String) -> Unit,
-    onActionPlaybookChange: (String) -> Unit,
-    onActionRecordEnabledChange: (Boolean) -> Unit
+    onLlmConditionChange: (String) -> Unit
 ) {
     var showAppPicker by rememberSaveable { mutableStateOf(false) }
     SheetHeader(title = tr("Trigger conditions"), subtitle = tr("Choose which notifications should start this workflow."))
@@ -4925,7 +4011,12 @@ fun NotificationTriggerEditor(
         title = tr("Listen app"),
         selectedPackage = triggerPackage,
         options = installedApps,
-        onOpen = { showAppPicker = true },
+        onOpen = {
+            if (installedApps.isEmpty()) {
+                onRefreshApps()
+            }
+            showAppPicker = true
+        },
         onClear = { onTriggerPackageChange("") }
     )
     OutlinedTextField(value = titlePattern, onValueChange = onTitlePatternChange, label = { Text(tr("Title pattern")) }, modifier = Modifier.fillMaxWidth())
@@ -4944,22 +4035,6 @@ fun NotificationTriggerEditor(
     if (llmConditionEnabled) {
         OutlinedTextField(value = llmCondition, onValueChange = onLlmConditionChange, label = { Text(tr("LLM condition")) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f))
-    SheetHeader(title = tr("Execution preference"), subtitle = tr("These settings apply after a notification match."))
-    PackageSelectField(
-        title = tr("Open app"),
-        selectedPackage = actionPackage,
-        options = installedApps,
-        onOpen = { showAppPicker = true },
-        onClear = { onActionPackageChange("") }
-    )
-    OutlinedTextField(value = actionPlaybook, onValueChange = onActionPlaybookChange, label = { Text(tr("Playbook")) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-    PreferenceSwitchRow(
-        title = tr("Record execution"),
-        detail = tr("Capture screen recording after the trigger is matched."),
-        checked = actionRecordEnabled,
-        onCheckedChange = onActionRecordEnabledChange
-    )
     if (showAppPicker) {
         PackagePickerDialog(
             options = installedApps,
@@ -4969,223 +4044,6 @@ fun NotificationTriggerEditor(
                 showAppPicker = false
             }
         )
-    }
-}
-
-@Composable
-fun ScheduleRow(
-    schedule: ScheduleSummary,
-    onToggleEnabled: (Boolean) -> Unit,
-    onTriggerNow: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val listToggleColors = SwitchDefaults.colors(
-        checkedThumbColor = scheme.surface,
-        checkedTrackColor = AppSuccess,
-        checkedBorderColor = AppSuccess,
-        uncheckedThumbColor = scheme.surface,
-        uncheckedTrackColor = scheme.primary.copy(alpha = 0.22f).compositeOver(scheme.surface),
-        uncheckedBorderColor = scheme.primary.copy(alpha = 0.45f)
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onEdit)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val title = if (schedule.name.isNotEmpty()) schedule.name else schedule.userTask
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (schedule.name.isNotEmpty() && schedule.userTask != title) {
-                        Text(
-                            text = schedule.userTask,
-                            fontSize = 10.sp,
-                            color = scheme.onSurface.copy(alpha = 0.72f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                Switch(
-                    checked = schedule.enabled,
-                    onCheckedChange = onToggleEnabled,
-                    colors = listToggleColors
-                )
-            }
-            Text(
-                text = "${tr("Repeat")}: ${formatRepeat(schedule.repeatMode, schedule.repeatWeekdays)}  •  ${tr("Next run")}: ${formatTsFull(schedule.nextRunAt)}",
-                fontSize = 10.sp,
-                color = scheme.onSurface.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val meta = buildList {
-                    if (schedule.packageName.isNotEmpty()) add("${tr("App")}: ${schedule.packageName}")
-                    add("${tr("Record")}: ${if (schedule.recordEnabled) tr("On") else tr("Off")}")
-                    add("${tr("Triggered count")}: ${schedule.triggerCount}")
-                }.joinToString("  •  ")
-                Text(
-                    text = meta,
-                    modifier = Modifier.weight(1f),
-                    fontSize = 10.sp,
-                    color = scheme.onSurface.copy(alpha = 0.66f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(
-                        onClick = onTriggerNow,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.height(26.dp)
-                    ) {
-                        Text(tr("Trigger now"), fontSize = 10.sp)
-                    }
-                    TextButton(
-                        onClick = onDelete,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.height(26.dp)
-                    ) {
-                        Text(tr("Delete"), fontSize = 10.sp, color = scheme.error)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun NotificationRuleRow(
-    rule: NotificationTriggerRuleSummary,
-    onToggleEnabled: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val listToggleColors = SwitchDefaults.colors(
-        checkedThumbColor = scheme.surface,
-        checkedTrackColor = AppSuccess,
-        checkedBorderColor = AppSuccess,
-        uncheckedThumbColor = scheme.surface,
-        uncheckedTrackColor = scheme.primary.copy(alpha = 0.22f).compositeOver(scheme.surface),
-        uncheckedBorderColor = scheme.primary.copy(alpha = 0.45f)
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onEdit)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            val title = when {
-                rule.name.isNotBlank() -> rule.name
-                rule.actionUserTask.isNotBlank() -> rule.actionUserTask
-                else -> tr("(no task)")
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (rule.actionUserTask.isNotBlank() && rule.actionUserTask != title) {
-                        Text(
-                            text = rule.actionUserTask,
-                            fontSize = 10.sp,
-                            color = scheme.onSurface.copy(alpha = 0.72f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                Switch(
-                    checked = rule.enabled,
-                    onCheckedChange = onToggleEnabled,
-                    colors = listToggleColors
-                )
-            }
-            Text(
-                text = "${tr("Listening app")}: ${rule.packageList.joinToString(", ").ifBlank { tr("(not set)") }}",
-                fontSize = 10.sp,
-                color = scheme.onSurface.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            val timeWindow = if (rule.activeTimeStart.isNotBlank() && rule.activeTimeEnd.isNotBlank()) {
-                "${rule.activeTimeStart}-${rule.activeTimeEnd}"
-            } else {
-                tr("Anytime")
-            }
-            Text(
-                text = "${tr("Match")}: ${rule.titlePattern.ifBlank { "-" }} / ${rule.bodyPattern.ifBlank { "-" }}",
-                fontSize = 10.sp,
-                color = scheme.onSurface.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val meta = "${tr("Trigger interval")}: ${rule.cooldownMs / 1000}s  •  ${tr("Time window")}: $timeWindow  •  ${tr("Record")}: ${if (rule.actionRecordEnabled) tr("On") else tr("Off")}  •  LLM: ${if (rule.llmConditionEnabled) tr("On") else tr("Off")}"
-                Text(
-                    text = meta,
-                    modifier = Modifier.weight(1f),
-                    fontSize = 10.sp,
-                    color = scheme.onSurface.copy(alpha = 0.66f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                TextButton(
-                    onClick = onDelete,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                    modifier = Modifier.height(26.dp)
-                ) {
-                    Text(tr("Delete"), fontSize = 10.sp, color = scheme.error)
-                }
-            }
-        }
     }
 }
 

@@ -24,13 +24,10 @@ import com.example.lxb_ignition.core.CoreApiParser
 import com.example.lxb_ignition.core.DeviceConfigSyncer
 import com.example.lxb_ignition.core.DeviceLlmSettings
 import com.example.lxb_ignition.core.MapOperationsController
-import com.example.lxb_ignition.core.ScheduleTriggerParsed
 import com.example.lxb_ignition.core.TaskRuntimeController
 import com.example.lxb_ignition.map.MapSyncManager
 import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.CoreRuntimeStatus
-import com.example.lxb_ignition.model.NotificationTriggerRuleSummary
-import com.example.lxb_ignition.model.ScheduleSummary
 import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskTemplateSummary
 import com.example.lxb_ignition.model.TaskSummary
@@ -39,9 +36,6 @@ import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
 import com.example.lxb_ignition.model.WorkflowSummary
-import com.example.lxb_ignition.schedule.ScheduleDraft
-import com.example.lxb_ignition.schedule.ScheduleFormInput
-import com.example.lxb_ignition.schedule.ScheduleUseCase
 import com.example.lxb_ignition.service.CoreClientGateway
 import com.example.lxb_ignition.service.LocalLinkClient
 import com.example.lxb_ignition.service.WirelessAdbBootstrapService
@@ -51,8 +45,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,15 +77,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val error: String = ""
     )
 
-    data class PortableTaskExportUiState(
-        val exporting: Boolean = false,
-        val status: String = "idle",
-        val savedPath: String = "",
-        val locatorStepCount: Int = 0,
-        val semanticStepCount: Int = 0,
-        val error: String = ""
-    )
-
     data class AdbKeyboardUiState(
         val checked: Boolean = false,
         val installed: Boolean = false,
@@ -112,12 +100,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val imagePng: ByteArray
     )
 
-    private data class PortableTaskImportBundle(
-        val taskType: String,
-        val taskInfo: org.json.JSONObject,
-        val routeBundleJson: String,
-        val routeBundle: org.json.JSONObject,
-        val taskConfig: org.json.JSONObject
+    private data class PortableImportOutcome(
+        val message: String,
+        val importedType: String = "",
+        val template: TaskTemplateSummary? = null,
+        val workflow: WorkflowSummary? = null
+    )
+
+    private data class PortableExportOutcome(
+        val success: Boolean,
+        val savedPath: String = "",
+        val error: String = ""
     )
 
     companion object {
@@ -169,9 +162,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val TASK_MAP_MODE_OFF = "off"
         const val TASK_MAP_MODE_AI = "ai"
         const val TASK_MAP_MODE_MANUAL = "manual"
-        const val NOTIFY_ACTION_USE_MAP_INHERIT = "inherit"
-        const val NOTIFY_ACTION_USE_MAP_TRUE = "true"
-        const val NOTIFY_ACTION_USE_MAP_FALSE = "false"
 
         private fun normalizePortString(raw: String?): String {
             val p = raw?.trim()?.toIntOrNull() ?: return DEFAULT_LXB_PORT
@@ -228,14 +218,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return n.coerceAtMost(Int.MAX_VALUE.toLong()).toString()
         }
 
-        private fun normalizeNotifyActionUseMap(raw: String?): String {
-            return when (raw?.trim()?.lowercase()) {
-                NOTIFY_ACTION_USE_MAP_TRUE -> NOTIFY_ACTION_USE_MAP_TRUE
-                NOTIFY_ACTION_USE_MAP_FALSE -> NOTIFY_ACTION_USE_MAP_FALSE
-                else -> NOTIFY_ACTION_USE_MAP_INHERIT
-            }
-        }
-
         private fun normalizeTaskMapMode(raw: String?): String {
             return when (raw?.trim()?.lowercase()) {
                 TASK_MAP_MODE_AI, TASK_MAP_MODE_MANUAL -> TASK_MAP_MODE_MANUAL
@@ -256,9 +238,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val traceLoadingOlder: StateFlow<Boolean> = _traceLoadingOlder.asStateFlow()
     private val _traceExportUiState = MutableStateFlow(TraceExportUiState())
     val traceExportUiState: StateFlow<TraceExportUiState> = _traceExportUiState.asStateFlow()
-    private val _portableTaskExportUiState = MutableStateFlow(PortableTaskExportUiState())
-    val portableTaskExportUiState: StateFlow<PortableTaskExportUiState> =
-        _portableTaskExportUiState.asStateFlow()
+    private val _portableOperationNotice = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val portableOperationNotice: SharedFlow<String> = _portableOperationNotice.asSharedFlow()
     private val _adbKeyboardUiState = MutableStateFlow(AdbKeyboardUiState())
     val adbKeyboardUiState: StateFlow<AdbKeyboardUiState> = _adbKeyboardUiState.asStateFlow()
 
@@ -388,10 +369,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _installedAppList = MutableStateFlow<List<AppPackageOption>>(emptyList())
     val installedAppList: StateFlow<List<AppPackageOption>> = _installedAppList.asStateFlow()
 
-    private val _scheduleList = MutableStateFlow<List<ScheduleSummary>>(emptyList())
-    val scheduleList: StateFlow<List<ScheduleSummary>> = _scheduleList.asStateFlow()
-    private val _notifyRuleList = MutableStateFlow<List<NotificationTriggerRuleSummary>>(emptyList())
-    val notifyRuleList: StateFlow<List<NotificationTriggerRuleSummary>> = _notifyRuleList.asStateFlow()
     private val _templateList = MutableStateFlow<List<TaskTemplateSummary>>(emptyList())
     val templateList: StateFlow<List<TaskTemplateSummary>> = _templateList.asStateFlow()
     private val _workflowList = MutableStateFlow<List<WorkflowSummary>>(emptyList())
@@ -419,52 +396,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val workflowNotifyActiveTimeEnd = MutableStateFlow("")
     val workflowNotifyLlmConditionEnabled = MutableStateFlow(false)
     val workflowNotifyLlmCondition = MutableStateFlow("")
-    val workflowNotifyActionPackage = MutableStateFlow("")
-    val workflowNotifyActionPlaybook = MutableStateFlow("")
-    val workflowNotifyActionRecordEnabled = MutableStateFlow(false)
-
-    // Tasks tab: schedule form
-    val scheduleName = MutableStateFlow("")
-    val scheduleTask = MutableStateFlow("")
-    val scheduleStartAtMs = MutableStateFlow((System.currentTimeMillis() + 5 * 60_000L).toString())
-    val scheduleRepeatMode = MutableStateFlow(REPEAT_ONCE)
-    val scheduleRepeatWeekdays = MutableStateFlow(0b0011111) // Mon-Fri
-    val schedulePackage = MutableStateFlow("")
-    val schedulePlaybook = MutableStateFlow("")
-    val scheduleEnabled = MutableStateFlow(true)
-    val scheduleRecordEnabled = MutableStateFlow(false)
-    val scheduleTaskMapMode = MutableStateFlow(TASK_MAP_MODE_OFF)
-
-    // Tasks tab: notification trigger form
-    val notifyRuleId = MutableStateFlow("")
-    val notifyName = MutableStateFlow("")
-    val notifyEnabled = MutableStateFlow(true)
-    val notifyPriority = MutableStateFlow("100")
-    val notifyPackageMode = MutableStateFlow("any")
-    val notifyPackageListRaw = MutableStateFlow("")
-    val notifyTextMode = MutableStateFlow("contains")
-    val notifyTitlePattern = MutableStateFlow("")
-    val notifyBodyPattern = MutableStateFlow("")
-    val notifyLlmConditionEnabled = MutableStateFlow(false)
-    val notifyLlmCondition = MutableStateFlow("")
-    val notifyLlmYesToken = MutableStateFlow("yes")
-    val notifyLlmNoToken = MutableStateFlow("no")
-    val notifyLlmTimeoutMs = MutableStateFlow("3000")
-    val notifyTaskRewriteEnabled = MutableStateFlow(false)
-    val notifyTaskRewriteInstruction = MutableStateFlow("")
-    val notifyTaskRewriteTimeoutMs = MutableStateFlow("4000")
-    val notifyTaskRewriteFailPolicy = MutableStateFlow("fallback_raw_task")
-    val notifyCooldownMs = MutableStateFlow("60")
-    val notifyActiveTimeStart = MutableStateFlow("")
-    val notifyActiveTimeEnd = MutableStateFlow("")
-    val notifyStopAfterMatched = MutableStateFlow(true)
-    val notifyActionType = MutableStateFlow("run_task")
-    val notifyActionUserTask = MutableStateFlow("")
-    val notifyActionPackage = MutableStateFlow("")
-    val notifyActionUserPlaybook = MutableStateFlow("")
-    val notifyActionRecordEnabled = MutableStateFlow(false)
-    val notifyActionTaskMapMode = MutableStateFlow(TASK_MAP_MODE_OFF)
-    val notifyActionUseMapMode = MutableStateFlow(NOTIFY_ACTION_USE_MAP_INHERIT)
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -913,7 +844,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _taskMapDetailLoading.value = false
         _taskMapSaving.value = false
         _taskMapDetail.value = null
-        _portableTaskExportUiState.value = PortableTaskExportUiState()
     }
 
     fun loadTaskMapDetail(task: TaskSummary) {
@@ -1075,162 +1005,158 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun exportPortableTaskMapByKey(
-        routeId: String,
-        taskId: String = "",
-        source: String = "",
-        sourceId: String = "",
-        packageName: String = "",
-        userTask: String = "",
-        userPlaybook: String = "",
-        mode: String = "",
-        taskName: String = "",
-        taskConfig: org.json.JSONObject? = null
+    fun importPortableBundleFromUri(
+        uri: Uri,
+        onImported: ((String, String) -> Unit)? = null
     ) {
         val port = currentLxbPortOrNull() ?: run {
-            _portableTaskExportUiState.value = PortableTaskExportUiState(
-                exporting = false,
-                status = "failure",
-                error = "Invalid lxb-core port"
-            )
-            appendSystemMessage("Invalid lxb-core port, cannot export portable task.")
-            return
-        }
-        val requestRouteId = routeId.trim()
-        val requestTaskId = taskId.trim()
-        val requestSource = source.trim()
-        val requestSourceId = sourceId.trim()
-        if (requestRouteId.isEmpty() && requestTaskId.isEmpty() && (requestSource.isEmpty() || requestSourceId.isEmpty())) {
-            _portableTaskExportUiState.value = PortableTaskExportUiState(
-                exporting = false,
-                status = "failure",
-                error = "Task identity is empty."
-            )
-            appendSystemMessage("Task identity is empty.")
+            val msg = "导入失败：Core 端口无效"
+            appendSystemMessage(msg)
+            showPortableNotice(msg)
             return
         }
         _taskMapSaving.value = true
-        _portableTaskExportUiState.value = PortableTaskExportUiState(
-            exporting = true,
-            status = "exporting"
+        showPortableNotice("正在导入...")
+        viewModelScope.launch(Dispatchers.IO) {
+            val outcome = runCatching {
+                val portableJson = readPortableBundle(uri)
+                coreClientGateway.withClient(port = port) { client ->
+                    val resp = client.sendCommand(
+                        CommandIds.CMD_CORTEX_PORTABLE,
+                        org.json.JSONObject()
+                            .put("action", "import")
+                            .put("bundle_json", portableJson)
+                            .toString()
+                            .toByteArray(Charsets.UTF_8),
+                        timeoutMs = 10_000
+                    )
+                    val parsed = CoreApiParser.parsePortableImport(resp)
+                    if (parsed.importedType.isBlank()) {
+                        PortableImportOutcome(parsed.message)
+                    } else if (parsed.importedType == "workflow") {
+                        val workflow = loadWorkflowById(client, parsed.workflowId)
+                        PortableImportOutcome(parsed.message, importedType = "workflow", workflow = workflow)
+                    } else {
+                        val template = loadTemplateById(client, parsed.templateId)
+                        PortableImportOutcome(parsed.message, importedType = "template", template = template)
+                    }
+                }
+            }.getOrElse { e -> PortableImportOutcome("导入失败：${e.message ?: e.javaClass.simpleName}") }
+            withContext(Dispatchers.Main) {
+                _taskMapSaving.value = false
+                appendSystemMessage(outcome.message)
+                if (outcome.workflow != null) {
+                    loadWorkflowForm(outcome.workflow)
+                    refreshWorkflowListOnDevice(silent = true)
+                    refreshTemplateListOnDevice(silent = true)
+                    showPortableNotice("导入成功：已打开工作流编辑页")
+                    onImported?.invoke("workflow", outcome.workflow.workflowId)
+                } else if (outcome.template != null) {
+                    loadTemplateForm(outcome.template)
+                    refreshTemplateListOnDevice(silent = true)
+                    showPortableNotice("导入成功：已打开模板编辑页")
+                    onImported?.invoke("template", outcome.template.templateId)
+                } else {
+                    showPortableNotice(outcome.message)
+                }
+            }
+        }
+    }
+
+    fun exportPortableTemplateOnDevice(templateId: String) {
+        exportPortableObjectOnDevice(
+            action = "export_template",
+            idKey = "template_id",
+            idValue = templateId,
+            fileKind = "template"
         )
+    }
+
+    fun exportPortableWorkflowOnDevice(workflowId: String) {
+        exportPortableObjectOnDevice(
+            action = "export_workflow",
+            idKey = "workflow_id",
+            idValue = workflowId,
+            fileKind = "workflow"
+        )
+    }
+
+    private fun exportPortableObjectOnDevice(
+        action: String,
+        idKey: String,
+        idValue: String,
+        fileKind: String
+    ) {
+        val port = currentLxbPortOrNull() ?: run {
+            val msg = "导出失败：Core 端口无效"
+            appendSystemMessage(msg)
+            showPortableNotice(msg)
+            return
+        }
+        val id = idValue.trim()
+        if (id.isBlank()) {
+            val msg = "导出失败：请先保存后再导出"
+            appendSystemMessage(msg)
+            showPortableNotice(msg)
+            return
+        }
+        showPortableNotice("正在导出...")
         viewModelScope.launch(Dispatchers.IO) {
             val outcome = runCatching {
                 coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "export_portable")
-                        .put("task_id", requestTaskId)
-                        .put("route_id", requestRouteId)
-                        .put("source", requestSource)
-                        .put("source_id", requestSourceId)
-                        .put("package_name", packageName.trim())
-                        .put("user_task", userTask.trim())
-                        .put("user_playbook", userPlaybook.trim())
-                        .put("mode", mode.trim())
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
                     val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_TASK_MAP,
-                        payload,
-                        timeoutMs = 5_000
+                        CommandIds.CMD_CORTEX_PORTABLE,
+                        org.json.JSONObject()
+                            .put("action", action)
+                            .put(idKey, id)
+                            .toString()
+                            .toByteArray(Charsets.UTF_8),
+                        timeoutMs = 8_000
                     )
-                    val text = resp.toString(Charsets.UTF_8)
-                    val obj = runCatching { org.json.JSONObject(text) }.getOrNull()
-                    if (obj != null && obj.optBoolean("ok", false)) {
-                        val bundleJson = obj.optString("bundle_json", "")
-                        if (bundleJson.isBlank()) {
-                            PortableTaskExportUiState(
-                                exporting = false,
-                                status = "failure",
-                                error = "empty bundle"
-                            )
-                        } else {
-                            val portableTaskJson = buildPortableTaskExportJson(
-                                routeBundleJson = bundleJson,
-                                taskType = requestSource,
-                                taskName = taskName,
-                                packageName = packageName,
-                                userTask = userTask,
-                                userPlaybook = userPlaybook,
-                                mode = mode,
-                                taskConfig = taskConfig
-                            )
-                            val path = writePortableTaskExportFile(portableTaskJson)
-                            val locatorCount = obj.optInt("locator_step_count", 0)
-                            val semanticCount = obj.optInt("semantic_step_count", 0)
-                            PortableTaskExportUiState(
-                                exporting = false,
-                                status = "success",
-                                savedPath = path,
-                                locatorStepCount = locatorCount,
-                                semanticStepCount = semanticCount
-                            )
-                        }
+                    val parsed = CoreApiParser.parsePortableExport(resp)
+                    if (parsed.bundleJson.isBlank()) {
+                        PortableExportOutcome(success = false, error = parsed.message)
                     } else {
-                        PortableTaskExportUiState(
-                            exporting = false,
-                            status = "failure",
-                            error = text.take(220)
-                        )
+                        val path = writePortableBundleExportFile(parsed.bundleJson, fileKind)
+                        PortableExportOutcome(success = true, savedPath = path)
                     }
                 }
             }.getOrElse { e ->
-                PortableTaskExportUiState(
-                    exporting = false,
-                    status = "failure",
+                PortableExportOutcome(
+                    success = false,
                     error = e.message ?: e.javaClass.simpleName
                 )
             }
-            val msg = when (outcome.status) {
-                "success" -> "Portable task exported to ${outcome.savedPath} (locator=${outcome.locatorStepCount}, semantic=${outcome.semanticStepCount})."
-                else -> "Portable task export failed: ${outcome.error}"
+            val msg = if (outcome.success) {
+                "导出成功：${outcome.savedPath}"
+            } else {
+                "导出失败：${outcome.error}"
             }
             withContext(Dispatchers.Main) {
-                _taskMapSaving.value = false
-                _portableTaskExportUiState.value = outcome
                 appendSystemMessage(msg)
+                showPortableNotice(msg)
             }
         }
     }
 
-    fun importPortableTaskFromUri(
-        uri: Uri,
-        onImported: ((String) -> Unit)? = null
-    ) {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot import portable task.")
-            return
-        }
-        _taskMapSaving.value = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val msg = runCatching {
-                val portableJson = readPortableTaskBundle(uri)
-                val portable = parsePortableTaskExport(portableJson)
-                coreClientGateway.withClient(port = port) { client ->
-                    when (portable.taskType) {
-                        "schedule" -> importPortableScheduleTask(client, portable)
-                        "notify_trigger" -> importPortableNotifyTriggerTask(client, portable)
-                        else -> throw IllegalArgumentException("Unsupported portable task type: ${portable.taskType}")
-                    }
-                }
-            }.getOrElse { e -> "Portable task import failed: ${e.message ?: e.javaClass.simpleName}" }
-            withContext(Dispatchers.Main) {
-                _taskMapSaving.value = false
-                appendSystemMessage(msg)
-                if (!msg.startsWith("Portable task import failed")) {
-                    val importedId = msg.substringAfter("created: ", "").substringBefore(" ").trim()
-                    onImported?.invoke(importedId)
-                }
-            }
-        }
+    private fun loadTemplateById(client: LocalLinkClient, templateId: String): TaskTemplateSummary? {
+        if (templateId.isBlank()) return null
+        val resp = client.sendCommand(
+            CommandIds.CMD_CORTEX_TEMPLATE_GET,
+            org.json.JSONObject().put("template_id", templateId.trim()).toString().toByteArray(Charsets.UTF_8),
+            timeoutMs = 6_000
+        )
+        return CoreApiParser.parseTemplateGet(resp).second
     }
 
-    fun importPortableTaskMapFromUri(
-        targetPackageName: String,
-        uri: Uri,
-        onImported: ((String) -> Unit)? = null
-    ) {
-        importPortableTaskFromUri(uri = uri, onImported = onImported)
+    private fun loadWorkflowById(client: LocalLinkClient, workflowId: String): WorkflowSummary? {
+        if (workflowId.isBlank()) return null
+        val resp = client.sendCommand(
+            CommandIds.CMD_CORTEX_WORKFLOW_GET,
+            org.json.JSONObject().put("workflow_id", workflowId.trim()).toString().toByteArray(Charsets.UTF_8),
+            timeoutMs = 6_000
+        )
+        return CoreApiParser.parseWorkflowGet(resp).second
     }
 
     fun deleteTaskMapByQuery(
@@ -1472,73 +1398,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshScheduleListOnDevice() {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot refresh schedule list.")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("limit", 100)
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_LIST,
-                        payload,
-                        timeoutMs = 5_000
-                    )
-                    CoreApiParser.parseScheduleList(
-                        payload = resp,
-                        repeatDaily = REPEAT_DAILY,
-                        repeatOnce = REPEAT_ONCE
-                    )
-                }
-            }.getOrElse { e -> Pair("Schedule list query failed: ${e.message}", emptyList<ScheduleSummary>()) }
-
-            withContext(Dispatchers.Main) {
-                _scheduleList.value = result.second
-                appendLog("[SCHEDULE] ${result.first}")
-                appendSystemMessage(result.first)
-            }
-        }
-    }
-
-    fun refreshNotifyRuleListOnDevice() {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot refresh notify rule list.")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "list_rules")
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_NOTIFY,
-                        payload,
-                        timeoutMs = 5_000
-                    )
-                    CoreApiParser.parseNotifyRuleList(resp)
-                }
-            }.getOrElse { e ->
-                Pair(
-                    "Notify rule list query failed: ${e.message}",
-                    emptyList<NotificationTriggerRuleSummary>()
-                )
-            }
-
-            withContext(Dispatchers.Main) {
-                _notifyRuleList.value = result.second
-                appendLog("[NOTIFY] ${result.first}")
-                appendSystemMessage(result.first)
-            }
-        }
-    }
-
     fun refreshTemplateListOnDevice(silent: Boolean = false) {
         val port = currentLxbPortOrNull() ?: run {
             if (!silent) appendSystemMessage("Invalid lxb-core port, cannot refresh templates.")
@@ -1670,10 +1529,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             workflowNotifyActiveTimeEnd.value = config.optString("active_time_end", "")
             workflowNotifyLlmConditionEnabled.value = config.optBoolean("llm_condition_enabled", false)
             workflowNotifyLlmCondition.value = config.optString("llm_condition", "")
-            val action = config.optJSONObject("action")
-            workflowNotifyActionPackage.value = action?.optString("package", "") ?: ""
-            workflowNotifyActionPlaybook.value = action?.optString("user_playbook", "") ?: ""
-            workflowNotifyActionRecordEnabled.value = action?.optBoolean("record_enabled", false) ?: false
         }
     }
 
@@ -1693,9 +1548,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         workflowNotifyActiveTimeEnd.value = ""
         workflowNotifyLlmConditionEnabled.value = false
         workflowNotifyLlmCondition.value = ""
-        workflowNotifyActionPackage.value = ""
-        workflowNotifyActionPlaybook.value = ""
-        workflowNotifyActionRecordEnabled.value = false
     }
 
     fun saveWorkflowOnDevice() {
@@ -1746,15 +1598,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         .put("active_time_start", workflowNotifyActiveTimeStart.value.trim())
                         .put("active_time_end", workflowNotifyActiveTimeEnd.value.trim())
                         .put("stop_after_matched", true)
-                        .put(
-                            "action",
-                            org.json.JSONObject()
-                                .put("type", "run_task")
-                                .put("user_task", "")
-                                .put("package", workflowNotifyActionPackage.value.trim())
-                                .put("user_playbook", workflowNotifyActionPlaybook.value.trim())
-                                .put("record_enabled", workflowNotifyActionRecordEnabled.value)
-                        )
                 }
                 val workflow = org.json.JSONObject()
                     .put("workflow_id", workflowId.value.trim())
@@ -1935,557 +1778,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog("[WORKFLOW] $result")
                 appendSystemMessage(result)
                 refreshTaskListOnDevice(silent = true)
-            }
-        }
-    }
-
-    fun upsertNotifyRuleOnDevice(editingRuleId: String = "") {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot upsert notify rule.")
-            return
-        }
-        val rule = buildNotifyRulePayloadOrNull(editingRuleId) ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "upsert_rule")
-                        .put("rule", rule)
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_NOTIFY,
-                        payload,
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseNotifyRuleUpsert(resp)
-                }
-            }.getOrElse { e -> Pair("Upsert notify rule failed: ${e.message}", "") }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[NOTIFY] ${result.first}")
-                appendSystemMessage(result.first)
-                if (result.second.isNotBlank()) {
-                    notifyRuleId.value = result.second
-                }
-                if (result.first.startsWith("Notify rule added") || result.first.startsWith("Notify rule updated")) {
-                    refreshNotifyRuleListOnDevice()
-                }
-            }
-        }
-    }
-
-    fun removeNotifyRuleOnDevice(ruleId: String) {
-        val rid = ruleId.trim()
-        if (rid.isEmpty()) {
-            appendSystemMessage("rule_id is empty.")
-            return
-        }
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot remove notify rule.")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "remove_rule")
-                        .put("rule_id", rid)
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_NOTIFY,
-                        payload,
-                        timeoutMs = 4_000
-                    )
-                    CoreApiParser.parseNotifyRuleRemove(resp, rid)
-                }
-            }.getOrElse { e -> "Remove notify rule failed: ${e.message}" }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[NOTIFY] $result")
-                appendSystemMessage(result)
-                refreshNotifyRuleListOnDevice()
-            }
-        }
-    }
-
-    fun loadNotifyRuleForm(rule: NotificationTriggerRuleSummary) {
-        notifyRuleId.value = rule.id
-        notifyName.value = rule.name
-        notifyEnabled.value = rule.enabled
-        notifyPriority.value = rule.priority.toString()
-        notifyPackageMode.value = normalizeNotifyPackageMode(rule.packageMode)
-        notifyPackageListRaw.value = rule.packageList.firstOrNull().orEmpty()
-        notifyTextMode.value = normalizeNotifyTextMode(rule.textMode)
-        notifyTitlePattern.value = rule.titlePattern
-        notifyBodyPattern.value = rule.bodyPattern
-        notifyLlmConditionEnabled.value = rule.llmConditionEnabled
-        notifyLlmCondition.value = rule.llmCondition
-        notifyLlmYesToken.value = if (rule.llmYesToken.isNotBlank()) rule.llmYesToken else "yes"
-        notifyLlmNoToken.value = if (rule.llmNoToken.isNotBlank()) rule.llmNoToken else "no"
-        notifyLlmTimeoutMs.value = rule.llmTimeoutMs.toString()
-        notifyTaskRewriteEnabled.value = rule.taskRewriteEnabled
-        notifyTaskRewriteInstruction.value = rule.taskRewriteInstruction
-        notifyTaskRewriteTimeoutMs.value = rule.taskRewriteTimeoutMs.toString()
-        notifyTaskRewriteFailPolicy.value = normalizeNotifyRewriteFailPolicy(rule.taskRewriteFailPolicy)
-        notifyCooldownMs.value = (rule.cooldownMs / 1000L).toString()
-        notifyActiveTimeStart.value = rule.activeTimeStart
-        notifyActiveTimeEnd.value = rule.activeTimeEnd
-        notifyStopAfterMatched.value = rule.stopAfterMatched
-        notifyActionType.value = if (rule.actionType.isNotBlank()) rule.actionType else "run_task"
-        notifyActionUserTask.value = rule.actionUserTask
-        notifyActionPackage.value = rule.actionPackage
-        notifyActionUserPlaybook.value = rule.actionUserPlaybook
-        notifyActionRecordEnabled.value = rule.actionRecordEnabled
-        notifyActionTaskMapMode.value = normalizeTaskMapMode(rule.actionTaskMapMode)
-        notifyActionUseMapMode.value = when (rule.actionUseMap) {
-            true -> NOTIFY_ACTION_USE_MAP_TRUE
-            false -> NOTIFY_ACTION_USE_MAP_FALSE
-            null -> NOTIFY_ACTION_USE_MAP_INHERIT
-        }
-    }
-
-    fun resetNotifyRuleForm() {
-        notifyRuleId.value = ""
-        notifyName.value = ""
-        notifyEnabled.value = true
-        notifyPriority.value = "100"
-        notifyPackageMode.value = "any"
-        notifyPackageListRaw.value = ""
-        notifyTextMode.value = "contains"
-        notifyTitlePattern.value = ""
-        notifyBodyPattern.value = ""
-        notifyLlmConditionEnabled.value = false
-        notifyLlmCondition.value = ""
-        notifyLlmYesToken.value = "yes"
-        notifyLlmNoToken.value = "no"
-        notifyLlmTimeoutMs.value = "60000"
-        notifyTaskRewriteEnabled.value = true
-        notifyTaskRewriteInstruction.value = ""
-        notifyTaskRewriteTimeoutMs.value = "60000"
-        notifyTaskRewriteFailPolicy.value = "fallback_raw_task"
-        notifyCooldownMs.value = "60"
-        notifyActiveTimeStart.value = ""
-        notifyActiveTimeEnd.value = ""
-        notifyStopAfterMatched.value = true
-        notifyActionType.value = "run_task"
-        notifyActionUserTask.value = ""
-        notifyActionPackage.value = ""
-        notifyActionUserPlaybook.value = ""
-        notifyActionRecordEnabled.value = false
-        notifyActionTaskMapMode.value = TASK_MAP_MODE_OFF
-        notifyActionUseMapMode.value = NOTIFY_ACTION_USE_MAP_INHERIT
-    }
-
-    private fun buildNotifyRulePayloadOrNull(editingRuleId: String): org.json.JSONObject? {
-        val id = if (editingRuleId.isNotBlank()) editingRuleId.trim() else notifyRuleId.value.trim()
-        val actionTask = notifyActionUserTask.value.trim()
-        if (actionTask.isEmpty()) {
-            appendSystemMessage("Task description is empty.")
-            return null
-        }
-
-        val selectedPackage = notifyPackageListRaw.value.trim()
-        if (selectedPackage.isEmpty()) {
-            appendSystemMessage("Package is required.")
-            return null
-        }
-        val packageList = if (selectedPackage.isEmpty()) emptyList() else listOf(selectedPackage)
-        val packageMode = if (packageList.isEmpty()) "any" else "allowlist"
-        val cooldownSec = notifyCooldownMs.value.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 60L
-        val action = org.json.JSONObject()
-            .put("type", "run_task")
-            .put("user_task", actionTask)
-            .put("package", notifyActionPackage.value.trim())
-            .put("user_playbook", notifyActionUserPlaybook.value.trim())
-            .put("record_enabled", notifyActionRecordEnabled.value)
-            .put("task_map_mode", normalizeTaskMapMode(notifyActionTaskMapMode.value))
-
-        when (normalizeNotifyActionUseMap(notifyActionUseMapMode.value)) {
-            NOTIFY_ACTION_USE_MAP_TRUE -> action.put("use_map", true)
-            NOTIFY_ACTION_USE_MAP_FALSE -> action.put("use_map", false)
-        }
-
-        val rule = org.json.JSONObject()
-            .put("name", notifyName.value.trim())
-            .put("enabled", notifyEnabled.value)
-            .put("priority", notifyPriority.value.trim().toIntOrNull() ?: 100)
-            .put("package_mode", packageMode)
-            .put("package_list", org.json.JSONArray(packageList))
-            .put("text_mode", "contains")
-            .put("title_pattern", notifyTitlePattern.value.trim())
-            .put("body_pattern", notifyBodyPattern.value.trim())
-            .put("llm_condition_enabled", notifyLlmConditionEnabled.value)
-            .put("llm_condition", notifyLlmCondition.value.trim())
-            .put("llm_yes_token", "yes")
-            .put("llm_no_token", "no")
-            .put("llm_timeout_ms", 60000L)
-            .put("task_rewrite_enabled", true)
-            .put("task_rewrite_instruction", "")
-            .put("task_rewrite_timeout_ms", 60000L)
-            .put("task_rewrite_fail_policy", "fallback_raw_task")
-            .put("cooldown_ms", cooldownSec * 1000L)
-            .put("active_time_start", notifyActiveTimeStart.value.trim())
-            .put("active_time_end", notifyActiveTimeEnd.value.trim())
-            .put("stop_after_matched", true)
-            .put("action", action)
-        if (id.isNotBlank()) {
-            rule.put("id", id)
-        }
-        return rule
-    }
-
-    private fun normalizeNotifyPackageMode(raw: String?): String {
-        return when (raw?.trim()?.lowercase()) {
-            "allowlist" -> "allowlist"
-            "blocklist" -> "blocklist"
-            else -> "any"
-        }
-    }
-
-    private fun normalizeNotifyTextMode(raw: String?): String {
-        return when (raw?.trim()?.lowercase()) {
-            "regex" -> "regex"
-            else -> "contains"
-        }
-    }
-
-    private fun normalizeNotifyRewriteFailPolicy(raw: String?): String {
-        return when (raw?.trim()?.lowercase()) {
-            "skip" -> "skip"
-            else -> "fallback_raw_task"
-        }
-    }
-
-    private fun buildScheduleDraftOrNull(): ScheduleDraft? {
-        val input = ScheduleFormInput(
-            name = scheduleName.value,
-            task = scheduleTask.value,
-            packageName = schedulePackage.value,
-            playbook = schedulePlaybook.value,
-            enabled = scheduleEnabled.value,
-            recordEnabled = scheduleRecordEnabled.value,
-            taskMapMode = normalizeTaskMapMode(scheduleTaskMapMode.value),
-            runAtRaw = scheduleStartAtMs.value,
-            repeatModeRaw = scheduleRepeatMode.value,
-            repeatWeekdays = scheduleRepeatWeekdays.value
-        )
-        return ScheduleUseCase.buildDraft(
-            input = input,
-            nowMs = System.currentTimeMillis(),
-            repeatOnce = REPEAT_ONCE,
-            repeatWeekly = REPEAT_WEEKLY
-        ).getOrElse { e ->
-            appendSystemMessage(e.message ?: "Invalid schedule input.")
-            null
-        }
-    }
-
-    private fun buildScheduleUpsertPayload(
-        draft: ScheduleDraft,
-        scheduleId: String? = null
-    ): ByteArray {
-        return ScheduleUseCase.buildUpsertPayload(
-            draft = draft,
-            traceUdpPort = TRACE_PUSH_PORT,
-            repeatDaily = REPEAT_DAILY,
-            scheduleId = scheduleId
-        )
-    }
-
-    fun addScheduleOnDevice() {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot add schedule.")
-            return
-        }
-        val draft = buildScheduleDraftOrNull() ?: return
-
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_ADD,
-                        buildScheduleUpsertPayload(draft = draft),
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseScheduleAdd(resp)
-                }
-            }.getOrElse { e -> "Add schedule failed: ${e.message}" }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[SCHEDULE] $result")
-                appendSystemMessage(result)
-                if (result.startsWith("Schedule added")) {
-                    refreshScheduleListOnDevice()
-                }
-            }
-        }
-    }
-
-    fun updateScheduleOnDevice(scheduleId: String) {
-        val sid = scheduleId.trim()
-        if (sid.isEmpty()) {
-            appendSystemMessage("schedule_id is empty.")
-            return
-        }
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot update schedule.")
-            return
-        }
-        val draft = buildScheduleDraftOrNull() ?: return
-
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_UPDATE,
-                        buildScheduleUpsertPayload(
-                            draft = draft,
-                            scheduleId = sid
-                        ),
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseScheduleUpdate(resp, sid)
-                }
-            }.getOrElse { e -> "Update schedule failed: ${e.message}" }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[SCHEDULE] $result")
-                appendSystemMessage(result)
-                if (result.startsWith("Schedule updated")) {
-                    refreshScheduleListOnDevice()
-                }
-            }
-        }
-    }
-
-    fun removeScheduleOnDevice(scheduleId: String) {
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot remove schedule.")
-            return
-        }
-        if (scheduleId.isBlank()) {
-            appendSystemMessage("schedule_id is empty.")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payloadJson = org.json.JSONObject()
-                        .put("schedule_id", scheduleId)
-                        .toString()
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_REMOVE,
-                        payloadJson.toByteArray(Charsets.UTF_8),
-                        timeoutMs = 4_000
-                    )
-                    CoreApiParser.parseScheduleRemove(resp, scheduleId)
-                }
-            }.getOrElse { e -> "Remove schedule failed: ${e.message}" }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[SCHEDULE] $result")
-                appendSystemMessage(result)
-                refreshScheduleListOnDevice()
-            }
-        }
-    }
-
-    fun triggerScheduleNowOnDevice(scheduleId: String) {
-        val sid = scheduleId.trim()
-        if (sid.isEmpty()) {
-            appendSystemMessage("schedule_id is empty.")
-            return
-        }
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot trigger schedule.")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payloadJson = org.json.JSONObject()
-                        .put("schedule_id", sid)
-                        .toString()
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_TRIGGER,
-                        payloadJson.toByteArray(Charsets.UTF_8),
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseScheduleTrigger(resp, sid)
-                }
-            }.getOrElse { e ->
-                ScheduleTriggerParsed(
-                    message = "Trigger schedule failed: ${e.message ?: e.toString()}",
-                    taskId = "",
-                    scheduleId = sid
-                )
-            }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[SCHEDULE] ${result.message}")
-                appendSystemMessage(result.message)
-                if (result.taskId.isNotBlank()) {
-                    refreshScheduleListOnDevice()
-                    refreshTaskListOnDevice(silent = true)
-                }
-            }
-        }
-    }
-
-    fun loadScheduleForm(schedule: ScheduleSummary) {
-        scheduleName.value = schedule.name
-        scheduleTask.value = schedule.userTask
-        scheduleStartAtMs.value = schedule.runAtMs.toString()
-        scheduleRepeatMode.value = schedule.repeatMode.ifBlank { REPEAT_ONCE }
-        scheduleRepeatWeekdays.value = schedule.repeatWeekdays
-        schedulePackage.value = schedule.packageName
-        schedulePlaybook.value = schedule.userPlaybook
-        scheduleEnabled.value = schedule.enabled
-        scheduleRecordEnabled.value = schedule.recordEnabled
-        scheduleTaskMapMode.value = normalizeTaskMapMode(schedule.taskMapMode)
-    }
-
-    fun resetScheduleForm() {
-        scheduleName.value = ""
-        scheduleTask.value = ""
-        scheduleStartAtMs.value = (System.currentTimeMillis() + 5 * 60_000L).toString()
-        scheduleRepeatMode.value = REPEAT_ONCE
-        scheduleRepeatWeekdays.value = 0b0011111
-        schedulePackage.value = ""
-        schedulePlaybook.value = ""
-        scheduleEnabled.value = true
-        scheduleRecordEnabled.value = false
-        scheduleTaskMapMode.value = TASK_MAP_MODE_OFF
-    }
-
-    fun toggleScheduleEnabledOnDevice(schedule: ScheduleSummary, enabled: Boolean) {
-        val sid = schedule.scheduleId.trim()
-        if (sid.isEmpty()) {
-            appendSystemMessage("schedule_id is empty.")
-            return
-        }
-        if (enabled && schedule.repeatMode == REPEAT_ONCE && schedule.runAtMs <= System.currentTimeMillis()) {
-            appendSystemMessage("One-shot schedule in the past cannot be enabled again.")
-            return
-        }
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot update schedule.")
-            return
-        }
-        val draft = ScheduleDraft(
-            name = schedule.name,
-            task = schedule.userTask,
-            packageName = schedule.packageName,
-            playbook = schedule.userPlaybook,
-            enabled = enabled,
-            recordEnabled = schedule.recordEnabled,
-            taskMapMode = normalizeTaskMapMode(schedule.taskMapMode),
-            runAt = schedule.runAtMs,
-            repeatMode = schedule.repeatMode.ifBlank { REPEAT_ONCE },
-            repeatWeekdays = schedule.repeatWeekdays
-        )
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_SCHEDULE_UPDATE,
-                        buildScheduleUpsertPayload(draft = draft, scheduleId = sid),
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseScheduleUpdate(resp, sid)
-                }
-            }.getOrElse { e -> "Update schedule failed: ${e.message}" }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[SCHEDULE] $result")
-                appendSystemMessage(result)
-                if (result.startsWith("Schedule updated")) {
-                    _scheduleList.value = _scheduleList.value.map {
-                        if (it.scheduleId == sid) it.copy(enabled = enabled) else it
-                    }
-                    refreshScheduleListOnDevice()
-                }
-            }
-        }
-    }
-
-    private fun buildNotifyRulePayload(rule: NotificationTriggerRuleSummary, enabled: Boolean): org.json.JSONObject {
-        val action = org.json.JSONObject()
-            .put("type", if (rule.actionType.isNotBlank()) rule.actionType else "run_task")
-            .put("user_task", rule.actionUserTask)
-            .put("package", rule.actionPackage)
-            .put("user_playbook", rule.actionUserPlaybook)
-            .put("record_enabled", rule.actionRecordEnabled)
-        when (rule.actionUseMap) {
-            true -> action.put("use_map", true)
-            false -> action.put("use_map", false)
-            null -> {}
-        }
-        return org.json.JSONObject()
-            .put("id", rule.id)
-            .put("name", rule.name)
-            .put("enabled", enabled)
-            .put("priority", rule.priority)
-            .put("package_mode", normalizeNotifyPackageMode(rule.packageMode))
-            .put("package_list", org.json.JSONArray(rule.packageList))
-            .put("text_mode", normalizeNotifyTextMode(rule.textMode))
-            .put("title_pattern", rule.titlePattern)
-            .put("body_pattern", rule.bodyPattern)
-            .put("llm_condition_enabled", rule.llmConditionEnabled)
-            .put("llm_condition", rule.llmCondition)
-            .put("llm_yes_token", if (rule.llmYesToken.isNotBlank()) rule.llmYesToken else "yes")
-            .put("llm_no_token", if (rule.llmNoToken.isNotBlank()) rule.llmNoToken else "no")
-            .put("llm_timeout_ms", rule.llmTimeoutMs)
-            .put("task_rewrite_enabled", rule.taskRewriteEnabled)
-            .put("task_rewrite_instruction", rule.taskRewriteInstruction)
-            .put("task_rewrite_timeout_ms", rule.taskRewriteTimeoutMs)
-            .put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(rule.taskRewriteFailPolicy))
-            .put("cooldown_ms", rule.cooldownMs)
-            .put("active_time_start", rule.activeTimeStart)
-            .put("active_time_end", rule.activeTimeEnd)
-            .put("stop_after_matched", rule.stopAfterMatched)
-            .put("action", action)
-    }
-
-    fun toggleNotifyRuleEnabledOnDevice(rule: NotificationTriggerRuleSummary, enabled: Boolean) {
-        val rid = rule.id.trim()
-        if (rid.isEmpty()) {
-            appendSystemMessage("rule_id is empty.")
-            return
-        }
-        val port = currentLxbPortOrNull() ?: run {
-            appendSystemMessage("Invalid lxb-core port, cannot upsert notify rule.")
-            return
-        }
-        val payloadRule = buildNotifyRulePayload(rule, enabled)
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                coreClientGateway.withClient(port = port) { client ->
-                    val payload = org.json.JSONObject()
-                        .put("action", "upsert_rule")
-                        .put("rule", payloadRule)
-                        .toString()
-                        .toByteArray(Charsets.UTF_8)
-                    val resp = client.sendCommand(
-                        CommandIds.CMD_CORTEX_NOTIFY,
-                        payload,
-                        timeoutMs = 6_000
-                    )
-                    CoreApiParser.parseNotifyRuleUpsert(resp)
-                }
-            }.getOrElse { e -> Pair("Upsert notify rule failed: ${e.message}", "") }
-
-            withContext(Dispatchers.Main) {
-                appendLog("[NOTIFY] ${result.first}")
-                appendSystemMessage(result.first)
-                if (result.first.startsWith("Notify rule updated")) {
-                    _notifyRuleList.value = _notifyRuleList.value.map {
-                        if (it.id == rid) it.copy(enabled = enabled) else it
-                    }
-                    refreshNotifyRuleListOnDevice()
-                }
             }
         }
     }
@@ -3137,6 +2429,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _chatMessages.value = current
     }
 
+    private fun showPortableNotice(text: String) {
+        val localized = UiMessageLocalizer.localize(uiLang.value, text)
+        _portableOperationNotice.tryEmit(localized)
+    }
+
     override fun onCleared() {
         super.onCleared()
         unregisterWirelessBootstrapReceiver()
@@ -3243,293 +2540,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return merged.values.sortedBy { it.seq }
     }
 
-    private fun buildPortableTaskExportJson(
-        routeBundleJson: String,
-        taskType: String,
-        taskName: String,
-        packageName: String,
-        userTask: String,
-        userPlaybook: String,
-        mode: String,
-        taskConfig: org.json.JSONObject?
-    ): String {
-        val bundle = org.json.JSONObject(routeBundleJson)
-        val normalizedType = normalizePortableTaskType(taskType)
-        if (normalizedType.isEmpty()) {
-            throw IllegalArgumentException("Unsupported portable task type: $taskType")
-        }
-        val taskInfo = bundle.optJSONObject("task_info") ?: org.json.JSONObject().also {
-            bundle.put("task_info", it)
-        }
-        bundle.put("task_type", normalizedType)
-        taskInfo.remove("task_id")
-        taskInfo.remove("route_id")
-        taskInfo.remove("source")
-        taskInfo.remove("source_id")
-        taskInfo.remove("created_at")
-        taskInfo.remove("created_at_ms")
-        taskInfo.remove("run_at")
-        taskInfo.remove("next_run_at")
-        if (taskName.isNotBlank()) taskInfo.put("name", taskName.trim())
-        if (userTask.isNotBlank()) taskInfo.put("user_task", userTask.trim())
-        if (packageName.isNotBlank()) taskInfo.put("package_name", packageName.trim())
-        if (userPlaybook.isNotBlank()) taskInfo.put("user_playbook", userPlaybook.trim())
-        taskInfo.put("task_map_mode", normalizeTaskMapMode(mode.ifBlank { TASK_MAP_MODE_MANUAL }))
-        val cleanConfig = cleanPortableTaskConfig(normalizedType, taskConfig, taskInfo)
-        bundle.put("task_config", cleanConfig)
-        return bundle.toString(2)
-    }
-
-    private fun cleanPortableTaskConfig(
-        taskType: String,
-        raw: org.json.JSONObject?,
-        taskInfo: org.json.JSONObject
-    ): org.json.JSONObject {
-        val config = org.json.JSONObject()
-        config.put("type", taskType)
-        config.put("name", raw?.optString("name", "")?.trim().orEmpty().ifBlank { taskInfo.optString("name", "") })
-        config.put("user_task", raw?.optString("user_task", "")?.trim().orEmpty().ifBlank { taskInfo.optString("user_task", "") })
-        config.put("package_name", raw?.optString("package_name", "")?.trim().orEmpty().ifBlank { taskInfo.optString("package_name", "") })
-        config.put("user_playbook", raw?.optString("user_playbook", "")?.trim().orEmpty().ifBlank { taskInfo.optString("user_playbook", "") })
-        config.put("task_map_mode", normalizeTaskMapMode(raw?.optString("task_map_mode", "")?.ifBlank { taskInfo.optString("task_map_mode", "") }))
-        if (taskType == "notify_trigger") {
-            val packageList = raw?.optJSONArray("package_list") ?: org.json.JSONArray().put(config.optString("package_name", ""))
-            config.put("package_mode", normalizeNotifyPackageMode(raw?.optString("package_mode", "allowlist")))
-            config.put("package_list", packageList)
-            config.put("text_mode", normalizeNotifyTextMode(raw?.optString("text_mode", "contains")))
-            config.put("title_pattern", raw?.optString("title_pattern", "")?.trim().orEmpty())
-            config.put("body_pattern", raw?.optString("body_pattern", "")?.trim().orEmpty())
-            config.put("llm_condition_enabled", raw?.optBoolean("llm_condition_enabled", false) ?: false)
-            config.put("llm_condition", raw?.optString("llm_condition", "")?.trim().orEmpty())
-            config.put("task_rewrite_enabled", raw?.optBoolean("task_rewrite_enabled", true) ?: true)
-            config.put("task_rewrite_instruction", raw?.optString("task_rewrite_instruction", "")?.trim().orEmpty())
-            config.put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(raw?.optString("task_rewrite_fail_policy", "fallback_raw_task")))
-            config.put("stop_after_matched", raw?.optBoolean("stop_after_matched", true) ?: true)
-            config.put("action_use_map", normalizeNotifyActionUseMap(raw?.optString("action_use_map", NOTIFY_ACTION_USE_MAP_TRUE)))
-        }
-        return config
-    }
-
-    private fun parsePortableTaskExport(portableJson: String): PortableTaskImportBundle {
-        val obj = runCatching { org.json.JSONObject(portableJson) }.getOrElse {
-            throw IllegalArgumentException("Invalid portable task JSON.")
-        }
-        if (obj.optString("schema", "") != "task_route_asset.v1") {
-            throw IllegalArgumentException("Unsupported portable task schema: ${obj.optString("schema", "")}")
-        }
-        val taskType = normalizePortableTaskType(obj.optString("task_type", ""))
-        if (taskType.isEmpty()) {
-            throw IllegalArgumentException("Unsupported portable task type: ${obj.optString("task_type", "")}")
-        }
-        if (!obj.has("segments") || obj.optJSONArray("segments") == null) {
-            throw IllegalArgumentException("Portable task route segments are missing.")
-        }
-        val taskInfo = obj.optJSONObject("task_info") ?: throw IllegalArgumentException("Portable task_info is missing.")
-        val taskConfig = obj.optJSONObject("task_config") ?: throw IllegalArgumentException("Portable task_config is missing.")
-        val userTask = taskConfig.optString("user_task", taskInfo.optString("user_task", "")).trim()
-        if (userTask.isEmpty()) {
-            throw IllegalArgumentException("Portable task user_task is missing.")
-        }
-        if (taskType == "notify_trigger") {
-            val packages = taskConfig.optJSONArray("package_list")
-            val title = taskConfig.optString("title_pattern", "").trim()
-            val body = taskConfig.optString("body_pattern", "").trim()
-            val llmEnabled = taskConfig.optBoolean("llm_condition_enabled", false)
-            val llmCondition = taskConfig.optString("llm_condition", "").trim()
-            if (packages == null || packages.length() <= 0) {
-                throw IllegalArgumentException("Portable notification trigger package_list is missing.")
-            }
-            if (title.isEmpty() && body.isEmpty() && (!llmEnabled || llmCondition.isEmpty())) {
-                throw IllegalArgumentException("Portable notification trigger condition is missing.")
-            }
-        }
-        return PortableTaskImportBundle(
-            taskType = taskType,
-            taskInfo = taskInfo,
-            routeBundleJson = obj.toString(),
-            routeBundle = obj,
-            taskConfig = taskConfig
-        )
-    }
-
-    private fun importPortableScheduleTask(
-        client: LocalLinkClient,
-        portable: PortableTaskImportBundle
-    ): String {
-        val config = portable.taskConfig
-        val taskInfo = portable.taskInfo
-        val userTask = config.optString("user_task", taskInfo.optString("user_task", "")).trim()
-        val packageName = config.optString("package_name", taskInfo.optString("package_name", "")).trim()
-        val playbook = config.optString("user_playbook", taskInfo.optString("user_playbook", "")).trim()
-        val taskMapMode = normalizeTaskMapMode(config.optString("task_map_mode", TASK_MAP_MODE_MANUAL)).let {
-            if (it == TASK_MAP_MODE_OFF) TASK_MAP_MODE_MANUAL else it
-        }
-        val runAt = System.currentTimeMillis() + 5 * 60_000L
-        val draft = ScheduleDraft(
-            name = config.optString("name", taskInfo.optString("name", "")).trim().ifBlank { "Imported task" },
-            task = userTask,
-            packageName = packageName,
-            playbook = playbook,
-            enabled = false,
-            recordEnabled = false,
-            taskMapMode = taskMapMode,
-            runAt = runAt,
-            repeatMode = REPEAT_ONCE,
-            repeatWeekdays = 0b0011111
-        )
-        val addResp = client.sendCommand(
-            CommandIds.CMD_CORTEX_SCHEDULE_ADD,
-            buildScheduleUpsertPayload(draft = draft),
-            timeoutMs = 6_000
-        )
-        val addText = addResp.toString(Charsets.UTF_8)
-        val addObj = org.json.JSONObject(addText)
-        if (!addObj.optBoolean("ok", false)) {
-            throw IllegalStateException("Create imported schedule failed: ${addText.take(220)}")
-        }
-        val scheduleId = addObj.optJSONObject("schedule")?.optString("schedule_id", "").orEmpty()
-        if (scheduleId.isBlank()) {
-            throw IllegalStateException("Create imported schedule failed: schedule_id missing")
-        }
-        val disableResp = client.sendCommand(
-            CommandIds.CMD_CORTEX_SCHEDULE_UPDATE,
-            buildScheduleUpsertPayload(draft = draft, scheduleId = scheduleId),
-            timeoutMs = 6_000
-        )
-        val disableText = disableResp.toString(Charsets.UTF_8)
-        val disableObj = org.json.JSONObject(disableText)
-        if (!disableObj.optBoolean("ok", false)) {
-            throw IllegalStateException("Disable imported schedule failed: ${disableText.take(220)}")
-        }
-        val routeResult = importPortableRouteIntoTask(
-            client = client,
-            portable = portable,
-            targetRouteId = "schedule:$scheduleId",
-            source = "schedule",
-            sourceId = scheduleId,
-            packageName = packageName
-        )
-        return "Portable schedule task created: $scheduleId (route=${routeResult.first}, pending_adaptation=${routeResult.second}, executable=${routeResult.third})."
-    }
-
-    private fun importPortableNotifyTriggerTask(
-        client: LocalLinkClient,
-        portable: PortableTaskImportBundle
-    ): String {
-        val config = portable.taskConfig
-        val taskInfo = portable.taskInfo
-        val userTask = config.optString("user_task", taskInfo.optString("user_task", "")).trim()
-        val packageName = config.optString("package_name", taskInfo.optString("package_name", "")).trim()
-        val taskMapMode = normalizeTaskMapMode(config.optString("task_map_mode", TASK_MAP_MODE_MANUAL)).let {
-            if (it == TASK_MAP_MODE_OFF) TASK_MAP_MODE_MANUAL else it
-        }
-        val packageList = config.optJSONArray("package_list") ?: org.json.JSONArray().put(packageName)
-        val action = org.json.JSONObject()
-            .put("type", "run_task")
-            .put("user_task", userTask)
-            .put("package", packageName)
-            .put("user_playbook", config.optString("user_playbook", taskInfo.optString("user_playbook", "")).trim())
-            .put("record_enabled", false)
-            .put("task_map_mode", taskMapMode)
-        when (normalizeNotifyActionUseMap(config.optString("action_use_map", NOTIFY_ACTION_USE_MAP_TRUE))) {
-            NOTIFY_ACTION_USE_MAP_TRUE -> action.put("use_map", true)
-            NOTIFY_ACTION_USE_MAP_FALSE -> action.put("use_map", false)
-        }
-        val rule = org.json.JSONObject()
-            .put("name", config.optString("name", taskInfo.optString("name", "")).trim().ifBlank { "Imported notification task" })
-            .put("enabled", false)
-            .put("priority", 100)
-            .put("package_mode", normalizeNotifyPackageMode(config.optString("package_mode", "allowlist")))
-            .put("package_list", packageList)
-            .put("text_mode", normalizeNotifyTextMode(config.optString("text_mode", "contains")))
-            .put("title_pattern", config.optString("title_pattern", "").trim())
-            .put("body_pattern", config.optString("body_pattern", "").trim())
-            .put("llm_condition_enabled", config.optBoolean("llm_condition_enabled", false))
-            .put("llm_condition", config.optString("llm_condition", "").trim())
-            .put("llm_yes_token", "yes")
-            .put("llm_no_token", "no")
-            .put("llm_timeout_ms", 60000L)
-            .put("task_rewrite_enabled", config.optBoolean("task_rewrite_enabled", true))
-            .put("task_rewrite_instruction", config.optString("task_rewrite_instruction", "").trim())
-            .put("task_rewrite_timeout_ms", 60000L)
-            .put("task_rewrite_fail_policy", normalizeNotifyRewriteFailPolicy(config.optString("task_rewrite_fail_policy", "fallback_raw_task")))
-            .put("cooldown_ms", 60_000L)
-            .put("active_time_start", "")
-            .put("active_time_end", "")
-            .put("stop_after_matched", config.optBoolean("stop_after_matched", true))
-            .put("action", action)
-        val resp = client.sendCommand(
-            CommandIds.CMD_CORTEX_NOTIFY,
-            org.json.JSONObject()
-                .put("action", "upsert_rule")
-                .put("rule", rule)
-                .toString()
-                .toByteArray(Charsets.UTF_8),
-            timeoutMs = 6_000
-        )
-        val text = resp.toString(Charsets.UTF_8)
-        val obj = org.json.JSONObject(text)
-        if (!obj.optBoolean("ok", false)) {
-            throw IllegalStateException("Create imported notification trigger failed: ${text.take(220)}")
-        }
-        val ruleId = obj.optJSONObject("rule")?.optString("id", "").orEmpty()
-        if (ruleId.isBlank()) {
-            throw IllegalStateException("Create imported notification trigger failed: rule id missing")
-        }
-        val routeResult = importPortableRouteIntoTask(
-            client = client,
-            portable = portable,
-            targetRouteId = "notify:$ruleId",
-            source = "notify_trigger",
-            sourceId = ruleId,
-            packageName = packageName
-        )
-        return "Portable notification task created: $ruleId (route=${routeResult.first}, pending_adaptation=${routeResult.second}, executable=${routeResult.third})."
-    }
-
-    private fun importPortableRouteIntoTask(
-        client: LocalLinkClient,
-        portable: PortableTaskImportBundle,
-        targetRouteId: String,
-        source: String,
-        sourceId: String,
-        packageName: String
-    ): Triple<String, Int, Int> {
-        val payload = org.json.JSONObject()
-            .put("action", "import_portable")
-            .put("target_route_id", targetRouteId)
-            .put("target_package_name", packageName.trim())
-            .put("source", source)
-            .put("source_id", sourceId)
-            .put("package_name", packageName.trim())
-            .put("bundle_json", portable.routeBundleJson)
-            .toString()
-            .toByteArray(Charsets.UTF_8)
-        val resp = client.sendCommand(
-            CommandIds.CMD_CORTEX_TASK_MAP,
-            payload,
-            timeoutMs = 8_000
-        )
-        val text = resp.toString(Charsets.UTF_8)
-        val obj = org.json.JSONObject(text)
-        if (!obj.optBoolean("ok", false)) {
-            throw IllegalStateException("Import portable route failed: ${text.take(220)}")
-        }
-        return Triple(
-            obj.optString("route_id", targetRouteId),
-            obj.optInt("pending_adaptation_count", 0),
-            obj.optInt("materialized_count", 0)
-        )
-    }
-
-    private fun normalizePortableTaskType(raw: String?): String {
-        return when (raw?.trim()?.lowercase()) {
-            "schedule", "scheduled_task" -> "schedule"
-            "notify_trigger", "notification_trigger", "notification" -> "notify_trigger"
-            else -> ""
-        }
-    }
-
     private fun writeTraceExportFile(entries: List<TraceEntry>): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
@@ -3575,11 +2585,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return fallbackFile.absolutePath
     }
 
-    private fun writePortableTaskExportFile(bundleJson: String): String {
+    private fun writePortableBundleExportFile(bundleJson: String, kind: String): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val fileName = "lxb-task-portable-$stamp.json"
+        val safeKind = when (kind.trim().lowercase(Locale.US)) {
+            "workflow" -> "workflow"
+            "template" -> "template"
+            else -> "bundle"
+        }
+        val fileName = "lxb-$safeKind-portable-$stamp.json"
         val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/LXB/Tasks"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -3612,7 +2627,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return fallbackFile.absolutePath
     }
 
-    private fun readPortableTaskBundle(uri: Uri): String {
+    private fun readPortableBundle(uri: Uri): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
         val stream = resolver.openInputStream(uri)

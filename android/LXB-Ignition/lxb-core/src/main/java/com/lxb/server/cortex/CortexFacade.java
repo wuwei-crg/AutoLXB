@@ -924,6 +924,18 @@ public class CortexFacade {
         }
     }
 
+    public byte[] handleCortexPortable(byte[] payload) {
+        try {
+            Map<String, Object> req = parseJsonPayload(payload);
+            String action = stringOrEmpty(req.get("action")).toLowerCase();
+            if (action.isEmpty()) return err("action is required");
+            Map<String, Object> out = taskManager.handlePortable(action, req);
+            return ok(Json.stringify(out));
+        } catch (Exception e) {
+            return err(String.valueOf(e));
+        }
+    }
+
     public byte[] handleCortexTaskMap(byte[] payload) {
         try {
             String s = payload != null && payload.length > 0

@@ -56,11 +56,6 @@ object UiMessageLocalizer {
             text.startsWith("Pull candidate map failed: ") -> "拉取 Candidate 地图失败: " + text.removePrefix("Pull candidate map failed: ")
             text == "Route ID is empty." -> "任务路线 ID 为空。"
             text == "Task identity is empty." -> "任务标识为空。"
-            text.startsWith("Portable task exported to ") -> "便携任务已导出到 " + text.removePrefix("Portable task exported to ")
-            text.startsWith("Portable task export failed: ") -> "便携任务导出失败: " + text.removePrefix("Portable task export failed: ")
-            text.startsWith("Portable task imported as new task ") -> "便携任务已导入为新任务 " + text.removePrefix("Portable task imported as new task ")
-            text.startsWith("Portable schedule task created: ") -> "便携定时任务已创建: " + text.removePrefix("Portable schedule task created: ")
-            text.startsWith("Portable notification task created: ") -> "便携通知触发任务已创建: " + text.removePrefix("Portable notification task created: ")
             text.startsWith("Schedule triggered: ") -> "定时任务已立即触发: " + text.removePrefix("Schedule triggered: ")
             text.startsWith("Trigger schedule failed: ") -> "立即触发定时任务失败: " + text.removePrefix("Trigger schedule failed: ")
             text.startsWith("Template list query failed: ") -> "任务模板列表查询失败: " + text.removePrefix("Template list query failed: ")
@@ -87,18 +82,6 @@ object UiMessageLocalizer {
             text.startsWith("Workflow run failed: ") -> "运行工作流失败: " + text.removePrefix("Workflow run failed: ")
             text == "Workflow submitted." -> "工作流已提交执行。"
             text.startsWith("Workflow submitted: ") -> "工作流已提交执行: " + text.removePrefix("Workflow submitted: ")
-            text.startsWith("Portable task import failed: Invalid portable task JSON.") -> "便携任务导入失败: 便携任务 JSON 无效。"
-            text.startsWith("Portable task import failed: Unsupported portable task schema: ") -> "便携任务导入失败: 不支持的 schema: " + text.removePrefix("Portable task import failed: Unsupported portable task schema: ")
-            text.startsWith("Portable task import failed: Unsupported portable task type: ") -> "便携任务导入失败: 不支持的任务类型: " + text.removePrefix("Portable task import failed: Unsupported portable task type: ")
-            text.startsWith("Portable task import failed: Portable task route segments are missing.") -> "便携任务导入失败: 缺少路线片段。"
-            text.startsWith("Portable task import failed: Portable task_info is missing.") -> "便携任务导入失败: 缺少 task_info。"
-            text.startsWith("Portable task import failed: Portable task_config is missing.") -> "便携任务导入失败: 缺少 task_config。"
-            text.startsWith("Portable task import failed: Portable task user_task is missing.") -> "便携任务导入失败: 缺少任务描述。"
-            text.startsWith("Portable task import failed: Portable notification trigger package_list is missing.") -> "便携任务导入失败: 通知触发规则缺少监听应用。"
-            text.startsWith("Portable task import failed: Portable notification trigger condition is missing.") -> "便携任务导入失败: 通知触发规则缺少触发条件。"
-            text.startsWith("Portable task import failed: Cannot open portable task file.") -> "便携任务导入失败: 无法打开便携任务文件。"
-            text.startsWith("Portable task import failed: Import portable route failed: ") -> "便携任务导入失败: 导入路线失败: " + text.removePrefix("Portable task import failed: Import portable route failed: ")
-            text.startsWith("Portable task import failed: ") -> "便携任务导入失败: " + text.removePrefix("Portable task import failed: ")
             else -> text
         }
     }

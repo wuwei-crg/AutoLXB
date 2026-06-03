@@ -138,3 +138,86 @@ Schedules list after workflow migration.
 Migrate the legacy schedule into one `TaskTemplate` plus one visible
 `Workflow` whose embedded `trigger_config` carries the schedule fields, then
 clear the legacy schedule row to avoid duplicate automatic firing.
+
+## Scenario: Workflow And Template Portable Bundles
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing portable import/export for Cortex task templates,
+  workflows, or route compatibility.
+- Applies to `WorkflowPortableCodec`, `CortexTaskManager.handlePortable`,
+  `CortexFacade.handleCortexPortable`, `CommandDispatcher`, `CommandIds`,
+  app-side `CoreApiParser`, and Task tab import/export actions.
+
+### 2. Signatures
+
+- Command id: `CMD_CORTEX_PORTABLE`.
+- Request envelope:
+  - `{"action":"export_template","template_id":"..."}`
+  - `{"action":"export_workflow","workflow_id":"..."}`
+  - `{"action":"import","bundle":{...}}` or
+    `{"action":"import","bundle_json":"{...}"}`
+- Portable schemas:
+  - `workflow_bundle`, `version=1`
+  - `task_template_bundle`, `version=1`
+  - legacy `task_route_asset.v1` and `task_route_portable.v1` remain importable
+    as compatibility inputs.
+
+### 3. Contracts
+
+- Export responses include `ok=true`, `schema`, `version`, `bundle`, and
+  `bundle_json`.
+- Workflow bundle export carries one workflow plus exactly the templates
+  referenced by its steps.
+- Workflow bundle export does not carry `trigger_type`, `trigger_enabled`, or
+  `trigger_config`.
+- Template bundle export carries one template and its route asset when a route
+  exists.
+- Import always creates new local ids for templates and workflows, then rewrites
+  workflow step `template_id` references to the new template ids.
+- Imported workflows must start with `trigger_type="none"` and
+  `trigger_enabled=false`.
+- Import responses include `imported_type`, `workflow_id`, `template_id`, and
+  `template_ids` so the app can open the imported object directly.
+
+### 4. Validation & Error Matrix
+
+- Missing `action` -> `action is required`.
+- Unknown action -> `unsupported portable action: <action>`.
+- Export missing id -> `<template_id|workflow_id> is required`.
+- Export unknown id -> `<template|workflow> not found: <id>`.
+- Unsupported schema or version -> an unsupported schema/version error.
+- Workflow bundle whose embedded template ids do not exactly match step
+  references -> reject the whole import.
+- Unusable route asset inside a bundle -> reject the whole import.
+
+### 5. Good/Base/Bad Cases
+
+- Good: export a workflow with two steps, import it on another device, get one
+  new workflow and two new templates with no automatic trigger enabled.
+- Base: export/import a template without a route; the template is still created
+  and can learn or record a route later.
+- Bad: resolving imported workflow steps by local template names or old exported
+  ids instead of embedded-template id rewriting.
+
+### 6. Tests Required
+
+- Backend codec tests assert trigger omission, new id generation, disabled
+  imported triggers, exact embedded-template validation, and route-only import.
+- App parser tests assert portable export requires `bundle_json` and import
+  success exposes the imported object id/type.
+- Any change to `CMD_CORTEX_PORTABLE` must keep `:lxb-core:test` and
+  `:app:testDebugUnitTest` passing.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Reuse `CMD_CORTEX_TASK_MAP export_portable/import_portable` for workflow export
+and make the app infer templates from route metadata.
+
+#### Correct
+
+Use `CMD_CORTEX_PORTABLE` for workflow/template bundles, keep route portable
+commands as compatibility paths only, and adapt legacy route assets inside the
+new importer.
