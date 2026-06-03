@@ -21,11 +21,10 @@ nav:
   - 任务教程:
       - 概览: tasks/overview.md
       - 快速任务: tasks/quick-task.md
-      - 定时任务: tasks/schedules.md
-      - 通知触发任务: tasks/notification-triggers.md
+      - 工作流: tasks/workflows.md
       - 任务路线机制: tasks/routes-concepts.md
       - 任务路线编辑: tasks/route-editor.md
-      - 任务导出与导入: tasks/import-export.md
+      - 便携包导入与导出: tasks/import-export.md
   - 配置说明: config/overview.md
   - 如何查看 Trace:
       - 概览: trace/overview.md
@@ -43,11 +42,10 @@ nav:
       - Task Tutorial:
           - Overview: en/tasks/overview.md
           - Quick Tasks: en/tasks/quick-task.md
-          - Scheduled Tasks: en/tasks/schedules.md
-          - Notification-Triggered Tasks: en/tasks/notification-triggers.md
+          - Workflows: en/tasks/workflows.md
           - Task Route Mechanism: en/tasks/routes-concepts.md
           - Route Editor: en/tasks/route-editor.md
-          - Task Export and Import: en/tasks/import-export.md
+          - Portable Bundle Import and Export: en/tasks/import-export.md
       - Configuration: en/config/overview.md
       - Trace:
           - Overview: en/trace/overview.md

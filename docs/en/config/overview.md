@@ -60,14 +60,14 @@ If swipe alone cannot unlock the phone, configure the lock-screen PIN. The curre
 
 ## Route-related settings
 
-Task configurations may show a **Use route** switch. When enabled, the task first tries to use its saved task route.
+Task templates may show a **Use route** switch. When enabled, the template run first tries to use its saved task route.
 
 Recommended use:
 
-- Keep route execution off during the first trial of a new task.
-- After the task succeeds and a route is saved, enable route execution.
+- Keep route execution off during the first trial of a new template.
+- After the template succeeds and a route is saved, enable route execution.
 - If the route often fails, edit the route again or temporarily disable route execution.
 
 ## App-map related options
 
-Some map source or sync options may still exist in the Config page. For normal user workflows, focus on per-task routes. If you are only creating scheduled tasks or notification-triggered tasks, you usually do not need to manage app-map options manually.
+Some map source or sync options may still exist in the Config page. For normal user workflows, focus on task template routes. If you are creating templates or composing workflows, you usually do not need to manage app-map options manually.

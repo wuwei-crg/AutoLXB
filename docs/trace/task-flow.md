@@ -9,13 +9,13 @@
 ```json
 {
   "task_id": "task-20260506-001",
-  "source": "schedule",
-  "source_id": "morning-checkin",
+  "source": "workflow",
+  "source_id": "daily-checkin",
   "package_name": "com.example.app",
   "user_task": "打开 App，完成签到",
   "user_playbook": "进入首页后点击签到按钮",
   "task_map_mode": "manual",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "ts": "2026-05-06T09:00:01.120+0800",
   "event": "task_route_key"
 }
@@ -24,8 +24,8 @@
 | 字段 | 说明 |
 | --- | --- |
 | `task_id` | 本次任务运行的标识。反馈问题时可用它串起同一次任务的 trace。 |
-| `source` | 任务来源，例如手动任务、定时任务或通知触发任务。 |
-| `source_id` | 来源任务的内部标识。普通用户通常不需要关心。 |
+| `source` | 运行来源，例如快速任务、模板立即触发、工作流手动运行、工作流定时触发或工作流通知触发。 |
+| `source_id` | 来源对象的内部标识。普通用户通常不需要关心。 |
 | `package_name` | 任务指定或解析到的目标 App 包名。 |
 | `user_task` | 用户填写的任务描述。 |
 | `user_playbook` | 用户填写的操作文档。 |

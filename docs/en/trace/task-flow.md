@@ -9,13 +9,13 @@ This means the route identity for a task run has been determined. It usually app
 ```json
 {
   "task_id": "task-20260506-001",
-  "source": "schedule",
-  "source_id": "morning-checkin",
+  "source": "workflow",
+  "source_id": "daily-checkin",
   "package_name": "com.example.app",
   "user_task": "Open the app and complete check-in",
   "user_playbook": "Tap the check-in button on the home page",
   "task_map_mode": "manual",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "ts": "2026-05-06T09:00:01.120+0800",
   "event": "task_route_key"
 }
@@ -24,8 +24,8 @@ This means the route identity for a task run has been determined. It usually app
 | Field | Meaning |
 | --- | --- |
 | `task_id` | Identifier of this task run. Use it to connect events from the same run. |
-| `source` | Task source, such as manual, schedule, or notification. |
-| `source_id` | Internal source identifier. Users usually do not need to interpret it. |
+| `source` | Run source, such as quick task, template trigger-now, manual workflow, scheduled workflow, or notification workflow. |
+| `source_id` | Internal source object identifier. Users usually do not need to interpret it. |
 | `package_name` | The specified or resolved target app package. |
 | `user_task` | The task description entered by the user. |
 | `user_playbook` | Extra execution guidance entered by the user. |

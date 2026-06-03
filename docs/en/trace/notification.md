@@ -1,6 +1,6 @@
 ﻿# Notification Trigger Trace
 
-Core trace records notification-trigger related events with the outer event name `notify_trigger`. It means the notification module produced a record. To understand whether it started, skipped, matched, or failed, inspect the other fields in the same record.
+Core trace records notification-trigger related events with the outer event name `notify_trigger`. It means the notification module produced a record. To understand whether it started, skipped, matched, or failed to submit a workflow, inspect the other fields in the same record.
 
 Example:
 
@@ -32,7 +32,7 @@ In exported core trace, `event` is usually `notify_trigger`. Use fields such as 
 | `rule_name` | Rule name. |
 | `raw` | Raw LLM condition or task rewrite output, may be empty. |
 | `error` | Failure or skip reason. Empty usually means no error. |
-| `final_task` | Final task description submitted to the task system. Common after a successful match. |
+| `final_task` | Final task description submitted to the execution system. Common after a successful match. |
 
 ## Module started record
 
@@ -62,9 +62,9 @@ The notification module has built its baseline. After the baseline is ready, lat
 }
 ```
 
-## Task submitted record
+## Workflow submitted record
 
-A rule matched and an automation task was submitted.
+A rule matched and a workflow was submitted.
 
 ```json
 {
@@ -83,10 +83,10 @@ A rule matched and an automation task was submitted.
 
 | Field | Meaning |
 | --- | --- |
-| `final_task` | Final task description submitted to the task system. |
-| `task_id` | Notification module records are not inside a task run, so this is usually empty. The submitted task will have its own task-flow trace later. |
+| `final_task` | Final task description submitted to the execution system. |
+| `task_id` | Notification module records are outside the later task run, so this is usually empty. The submitted workflow will have its own task-flow trace later. |
 
-If you see `final_task` but no later task-flow trace, check whether Core is running, whether another task is occupying the queue, and whether a task appears in the task list.
+If you see `final_task` but no later task-flow trace, check whether Core is running, whether another task is occupying the queue, and whether the workflow exists with its trigger enabled.
 
 ## LLM condition did not match
 
@@ -130,9 +130,9 @@ The rule matched, but it is still within the cooldown interval, so this notifica
 | --- | --- |
 | `error` | Often `skip`, meaning this notification was skipped by rule policy. |
 
-## Task submit failed record
+## Workflow submit failed record
 
-The rule matched, but submitting the task failed.
+The rule matched, but submitting the workflow failed.
 
 ```json
 {

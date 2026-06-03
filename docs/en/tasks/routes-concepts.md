@@ -1,6 +1,6 @@
 # Task Route Mechanism
 
-A task route is generated from a real task run. It records useful navigation and operation evidence so the same task can run more deterministically next time.
+A task route is generated from a real task template run. It records useful navigation and operation evidence so the same template can run more deterministically next time.
 
 ![Task route generation](../../assets/images/task_map_generation_en.png)
 
@@ -19,7 +19,7 @@ During visual execution, AutoLXB records:
 - XML / accessibility nodes when available.
 - Text, content description, resource id, class, bounds, parent features, and related UI attributes.
 
-When the model clicks, inputs, or swipes, Core combines the visual action with the current UI structure. After the run, you can review these recorded actions and save useful ones as the task route.
+When the model clicks, inputs, or swipes, Core combines the visual action with the current UI structure. After the run, you can review these recorded actions and save useful ones as the template route.
 
 ## Targeting strategy
 
@@ -34,7 +34,7 @@ For tap steps, AutoLXB tries several strategies from more stable to less stable:
 
 On the same device, saved routes are optimized for local repeatability.
 
-Across devices, coordinates may not transfer perfectly because screen size, font scale, app version, and login state may differ. For imported tasks, AutoLXB tries to adapt semantic steps on the new device and then writes the adapted local result back to that device's route asset.
+Across devices, coordinates may not transfer perfectly because screen size, font scale, app version, and login state may differ. For imported templates or workflows, AutoLXB tries to adapt semantic steps on the new device and then writes the adapted local result back to that device's route asset.
 
 ## When a route fails
 

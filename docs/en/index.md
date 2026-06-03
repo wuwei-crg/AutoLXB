@@ -7,10 +7,11 @@ AutoLXB is an Android automation framework for real devices. It lets you describ
 Typical use cases include:
 
 - Run a one-off phone task, such as opening an app and completing a check-in.
-- Run a task at a fixed time, such as a daily morning workflow.
-- Trigger a task from a notification, such as handling a message from a specific app.
-- Save a successful task route and reuse it later for faster and more stable navigation.
-- Export and import a task with its route, then adapt it locally on another device.
+- Save stable work as task templates with target app, playbook, and primary route.
+- Compose multiple task templates into workflows and run them manually or from triggers.
+- Run a workflow at a fixed time, such as a daily morning workflow.
+- Trigger a workflow from a notification, such as handling a message from a specific app.
+- Export and import task template / workflow portable bundles, then adapt them locally on another device.
 
 ## Demo video
 
@@ -41,6 +42,6 @@ AutoLXB consists of the Android app, the on-device core, perception and executio
 This manual focuses on using AutoLXB:
 
 - **Quick Start**: install the APK, start core, and configure the model.
-- **Task Tutorial**: create quick tasks, scheduled tasks, notification-triggered tasks, and manage task routes.
+- **Task Tutorial**: create quick tasks, task templates, workflows, and manage template routes.
 - **Configuration**: understand common configuration options.
 - **Trace**: inspect runtime logs and provide useful information when reporting issues.

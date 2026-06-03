@@ -20,7 +20,7 @@ Use quick tasks when:
 - You want to try a new task description.
 - You are not sure whether the model can understand the task.
 - You just changed model or control settings and want to test them.
-- You do not need a saved schedule or notification trigger yet.
+- You want to trial a task description before creating a task template.
 
 ## Examples
 
@@ -52,7 +52,7 @@ After submitting the task, check:
 2. Whether the phone UI opens and operates as expected.
 3. Whether the Logs page records execution details and the final result.
 
-If a quick task works reliably, consider turning the same description into a scheduled task or notification-triggered task.
+If a quick task works reliably, create a task template with the same description, target app, and user playbook. For long-term automation, add that template to a workflow and configure a schedule or notification trigger there.
 
 !!! warning "Do not start too complex"
     Quick tasks are best for one clear path. If a task has many conditions, switches between multiple apps, or waits for a long time, split it into smaller tasks first.

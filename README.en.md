@@ -25,7 +25,7 @@ The project uses a **Route-Then-Act** design: a task first reuses its own saved 
 - **User manual**: [AutoLXB Docs](https://wuwei-crg.github.io/AutoLXB/)
 - **Demo video**: [Bilibili BV114RbBfEou](https://www.bilibili.com/video/BV114RbBfEou)
 
-The user manual provides complete tutorials for task creation, route editing, portable import/export, configuration, and Trace troubleshooting.
+The user manual provides complete tutorials for quick tasks, task templates, workflows, route editing, portable bundle import/export, configuration, and Trace troubleshooting.
 
 ## Software Preview
 
@@ -66,12 +66,13 @@ Open `Config -> Device-side LLM Config`, then fill in:
 
 After saving, run the test to make sure the model can process images and return a valid result.
 
-### 4. Create an automated task
+### 4. Create automation
 
-AutoLXB works best for repeatable, linear, triggerable tasks. Prefer these two task types:
+AutoLXB works best for repeatable, linear, triggerable tasks. The Tasks page is organized around:
 
-- **Scheduled tasks**: run a task at a specific time or recurrence, such as a daily app check-in.
-- **Notification-triggered tasks**: listen to notifications from a selected app and run a task when conditions match, such as replying after a specific group message arrives.
+- **Quick Tasks**: run once immediately to trial a task description and device setup.
+- **Task Templates**: save reusable tasks with target app, user playbook, TASK_DECOMPOSE switch, and one primary route.
+- **Workflows**: sequence one or more templates and configure an optional trigger: none, schedule, or notification.
 
 Write task descriptions concretely, for example:
 
@@ -81,19 +82,19 @@ Open WeChat, enter a specific group chat, and reply to the person who just sent 
 Open a delivery app, enter the order page, and check the rider location
 ```
 
-If you are not sure whether a task description is stable, run it once as a **Quick task** first. After the path works, save it as a scheduled task or notification-triggered task.
+If you are not sure whether a task description is stable, run it once as a **Quick Task** first. After it works, create a **Task Template**. For scheduled or notification-based automation, add the template to a **Workflow** and configure the trigger there.
 
 ### 5. Optional: save a task route
 
-For repeated tasks, enable task routes. After a run, open the route editor, keep useful steps, delete unrelated actions, and tap **Save route manually**. Future runs prefer this route before using the vision model, reducing model calls and uncertainty.
+For repeated task templates, enable task routes. After a run, open the route editor, keep useful steps, delete unrelated actions, and tap **Save route manually**. Future runs prefer this template route before using the vision model, reducing model calls and uncertainty.
 
 ## Sample Tasks
 
-The [`sample_tasks`](sample_tasks/) directory contains portable task examples that can be imported from the AutoLXB Tasks page:
+The [`sample_tasks`](sample_tasks/) directory contains legacy task JSON examples that can be imported from the AutoLXB Tasks page. The current importer migrates them into task templates and workflows:
 
-- `baidu-tieba-one-click-sign-in.json`: scheduled Baidu Tieba one-click sign-in.
-- `bilibili-text-post.json`: scheduled Bilibili text post creation.
-- `luckin-coconut-latte-order.json`: scheduled Luckin Coffee Coconut Latte order route.
+- `baidu-tieba-one-click-sign-in.json`: Baidu Tieba one-click sign-in example.
+- `bilibili-text-post.json`: Bilibili text post creation example.
+- `luckin-coconut-latte-order.json`: Luckin Coffee Coconut Latte order route example.
 
 ## Requirements
 
@@ -118,7 +119,7 @@ AutoLXB is split into the Android app, the `lxb-core` background process, device
 
 ![Overall architecture](resources/架构_en.png)
 
-At runtime, a task enters the state machine, tries to hit its own saved route first, and falls back to visual execution when no usable route is available or when route replay cannot finish the task.
+At runtime, a task enters the state machine, tries to hit the current template's saved route first, and falls back to visual execution when no usable route is available or when route replay cannot finish the task.
 
 ![Task workflow](resources/FSM_en.png)
 

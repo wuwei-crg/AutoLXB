@@ -60,7 +60,7 @@ When reporting a problem, include:
 
 - Device model and system version.
 - Startup method: Root or ADB.
-- Task type: quick task, scheduled task, or notification-triggered task.
+- Run entry: quick task, task template, or workflow. For workflows, include manual, scheduled, or notification trigger when relevant.
 - Task description and key configuration screenshots.
 - A screenshot of the phone UI when it failed.
 - **The exported Trace file**.
@@ -75,5 +75,5 @@ The following pages explain common trace categories:
 - **Task Flow Trace**: which state the task entered.
 - **Task Route Trace**: whether route replay hit, which step failed, and why it fell back.
 - **Visual Execution Trace**: what the model saw, what it output, and whether parsing failed.
-- **Notification Trigger Trace**: whether notifications were read, rules matched, and tasks submitted.
+- **Notification Trigger Trace**: whether notifications were read, rules matched, and workflows were submitted.
 - **Action Execution Trace**: whether taps, swipes, input, waits, and back actions actually ran.

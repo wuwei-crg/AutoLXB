@@ -27,7 +27,7 @@ This module no longer treats WebConsole/Python runtime as the primary path.
 
 1. User submits task in APK
 2. App sends command to local `lxb-core` via LXB-Link
-3. `lxb-core` runs Cortex FSM and optional schedule pipeline
+3. `lxb-core` runs Cortex FSM, workflow orchestration, and optional trigger handling
 4. Trace/status is pushed back to APK UI
 
 ## Build
@@ -58,13 +58,13 @@ Recommended runtime path:
 3. Complete pairing code input from notification
 4. Start native core (`app_process`) from app
 5. Configure LLM / map source in `Config`
-6. Submit chat task or create schedule task
+6. Submit a quick task, create a task template, or compose a workflow with an optional trigger
 
 ## Documentation Entry
 
 1. Project root quick start: `../../README.md`
-2. Docs index: `../../docs/README.md`
-3. On-device architecture: `../../docs/en/on_device_architecture.md` / `../../docs/zh/on_device_architecture.md`
+2. Chinese user manual: `../../docs/index.md`
+3. English user manual: `../../docs/en/index.md`
 
 ## Notes
 

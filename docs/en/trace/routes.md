@@ -10,7 +10,7 @@ Core is checking whether this task has a usable route.
 {
   "task_id": "task-20260506-001",
   "state": "TASK_MAP_ROOT_LOOKUP",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "task_map_mode": "manual",
   "ts": "2026-05-06T09:00:01.700+0800",
   "event": "task_map_root_lookup"
@@ -30,7 +30,7 @@ No usable route was found, so the task continues through the normal flow.
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "reason": "map_missing",
   "ts": "2026-05-06T09:00:01.720+0800",
   "event": "task_map_root_lookup_miss"
@@ -48,7 +48,7 @@ A usable route was found.
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "segment_count": 1,
   "step_count": 4,
   "ts": "2026-05-06T09:00:01.730+0800",
@@ -150,7 +150,7 @@ A semantic tap step has not been adapted to this device yet, so AutoLXB is about
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "segment_id": "segment-0",
   "step_id": "step-2",
   "prompt": "You are adapting a portable Android route step...",
@@ -173,7 +173,7 @@ The semantic adaptation model returned a result.
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "segment_id": "segment-0",
   "step_id": "step-2",
   "response": "{\"result\":\"point\",\"x\":540,\"y\":1860}",
@@ -193,7 +193,7 @@ The semantic tap step was adapted successfully and saved as a local executable r
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "segment_id": "segment-0",
   "step_id": "step-2",
   "portable_kind": "materialized",
@@ -212,7 +212,7 @@ Semantic adaptation failed.
 ```json
 {
   "task_id": "task-20260506-001",
-  "route_id": "schedule:morning-checkin",
+  "route_id": "template:daily-checkin",
   "segment_id": "segment-0",
   "step_id": "step-2",
   "reason": "semantic_adaptation_no_match:target not found",
