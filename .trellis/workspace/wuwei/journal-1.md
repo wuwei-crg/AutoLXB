@@ -41,3 +41,36 @@ Filled backend and frontend Trellis specs from real repository patterns and arch
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Finish workflow template portable UI
+
+**Date**: 2026-06-03
+**Task**: Finish workflow template portable UI
+**Branch**: `master`
+
+### Summary
+
+Completed workflow/template portable import-export UI cleanup, removed old schedule/notification task frontend surfaces, added template immediate run action, fixed compact template row layout, and verified app/core tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `78f28d8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
