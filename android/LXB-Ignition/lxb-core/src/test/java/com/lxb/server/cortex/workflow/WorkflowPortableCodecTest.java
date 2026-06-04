@@ -27,6 +27,7 @@ public class WorkflowPortableCodecTest {
         fx.store.saveTemplate(template);
 
         WorkflowDef workflow = WorkflowDef.createNew("Morning flow");
+        workflow.workflowPlaybook = "Tap skip during every battle.";
         workflow.triggerType = WorkflowDef.TRIGGER_SCHEDULE;
         workflow.triggerEnabled = true;
         workflow.triggerConfig.put("run_at", 123L);
@@ -44,6 +45,7 @@ public class WorkflowPortableCodecTest {
         assertFalse(workflowRow.containsKey("trigger_type"));
         assertFalse(workflowRow.containsKey("trigger_enabled"));
         assertFalse(workflowRow.containsKey("trigger_config"));
+        assertEquals("Tap skip during every battle.", workflowRow.get("workflow_playbook"));
         assertEquals(1, ((java.util.List<?>) exported.get("templates")).size());
     }
 
@@ -52,6 +54,7 @@ public class WorkflowPortableCodecTest {
         Fixture source = fixture();
         TaskTemplate template = source.store.saveTemplate(TaskTemplate.createNew("Post", "Post update"));
         WorkflowDef workflow = WorkflowDef.createNew("Flow");
+        workflow.workflowPlaybook = "Use skip when battle animation starts.";
         workflow.triggerType = WorkflowDef.TRIGGER_NOTIFICATION;
         workflow.triggerEnabled = true;
         WorkflowDef.Step step = new WorkflowDef.Step();
@@ -68,6 +71,7 @@ public class WorkflowPortableCodecTest {
         assertNotEquals(template.templateId, imported.templateIds.get(0));
         assertEquals(WorkflowDef.TRIGGER_NONE, importedWorkflow.triggerType);
         assertFalse(importedWorkflow.triggerEnabled);
+        assertEquals("Use skip when battle animation starts.", importedWorkflow.workflowPlaybook);
         assertEquals(imported.templateIds.get(0), importedWorkflow.steps.get(0).templateId);
     }
 

@@ -54,4 +54,31 @@ public class WorkflowStoreTest {
         }
         assertTrue(rejected);
     }
+
+    @Test
+    public void saveWorkflow_preservesWorkflowPlaybook() throws Exception {
+        Path dir = Files.createTempDirectory("lxb-workflow-store");
+        WorkflowStore store = new WorkflowStore(
+                new CortexTaskPersistence(),
+                dir.resolve("task_templates.v1.json").toString(),
+                dir.resolve("workflows.v1.json").toString()
+        );
+        TaskTemplate template = store.saveTemplate(TaskTemplate.createNew("A", "Do A"));
+
+        WorkflowDef workflow = WorkflowDef.createNew("Flow");
+        workflow.workflowPlaybook = "During battles, tap skip in the lower-right corner.";
+        WorkflowDef.Step step = new WorkflowDef.Step();
+        step.templateId = template.templateId;
+        workflow.steps.add(step);
+        WorkflowDef saved = store.saveWorkflow(workflow);
+
+        WorkflowStore reloaded = new WorkflowStore(
+                new CortexTaskPersistence(),
+                dir.resolve("task_templates.v1.json").toString(),
+                dir.resolve("workflows.v1.json").toString()
+        );
+        WorkflowDef loaded = reloaded.getWorkflow(saved.workflowId);
+
+        assertEquals("During battles, tap skip in the lower-right corner.", loaded.workflowPlaybook);
+    }
 }

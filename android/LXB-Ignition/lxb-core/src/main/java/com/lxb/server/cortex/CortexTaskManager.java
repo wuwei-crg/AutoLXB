@@ -318,6 +318,7 @@ public class CortexTaskManager {
                 source,
                 scheduleId,
                 userPlaybook,
+                "",
                 recordEnabled,
                 useMapOverride,
                 taskMapMode,
@@ -338,6 +339,7 @@ public class CortexTaskManager {
             String source,
             String scheduleId,
             String userPlaybook,
+            String workflowPlaybook,
             Boolean recordEnabled,
             Boolean useMapOverride,
             String taskMapMode,
@@ -379,6 +381,7 @@ public class CortexTaskManager {
                 instance.source,
                 instance.scheduleId,
                 instance.userPlaybook,
+                workflowPlaybook != null ? workflowPlaybook.trim() : "",
                 memoryHint,
                 instance.recordEnabled,
                 useMapOverride,
@@ -730,6 +733,9 @@ public class CortexTaskManager {
         }
         if (row.containsKey("description")) {
             w.description = stringOrEmpty(row.get("description"));
+        }
+        if (row.containsKey("workflow_playbook")) {
+            w.workflowPlaybook = stringOrEmpty(row.get("workflow_playbook"));
         }
         if (row.containsKey("trigger_type")) {
             w.triggerType = stringOrEmpty(row.get("trigger_type"));
@@ -1123,6 +1129,7 @@ public class CortexTaskManager {
                         "template",
                         null,
                         template.userPlaybook,
+                        req.workflow.workflowPlaybook,
                         Boolean.valueOf(template.recordEnabled),
                         null,
                         template.taskMapMode,
@@ -1338,6 +1345,7 @@ public class CortexTaskManager {
                             req.sourceId,
                             req.sourceConfigHash,
                             req.taskMapMode,
+                            req.workflowPlaybook,
                             req.decomposeEnabled,
                             req.suppressAutoLockAfterTask
                     );
@@ -1600,6 +1608,7 @@ public class CortexTaskManager {
         final String source;
         final String scheduleId;
         final String userPlaybook;
+        final String workflowPlaybook;
         final Map<String, Object> taskMemoryHint;
         final boolean recordEnabled;
         final Boolean useMapOverride;
@@ -1619,6 +1628,7 @@ public class CortexTaskManager {
                        String source,
                        String scheduleId,
                        String userPlaybook,
+                       String workflowPlaybook,
                        Map<String, Object> taskMemoryHint,
                        boolean recordEnabled,
                        Boolean useMapOverride,
@@ -1637,6 +1647,7 @@ public class CortexTaskManager {
             this.source = source;
             this.scheduleId = scheduleId;
             this.userPlaybook = userPlaybook;
+            this.workflowPlaybook = workflowPlaybook;
             this.taskMemoryHint = taskMemoryHint;
             this.recordEnabled = recordEnabled;
             this.useMapOverride = useMapOverride;

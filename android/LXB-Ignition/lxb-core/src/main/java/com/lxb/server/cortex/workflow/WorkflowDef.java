@@ -20,6 +20,7 @@ public final class WorkflowDef {
     public String workflowId = "";
     public String name = "";
     public String description = "";
+    public String workflowPlaybook = "";
     public String triggerType = TRIGGER_NONE;
     public boolean triggerEnabled = false;
     public Map<String, Object> triggerConfig = new LinkedHashMap<String, Object>();
@@ -79,6 +80,7 @@ public final class WorkflowDef {
         }
         name = TaskTemplate.stringOrEmpty(name);
         description = TaskTemplate.stringOrEmpty(description);
+        workflowPlaybook = TaskTemplate.stringOrEmpty(workflowPlaybook);
         triggerType = normalizeTriggerType(triggerType);
         if (TRIGGER_NONE.equals(triggerType)) {
             triggerEnabled = false;
@@ -111,6 +113,7 @@ public final class WorkflowDef {
         out.put("workflow_id", workflowId);
         out.put("name", name);
         out.put("description", description);
+        out.put("workflow_playbook", workflowPlaybook);
         out.put("trigger_type", triggerType);
         out.put("trigger_enabled", triggerEnabled);
         out.put("trigger_config", new LinkedHashMap<String, Object>(triggerConfig));
@@ -161,6 +164,7 @@ public final class WorkflowDef {
         out.workflowId = TaskTemplate.stringOrEmpty(row.get("workflow_id"));
         out.name = TaskTemplate.stringOrEmpty(row.get("name"));
         out.description = TaskTemplate.stringOrEmpty(row.get("description"));
+        out.workflowPlaybook = TaskTemplate.stringOrEmpty(row.get("workflow_playbook"));
         out.triggerType = normalizeTriggerType(TaskTemplate.stringOrEmpty(row.get("trigger_type")));
         out.triggerEnabled = TaskTemplate.toBool(row.get("trigger_enabled"), false);
         Object configObj = row.get("trigger_config");

@@ -178,6 +178,7 @@ public final class WorkflowPortableCodec {
 
         WorkflowDef workflow = WorkflowDef.createNew(firstNonEmpty(str(workflowRow.get("name")), "导入的工作流"));
         workflow.description = str(workflowRow.get("description"));
+        workflow.workflowPlaybook = str(workflowRow.get("workflow_playbook"));
         workflow.failurePolicy = WorkflowDef.normalizeFailurePolicy(str(workflowRow.get("failure_policy")));
         workflow.triggerType = WorkflowDef.TRIGGER_NONE;
         workflow.triggerEnabled = false;
@@ -375,6 +376,7 @@ public final class WorkflowPortableCodec {
         out.put("workflow_id", workflow.workflowId);
         out.put("name", workflow.name);
         out.put("description", workflow.description);
+        out.put("workflow_playbook", workflow.workflowPlaybook);
         out.put("failure_policy", workflow.failurePolicy);
         List<Object> steps = new ArrayList<Object>();
         for (WorkflowDef.Step step : workflow.steps) {
