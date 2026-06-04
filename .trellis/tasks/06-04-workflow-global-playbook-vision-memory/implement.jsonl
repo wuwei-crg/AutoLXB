@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Loaded backend scope and required workflow/template contract guidance before lxb-core changes."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Confirmed snake_case JSON persistence, compatibility, and file-backed state patterns for workflow_playbook."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Confirmed workflow/template and portable bundle contracts plus required Gradle test commands."}
+{"file":".trellis/spec/frontend/index.md","reason":"Loaded frontend scope before app model/parser/ViewModel/UI edits."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Confirmed MainViewModel StateFlow form-state conventions."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Confirmed app parser boundary and Kotlin model conventions for workflow_playbook."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Confirmed Compose field and localization conventions for workflow editor UI."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Used cross-layer checklist because workflow_playbook crosses backend, portable bundles, app parser, and UI."}

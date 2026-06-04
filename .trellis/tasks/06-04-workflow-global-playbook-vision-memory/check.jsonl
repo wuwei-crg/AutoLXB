@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verified relevant backend test command :lxb-core:test after workflow and prompt changes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verified app-side unit test command :app:testDebugUnitTest after parser and UI state changes."}
