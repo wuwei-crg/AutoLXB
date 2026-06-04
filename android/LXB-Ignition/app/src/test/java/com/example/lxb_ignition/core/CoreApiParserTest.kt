@@ -71,6 +71,29 @@ class CoreApiParserTest {
     }
 
     @Test
+    fun parseWorkflowList_readsWorkflowPlaybook() {
+        val payload = JSONObject()
+            .put("ok", true)
+            .put(
+                "items",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("workflow_id", "wf-1")
+                        .put("name", "Daily flow")
+                        .put("workflow_playbook", "Tap skip during battle animations.")
+                        .put("updated_at_ms", 10L)
+                )
+            )
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseWorkflowList(payload).second.single()
+
+        assertEquals("wf-1", parsed.workflowId)
+        assertEquals("Tap skip during battle animations.", parsed.workflowPlaybook)
+    }
+
+    @Test
     fun parsePortableImport_workflowSuccess() {
         val payload = JSONObject()
             .put("ok", true)

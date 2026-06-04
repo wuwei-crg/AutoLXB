@@ -2203,6 +2203,7 @@ private val ZhMap = mapOf(
     "Name" to "名称",
     "Target app" to "目标应用",
     "Playbook" to "操作手册",
+    "Workflow playbook (optional)" to "工作流操作提示（可选）",
     "Allow model decomposition" to "允许模型拆分任务",
     "Enable the legacy TASK_DECOMPOSE stage for this template." to "为这个模板启用旧的 TASK_DECOMPOSE 阶段。",
     "Route" to "路线",
@@ -2283,6 +2284,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val templatePlaybook by viewModel.templatePlaybook.collectAsState()
     val templateDecomposeEnabled by viewModel.templateDecomposeEnabled.collectAsState()
     val workflowName by viewModel.workflowName.collectAsState()
+    val workflowPlaybook by viewModel.workflowPlaybook.collectAsState()
     val workflowStepTemplateIds by viewModel.workflowStepTemplateIds.collectAsState()
     val workflowTriggerType by viewModel.workflowTriggerType.collectAsState()
     val workflowRunAtMs by viewModel.workflowRunAtMs.collectAsState()
@@ -2656,6 +2658,14 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onValueChange = { viewModel.workflowName.value = it },
                     label = { Text(tr("Name")) },
                     modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = workflowPlaybook,
+                    onValueChange = { viewModel.workflowPlaybook.value = it },
+                    label = { Text(tr("Workflow playbook (optional)")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 8
                 )
                 SheetHeader(
                     title = tr("Steps"),

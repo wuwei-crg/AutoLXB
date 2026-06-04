@@ -218,6 +218,7 @@ object CoreApiParser {
                     WorkflowSummary(
                         workflowId = id,
                         name = w.optString("name", ""),
+                        workflowPlaybook = w.optString("workflow_playbook", ""),
                         triggerType = w.optString("trigger_type", "none"),
                         triggerEnabled = w.optBoolean("trigger_enabled", false),
                         triggerSummary = w.optString("trigger_summary", ""),
@@ -362,6 +363,7 @@ object CoreApiParser {
         return WorkflowSummary(
             workflowId = id,
             name = w.optString("name", ""),
+            workflowPlaybook = w.optString("workflow_playbook", ""),
             triggerType = w.optString("trigger_type", "none"),
             triggerEnabled = w.optBoolean("trigger_enabled", false),
             triggerSummary = w.optString("trigger_summary", ""),

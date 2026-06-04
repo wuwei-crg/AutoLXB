@@ -134,6 +134,7 @@ data class WorkflowStepSummary(
 data class WorkflowSummary(
     val workflowId: String,
     val name: String,
+    val workflowPlaybook: String,
     val triggerType: String,
     val triggerEnabled: Boolean,
     val triggerSummary: String,

@@ -383,6 +383,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val workflowId = MutableStateFlow("")
     val workflowName = MutableStateFlow("")
+    val workflowPlaybook = MutableStateFlow("")
     val workflowStepTemplateIds = MutableStateFlow<List<String>>(emptyList())
     val workflowTriggerType = MutableStateFlow("none")
     val workflowRunAtMs = MutableStateFlow((System.currentTimeMillis() + 5 * 60_000L).toString())
@@ -1510,6 +1511,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadWorkflowForm(workflow: WorkflowSummary) {
         workflowId.value = workflow.workflowId
         workflowName.value = workflow.name
+        workflowPlaybook.value = workflow.workflowPlaybook
         workflowStepTemplateIds.value = workflow.steps.map { it.templateId }.filter { it.isNotBlank() }
         workflowTriggerType.value = workflow.triggerType.ifBlank { "none" }
         val config = runCatching {
@@ -1535,6 +1537,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetWorkflowForm() {
         workflowId.value = ""
         workflowName.value = ""
+        workflowPlaybook.value = ""
         workflowStepTemplateIds.value = emptyList()
         workflowTriggerType.value = "none"
         workflowRunAtMs.value = (System.currentTimeMillis() + 5 * 60_000L).toString()
@@ -1602,6 +1605,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val workflow = org.json.JSONObject()
                     .put("workflow_id", workflowId.value.trim())
                     .put("name", name)
+                    .put("workflow_playbook", workflowPlaybook.value.trim())
                     .put("trigger_type", workflowTriggerType.value)
                     .put("trigger_config", triggerConfig)
                     .put(
