@@ -136,10 +136,12 @@ public class CortexFsmEngine {
 
         // External semantic history shared by SCRIPT_ACT and VISION_ACT.
         public final CortexExecutionHistory executionHistory = new CortexExecutionHistory();
-        // Durable memory written by model across turns for long-context tasks.
+        // Compatibility storage from the old VISION_ACT memory contract.
+        // New VISION_ACT turns no longer ask the model to write this.
         public final List<String> workingMemory = new ArrayList<>();
 
         // Optional guidance injected by TaskManager.
+        public String workflowPlaybook = "";
         public String userPlaybook = "";
         public final Map<String, Object> taskMemoryHint = new LinkedHashMap<>();
 
@@ -457,6 +459,50 @@ public class CortexFsmEngine {
             boolean decomposeEnabled,
             boolean suppressAutoLockAfterTask
     ) {
+        return run(
+                userTask,
+                packageName,
+                mapPath,
+                startPage,
+                traceMode,
+                traceUdpPort,
+                userPlaybook,
+                taskMemoryHint,
+                useMapOverride,
+                taskIdOverride,
+                cancellationChecker,
+                unlockReadyCallback,
+                source,
+                sourceId,
+                sourceConfigHash,
+                taskMapMode,
+                "",
+                decomposeEnabled,
+                suppressAutoLockAfterTask
+        );
+    }
+
+    public Map<String, Object> run(
+            String userTask,
+            String packageName,
+            String mapPath,
+            String startPage,
+            String traceMode,
+            Integer traceUdpPort,
+            String userPlaybook,
+            Map<String, Object> taskMemoryHint,
+            Boolean useMapOverride,
+            String taskIdOverride,
+            CancellationChecker cancellationChecker,
+            UnlockReadyCallback unlockReadyCallback,
+            String source,
+            String sourceId,
+            String sourceConfigHash,
+            String taskMapMode,
+            String workflowPlaybook,
+            boolean decomposeEnabled,
+            boolean suppressAutoLockAfterTask
+    ) {
         String effectiveTaskId = (taskIdOverride != null && !taskIdOverride.isEmpty())
                 ? taskIdOverride
                 : UUID.randomUUID().toString();
@@ -465,6 +511,7 @@ public class CortexFsmEngine {
         ctx.rootUserTask = ctx.userTask;
         ctx.mapPath = mapPath;
         ctx.startPage = startPage;
+        ctx.workflowPlaybook = workflowPlaybook != null ? workflowPlaybook.trim() : "";
         ctx.userPlaybook = userPlaybook != null ? userPlaybook.trim() : "";
         ctx.unlockReadyCallback = unlockReadyCallback;
         ctx.unlockReadyNotified = false;
@@ -4091,8 +4138,7 @@ public class CortexFsmEngine {
             String thinking = "";
             String actionText = "";
             String expectedText = "";
-            String carryContextText = "";
-            String memoryWriteText = "";
+            String carryContextText = "none";
             String commandText = "";
             List<Instruction> commands;
 
@@ -4101,7 +4147,7 @@ public class CortexFsmEngine {
                 StringBuilder retryPrompt = new StringBuilder(prompt);
                 retryPrompt.append("\n\n[RETRY_CONTEXT]\n");
                 retryPrompt.append("Previous attempt failed. reason: ").append(retryReason).append("\n");
-                retryPrompt.append("Fix the output and return exactly the required 12 tags in order.\n");
+                retryPrompt.append("Fix the output and return exactly the required 10 tags in order.\n");
                 retryPrompt.append("In <command>, output one valid command line with strict argument format.\n");
                 attemptPrompt = retryPrompt.toString();
             }
@@ -4171,8 +4217,6 @@ public class CortexFsmEngine {
                 thinking = extractTagText(raw, "Thinking");
                 actionText = extractTagText(raw, "action");
                 expectedText = extractTagText(raw, "expected");
-                carryContextText = normalizeCarryContext(extractTagText(raw, "carry_context"));
-                memoryWriteText = normalizeMemoryWrite(extractTagText(raw, "memory_write"));
                 commandText = extractTagText(raw, "command");
 
                 // Backward compatibility: if <command> is missing, try old extractor.
@@ -4242,7 +4286,6 @@ public class CortexFsmEngine {
             int llmHistorySizeBefore = ctx.llmHistory.size();
             CortexExecutionHistory.Snapshot executionHistoryBefore = ctx.executionHistory.snapshot();
             int commandLogSizeBefore = ctx.commandLog.size();
-            int workingMemorySizeBefore = ctx.workingMemory.size();
             String lastCommandBefore = ctx.lastCommand;
             int sameCommandStreakBefore = ctx.sameCommandStreak;
 
@@ -4257,7 +4300,6 @@ public class CortexFsmEngine {
             structured.put("action", actionText);
             structured.put("expected", expectedText);
             structured.put("carry_context", carryContextText);
-            structured.put("memory_write", memoryWriteText);
             structured.put("command", commandText);
 
             Map<String, Object> hist = new LinkedHashMap<>();
@@ -4288,8 +4330,6 @@ public class CortexFsmEngine {
                 hEv.put("history_size", ctx.executionHistory.size());
                 trace.event("vision_history_append", hEv);
             }
-
-            appendWorkingMemory(ctx, memoryWriteText);
 
             // Stash next pair for history matching in next turn.
             ctx.executionHistory.beginPending(
@@ -4391,9 +4431,6 @@ public class CortexFsmEngine {
                 }
                 while (ctx.commandLog.size() > commandLogSizeBefore) {
                     ctx.commandLog.remove(ctx.commandLog.size() - 1);
-                }
-                while (ctx.workingMemory.size() > workingMemorySizeBefore) {
-                    ctx.workingMemory.remove(ctx.workingMemory.size() - 1);
                 }
                 ctx.executionHistory.restore(executionHistoryBefore);
                 ctx.lastCommand = lastCommandBefore;
@@ -5152,20 +5189,6 @@ public class CortexFsmEngine {
         sb.append("- Do not repeat actions that already failed with no_effect/wrong_target.\n");
         sb.append("- If repeated no progress, change action strategy.\n\n");
 
-        sb.append("[WORKING_MEMORY_BLOCK]\n");
-        if (ctx.workingMemory.isEmpty()) {
-            sb.append("Working memory: none\n");
-        } else {
-            sb.append("Durable facts from earlier turns (oldest -> newest):\n");
-            for (int i = 0; i < ctx.workingMemory.size(); i++) {
-                sb.append("- ").append(ctx.workingMemory.get(i)).append("\n");
-            }
-        }
-        sb.append("Working-memory guidance:\n");
-        sb.append("- Use this for stable facts needed across many turns (for example long text fragments, options, constraints).\n");
-        sb.append("- Do not copy volatile UI details into working memory.\n");
-        sb.append("- Write concise, reusable facts only.\n\n");
-
         sb.append("[ACTION_BLOCK]\n");
         sb.append("Available actions:\n");
         sb.append("- TAP x y\n");
@@ -5233,11 +5256,17 @@ public class CortexFsmEngine {
         sb.append("- Do not invent missing input values.\n\n");
 
         sb.append("[GUIDANCE_BLOCK]\n");
+        if (ctx.workflowPlaybook != null && !ctx.workflowPlaybook.isEmpty()) {
+            sb.append("Workflow playbook (general operational guidance):\n");
+            sb.append(ctx.workflowPlaybook).append("\n");
+        } else {
+            sb.append("Workflow playbook: none\n");
+        }
         if (!ctx.userPlaybook.isEmpty()) {
-            sb.append("User-provided playbook (highest priority):\n");
+            sb.append("Template playbook (current-template guidance, highest priority):\n");
             sb.append(ctx.userPlaybook).append("\n");
         } else {
-            sb.append("User-provided playbook: none\n");
+            sb.append("Template playbook: none\n");
         }
         if (!ctx.taskMemoryHint.isEmpty()) {
             sb.append("Last successful task memory (reference only):\n");
@@ -5285,7 +5314,8 @@ public class CortexFsmEngine {
             sb.append("Last successful task memory: none\n");
         }
         sb.append("Guidance policy:\n");
-        sb.append("- Prioritize user playbook over memory when conflict exists.\n");
+        sb.append("- Apply workflow playbook as general workflow-wide operational guidance.\n");
+        sb.append("- Prioritize template playbook over workflow playbook and memory when conflict exists.\n");
         sb.append("- Use memory as heuristic reference, not hard constraint.\n");
         sb.append("- If current UI contradicts guidance, trust current UI and adapt.\n\n");
 
@@ -5303,8 +5333,6 @@ public class CortexFsmEngine {
         sb.append("<Thinking>...</Thinking>\n");
         sb.append("<action>...</action>\n");
         sb.append("<expected>...</expected>\n");
-        sb.append("<carry_context>...</carry_context>\n");
-        sb.append("<memory_write>...</memory_write>\n");
         sb.append("<command>...</command>\n");
         sb.append("Field meaning:\n");
         sb.append("- <Observing>: describe what is currently visible and relevant to the current objective.\n");
@@ -5316,8 +5344,6 @@ public class CortexFsmEngine {
         sb.append("- <Thinking>: analyze current situation and decide next strategy.\n");
         sb.append("- <action>: one short natural-language next action intent.\n");
         sb.append("- <expected>: expected result after next action.\n");
-        sb.append("- <carry_context>: short-term notes for immediate next turns; use 'none' if not needed.\n");
-        sb.append("- <memory_write>: one durable fact to store for later turns (long-context tasks); use 'none' if no new durable fact.\n");
         sb.append("- <command>: executable command string.\n");
         sb.append("Command format strictness:\n");
         sb.append("- <command> must contain exactly one command line and nothing else.\n");
