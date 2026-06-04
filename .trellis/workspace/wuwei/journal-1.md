@@ -74,3 +74,39 @@ Completed workflow/template portable import-export UI cleanup, removed old sched
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Workflow global playbook and VISION_ACT memory cleanup
+
+**Date**: 2026-06-05
+**Task**: Workflow global playbook and VISION_ACT memory cleanup
+**Branch**: `master`
+
+### Summary
+
+Added workflow-level playbooks across backend, portable bundles, and app editing; removed VISION_ACT carry_context and memory_write from the model prompt/output contract while preserving history compatibility.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fba10d0` | (see git log) |
+| `7f9870f` | (see git log) |
+| `8cdb9df` | (see git log) |
+| `a514557` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
