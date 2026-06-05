@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Release And Git Workflow](./release-and-git-workflow.md) | Define local release notes, git, and GitHub release flow | When preparing a public release or changing release scripts |
 
 ---
 
@@ -46,6 +47,14 @@ These guides help you **ask the right questions before coding**.
 - [ ] **You're creating a new utility/helper function** ← Search first!
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+
+### When Preparing A Release
+
+- [ ] You are cutting a public version
+- [ ] You are writing release notes
+- [ ] You are using local release scripts, git tags, or GitHub releases
+
+→ Read [Release And Git Workflow](./release-and-git-workflow.md)
 
 ---
 
