@@ -19,6 +19,33 @@ public class LlmConfigTest {
         LlmConfig cfg = LlmConfig.loadFromFile(f.getAbsolutePath());
 
         Assert.assertEquals(LlmConfig.DEFAULT_MAX_TASK_STEPS, cfg.maxTaskSteps);
+        Assert.assertEquals(LlmConfig.REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS, cfg.requestType);
+    }
+
+    @Test
+    public void loadFromFile_parsesConfiguredRequestType() throws Exception {
+        File f = writeConfig("{"
+                + "\"api_base_url\":\"https://example.test/v1\","
+                + "\"model\":\"vision-model\","
+                + "\"request_type\":\"gemini_generate_content\""
+                + "}");
+
+        LlmConfig cfg = LlmConfig.loadFromFile(f.getAbsolutePath());
+
+        Assert.assertEquals(LlmConfig.REQUEST_TYPE_GEMINI_GENERATE_CONTENT, cfg.requestType);
+    }
+
+    @Test
+    public void loadFromFile_normalizesUnknownRequestTypeToOpenAiCompatible() throws Exception {
+        File f = writeConfig("{"
+                + "\"api_base_url\":\"https://example.test/v1\","
+                + "\"model\":\"vision-model\","
+                + "\"request_type\":\"unknown\""
+                + "}");
+
+        LlmConfig cfg = LlmConfig.loadFromFile(f.getAbsolutePath());
+
+        Assert.assertEquals(LlmConfig.REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS, cfg.requestType);
     }
 
     @Test

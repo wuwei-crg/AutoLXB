@@ -31,6 +31,7 @@ This area decides which model service AutoLXB uses for task understanding, scree
 
 Fill in:
 
+- **Request Type**: the request protocol shape, such as OpenAI Chat Completions, Gemini generateContent, or Anthropic Messages.
 - **API Base URL**
 - **API Key**
 - **Model**
@@ -38,7 +39,7 @@ Fill in:
 !!! warning "The model must support image understanding"
     AutoLXB visual execution depends on screenshots. If the model cannot process images, tasks may fail to observe pages or adapt semantic route steps.
 
-After configuration, run the test and confirm the model can process images and return a valid result.
+After configuration, run the test. The test sends a small image challenge to confirm the model can process images and return a valid result.
 
 ## Unlock and lock policy
 

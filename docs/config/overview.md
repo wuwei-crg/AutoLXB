@@ -31,6 +31,7 @@
 
 需要填写：
 
+- **Request Type**：请求协议形态，例如 OpenAI Chat Completions、Gemini generateContent、Anthropic Messages。
 - **API Base URL**：模型服务地址。
 - **API Key**：模型服务密钥。
 - **Model**：模型名称。
@@ -38,7 +39,7 @@
 !!! warning "模型需要支持图像理解"
     AutoLXB 的视觉执行依赖截图输入。如果模型不支持图片，任务可能无法观察页面，也无法完成语义适配。
 
-配置完成后，请点击测试，确认模型能正常处理图片并返回结果。
+配置完成后，请点击测试。测试会发送一张小图片挑战，确认模型能正常处理图片并返回结果。
 
 ## 解锁与锁屏策略
 

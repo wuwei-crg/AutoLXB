@@ -11,6 +11,7 @@ data class DeviceLlmSettings(
     val apiBaseUrl: String,
     val apiKey: String,
     val model: String,
+    val requestType: String,
     val autoUnlockBeforeRoute: Boolean,
     val autoLockAfterTask: Boolean,
     val unlockPin: String,
@@ -26,18 +27,24 @@ class DeviceConfigSyncer(
     private val defaultConfigPath: String
 ) {
     fun buildConfigJson(settings: DeviceLlmSettings): String {
-        return org.json.JSONObject()
-            .put("api_base_url", settings.apiBaseUrl.trim())
-            .put("api_key", settings.apiKey)
-            .put("model", settings.model.trim())
-            .put("auto_unlock_before_route", settings.autoUnlockBeforeRoute)
-            .put("auto_lock_after_task", settings.autoLockAfterTask)
-            .put("unlock_pin", settings.unlockPin.trim())
-            .put("use_map", settings.useMap)
-            .put("map_source", settings.mapSource)
-            .put("task_dnd_mode", settings.taskDndMode)
-            .put("max_task_steps", settings.maxTaskSteps)
-            .toString()
+        return buildConfigJsonObject(settings).toString()
+    }
+
+    companion object {
+        fun buildConfigJsonObject(settings: DeviceLlmSettings): org.json.JSONObject {
+            return org.json.JSONObject()
+                .put("api_base_url", settings.apiBaseUrl.trim())
+                .put("api_key", settings.apiKey)
+                .put("model", settings.model.trim())
+                .put("request_type", settings.requestType.trim())
+                .put("auto_unlock_before_route", settings.autoUnlockBeforeRoute)
+                .put("auto_lock_after_task", settings.autoLockAfterTask)
+                .put("unlock_pin", settings.unlockPin.trim())
+                .put("use_map", settings.useMap)
+                .put("map_source", settings.mapSource)
+                .put("task_dnd_mode", settings.taskDndMode)
+                .put("max_task_steps", settings.maxTaskSteps)
+        }
     }
 
     suspend fun sync(settings: DeviceLlmSettings, port: Int?): Result<String> {

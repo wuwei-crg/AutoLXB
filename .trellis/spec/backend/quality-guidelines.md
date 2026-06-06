@@ -221,3 +221,89 @@ and make the app infer templates from route metadata.
 Use `CMD_CORTEX_PORTABLE` for workflow/template bundles, keep route portable
 commands as compatibility paths only, and adapt legacy route assets inside the
 new importer.
+
+## Scenario: Device-Side LLM Request Types
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing device-side LLM/VLM provider request protocols.
+- Applies to `LlmConfig`, `LlmClient`, APK model config state,
+  `DeviceConfigSyncer`, saved LLM profiles, model config UI, and model setup
+  docs.
+
+### 2. Signatures
+
+- Persisted core config JSON:
+  - `api_base_url: string`
+  - `api_key: string`
+  - `model: string`
+  - `request_type: string`
+- Supported `request_type` values:
+  - `openai_chat_completions`
+  - `gemini_generate_content`
+  - `anthropic_messages`
+- Legacy configs without `request_type` must be read as
+  `openai_chat_completions`.
+
+### 3. Contracts
+
+- `api_base_url` is a base URL. `LlmClient` expands it by request type:
+  - OpenAI Chat Completions -> `/chat/completions`
+  - Gemini generateContent -> `/models/{model}:generateContent`
+  - Anthropic Messages -> `/messages`
+- If the user already entered a complete endpoint, do not append the path a
+  second time. Complete endpoint detection must ignore query strings.
+- `api_key` remains the single secret field:
+  - OpenAI-compatible requests use `Authorization: Bearer <api_key>`.
+  - Gemini native requests use the REST `key` query parameter.
+  - Anthropic native requests use `x-api-key` plus `anthropic-version`.
+- Image requests preserve current behavior: user prompt plus image only. Do not
+  add image+system prompt behavior unless the task explicitly changes that
+  contract.
+- Text requests may map non-empty `systemPrompt` to the native protocol's
+  system-instruction shape.
+
+### 4. Validation & Error Matrix
+
+- Missing `api_base_url` or `model` -> config load/test failure.
+- Missing `request_type` -> normalize to `openai_chat_completions`.
+- Unknown `request_type` -> normalize to `openai_chat_completions`.
+- Native Gemini/Anthropic response without extractable official text -> clear
+  LLM parse/config error, not raw JSON passed upstream.
+- API keys, unlock PINs, and full secrets must not be logged or shown in Trace.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a Gemini config with base URL
+  `https://generativelanguage.googleapis.com/v1beta`, model
+  `gemini-2.0-flash`, and request type `gemini_generate_content` resolves to
+  `/models/gemini-2.0-flash:generateContent`.
+- Base: an old OpenAI-compatible config with no `request_type` continues using
+  `/chat/completions`.
+- Bad: creating one large vendor adapter per provider when the desired
+  extension point is request protocol shape.
+
+### 6. Tests Required
+
+- JVM tests for config backward compatibility and request type normalization.
+- JVM tests for endpoint expansion, including already-complete endpoints and
+  query strings.
+- JVM tests for request-type-specific auth/header behavior.
+- JVM tests for text and image payload shape.
+- JVM tests for response text extraction per request type.
+- App JVM test for `DeviceConfigSyncer` writing `request_type` into the config
+  JSON sent to core.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Infer Gemini or Anthropic behavior only from URL substrings, or add separate
+provider classes such as `GeminiProvider` and `AnthropicProvider` while leaving
+the actual request protocol implicit.
+
+#### Correct
+
+Persist an explicit `request_type`, normalize unknown or missing values to
+OpenAI-compatible, and keep provider-specific URL examples as UI/documentation
+helpers instead of implementation branches.

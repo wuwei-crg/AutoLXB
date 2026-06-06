@@ -103,7 +103,7 @@ Before starting, make sure:
 - you are using a real Android device on **Android 11 (API 30)** or above
 - for **Wireless ADB startup**: Developer Options, USB debugging, and Wireless debugging are enabled
 - for **Root startup**: the device is rooted and can grant `su`
-- an **OpenAI Chat Completions-compatible** LLM / VLM endpoint is configured
+- a text-and-image LLM / VLM endpoint is configured with the matching request type
 - the selected model supports image understanding
 
 ## More Documentation

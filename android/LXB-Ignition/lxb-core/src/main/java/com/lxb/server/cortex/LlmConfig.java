@@ -16,6 +16,7 @@ import java.util.Map;
  *   "api_base_url": "https://api.openai.com/v1/chat/completions",
  *   "api_key": "sk-...",
  *   "model": "gpt-4o-mini",
+ *   "request_type": "openai_chat_completions",
  *   "auto_unlock_before_route": true,
  *   "auto_lock_after_task": true,
  *   "unlock_pin": "1234",
@@ -29,10 +30,14 @@ public class LlmConfig {
 
     public static final String DEFAULT_CONFIG_PATH = "/data/local/tmp/lxb-llm-config.json";
     public static final int DEFAULT_MAX_TASK_STEPS = 100;
+    public static final String REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS = "openai_chat_completions";
+    public static final String REQUEST_TYPE_GEMINI_GENERATE_CONTENT = "gemini_generate_content";
+    public static final String REQUEST_TYPE_ANTHROPIC_MESSAGES = "anthropic_messages";
 
     public final String apiBaseUrl;
     public final String apiKey;
     public final String model;
+    public final String requestType;
     public final boolean autoUnlockBeforeRoute;
     public final boolean autoLockAfterTask;
     public final String unlockPin;
@@ -45,7 +50,23 @@ public class LlmConfig {
     public final int maxTaskSteps;
 
     public LlmConfig(String apiBaseUrl, String apiKey, String model) {
-        this(apiBaseUrl, apiKey, model, true, true, "", true, "stable", "none", DEFAULT_MAX_TASK_STEPS);
+        this(
+                apiBaseUrl,
+                apiKey,
+                model,
+                REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS,
+                true,
+                true,
+                "",
+                true,
+                "stable",
+                "none",
+                DEFAULT_MAX_TASK_STEPS
+        );
+    }
+
+    public LlmConfig(String apiBaseUrl, String apiKey, String model, String requestType) {
+        this(apiBaseUrl, apiKey, model, requestType, true, true, "", true, "stable", "none", DEFAULT_MAX_TASK_STEPS);
     }
 
     public LlmConfig(
@@ -63,6 +84,7 @@ public class LlmConfig {
                 apiBaseUrl,
                 apiKey,
                 model,
+                REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS,
                 autoUnlockBeforeRoute,
                 autoLockAfterTask,
                 unlockPin,
@@ -85,9 +107,65 @@ public class LlmConfig {
             String taskDndMode,
             int maxTaskSteps
     ) {
+        this(
+                apiBaseUrl,
+                apiKey,
+                model,
+                REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS,
+                autoUnlockBeforeRoute,
+                autoLockAfterTask,
+                unlockPin,
+                useMap,
+                mapSource,
+                taskDndMode,
+                maxTaskSteps
+        );
+    }
+
+    public LlmConfig(
+            String apiBaseUrl,
+            String apiKey,
+            String model,
+            String requestType,
+            boolean autoUnlockBeforeRoute,
+            boolean autoLockAfterTask,
+            String unlockPin,
+            boolean useMap,
+            String mapSource,
+            String taskDndMode
+    ) {
+        this(
+                apiBaseUrl,
+                apiKey,
+                model,
+                requestType,
+                autoUnlockBeforeRoute,
+                autoLockAfterTask,
+                unlockPin,
+                useMap,
+                mapSource,
+                taskDndMode,
+                DEFAULT_MAX_TASK_STEPS
+        );
+    }
+
+    public LlmConfig(
+            String apiBaseUrl,
+            String apiKey,
+            String model,
+            String requestType,
+            boolean autoUnlockBeforeRoute,
+            boolean autoLockAfterTask,
+            String unlockPin,
+            boolean useMap,
+            String mapSource,
+            String taskDndMode,
+            int maxTaskSteps
+    ) {
         this.apiBaseUrl = apiBaseUrl;
         this.apiKey = apiKey;
         this.model = model;
+        this.requestType = normalizeRequestType(requestType);
         this.autoUnlockBeforeRoute = autoUnlockBeforeRoute;
         this.autoLockAfterTask = autoLockAfterTask;
         this.unlockPin = unlockPin != null ? unlockPin : "";
@@ -118,6 +196,7 @@ public class LlmConfig {
         String baseUrl = stringOrEmpty(obj.get("api_base_url"));
         String key = stringOrEmpty(obj.get("api_key"));
         String model = stringOrEmpty(obj.get("model"));
+        String requestType = normalizeRequestType(stringOrEmpty(obj.get("request_type")));
         boolean autoUnlockBeforeRoute = parseBool(obj.get("auto_unlock_before_route"), true);
         boolean autoLockAfterTask = parseBool(obj.get("auto_lock_after_task"), true);
         String unlockPin = stringOrEmpty(obj.get("unlock_pin"));
@@ -134,6 +213,7 @@ public class LlmConfig {
                 baseUrl,
                 key,
                 model,
+                requestType,
                 autoUnlockBeforeRoute,
                 autoLockAfterTask,
                 unlockPin,
@@ -210,6 +290,17 @@ public class LlmConfig {
             return s;
         }
         return "stable";
+    }
+
+    public static String normalizeRequestType(String raw) {
+        String s = raw == null ? "" : raw.trim().toLowerCase();
+        if (REQUEST_TYPE_GEMINI_GENERATE_CONTENT.equals(s)) {
+            return REQUEST_TYPE_GEMINI_GENERATE_CONTENT;
+        }
+        if (REQUEST_TYPE_ANTHROPIC_MESSAGES.equals(s)) {
+            return REQUEST_TYPE_ANTHROPIC_MESSAGES;
+        }
+        return REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS;
     }
 
     private static String normalizeTaskDndMode(String raw) {

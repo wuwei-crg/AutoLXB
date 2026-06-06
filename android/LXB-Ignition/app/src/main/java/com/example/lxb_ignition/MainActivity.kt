@@ -112,6 +112,7 @@ import com.example.lxb_ignition.ui.theme.AppSuccessSoft
 import com.example.lxb_ignition.ui.theme.AppWarning
 import com.example.lxb_ignition.ui.theme.AppWarningSoft
 import com.lxb.server.cortex.LlmClient
+import com.lxb.server.cortex.LlmConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import java.text.SimpleDateFormat
@@ -1655,6 +1656,22 @@ private val LocalUiI18n = staticCompositionLocalOf { UiI18n("en") }
 @Composable
 private fun tr(text: String): String = LocalUiI18n.current.tr(text)
 
+private fun llmRequestTypeLabel(requestType: String): String {
+    return when (LlmConfig.normalizeRequestType(requestType)) {
+        LlmConfig.REQUEST_TYPE_GEMINI_GENERATE_CONTENT -> "Gemini generateContent"
+        LlmConfig.REQUEST_TYPE_ANTHROPIC_MESSAGES -> "Anthropic Messages"
+        else -> "OpenAI Chat Completions"
+    }
+}
+
+private fun llmBaseUrlExample(requestType: String): String {
+    return when (LlmConfig.normalizeRequestType(requestType)) {
+        LlmConfig.REQUEST_TYPE_GEMINI_GENERATE_CONTENT -> "https://generativelanguage.googleapis.com/v1beta"
+        LlmConfig.REQUEST_TYPE_ANTHROPIC_MESSAGES -> "https://api.anthropic.com/v1"
+        else -> "https://api.openai.com/v1"
+    }
+}
+
 private val ZhMap = mapOf(
     "AutoLXB" to "AutoLXB",
     "Update" to "更新",
@@ -2065,6 +2082,11 @@ private val ZhMap = mapOf(
     "API Base URL" to "API Base URL",
     "API Key" to "API Key",
     "Model" to "模型",
+    "Request Type" to "请求类型",
+    "OpenAI Chat Completions" to "OpenAI Chat Completions",
+    "Gemini generateContent" to "Gemini generateContent",
+    "Anthropic Messages" to "Anthropic Messages",
+    "Base URL example" to "Base URL 示例",
     "On" to "开",
     "Please use a model with image recognition capability." to "请使用具有图像识别能力的模型。",
     "e.g. gpt-4o-mini, qwen-plus" to "例如：gpt-4o-mini、qwen-plus",
@@ -5491,13 +5513,21 @@ fun LlmConfigCard(viewModel: MainViewModel) {
     val llmBaseUrl by viewModel.llmBaseUrl.collectAsState()
     val llmApiKey by viewModel.llmApiKey.collectAsState()
     val llmModel by viewModel.llmModel.collectAsState()
+    val llmRequestType by viewModel.llmRequestType.collectAsState()
     val llmTestResult by viewModel.llmTestResult.collectAsState()
     val llmProfileDraftName by viewModel.llmProfileDraftName.collectAsState()
     val llmProfiles by viewModel.llmProfiles.collectAsState()
     val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsState()
     val llmProfileResult by viewModel.llmProfileResult.collectAsState()
-    val resolvedEndpoint = remember(llmBaseUrl) {
-        runCatching { LlmClient.buildEndpointUrl(llmBaseUrl) }.getOrNull().orEmpty()
+    val resolvedEndpoint = remember(llmBaseUrl, llmRequestType, llmModel) {
+        runCatching { LlmClient.buildEndpointUrl(llmBaseUrl, llmRequestType, llmModel) }.getOrNull().orEmpty()
+    }
+    val requestTypes = remember {
+        listOf(
+            LlmConfig.REQUEST_TYPE_OPENAI_CHAT_COMPLETIONS,
+            LlmConfig.REQUEST_TYPE_GEMINI_GENERATE_CONTENT,
+            LlmConfig.REQUEST_TYPE_ANTHROPIC_MESSAGES
+        )
     }
 
     Column(
@@ -5517,6 +5547,23 @@ fun LlmConfigCard(viewModel: MainViewModel) {
             subtitle = tr("Base endpoint, API key, and model used for device-side requests."),
             glyph = "🌐"
         ) {
+            Text(
+                text = tr("Request Type"),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                requestTypes.forEach { type ->
+                    FilterChip(
+                        selected = LlmConfig.normalizeRequestType(llmRequestType) == type,
+                        onClick = { viewModel.llmRequestType.value = type },
+                        label = { Text(tr(llmRequestTypeLabel(type))) }
+                    )
+                }
+            }
             OutlinedTextField(
                 value = llmBaseUrl,
                 onValueChange = { viewModel.llmBaseUrl.value = it },
@@ -5526,7 +5573,7 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                 singleLine = true,
                 supportingText = {
                     Text(
-                        tr("Endpoint is auto-completed to /chat/completions."),
+                        tr("Base URL example") + ": " + llmBaseUrlExample(llmRequestType),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         fontSize = 12.sp
                     )
@@ -5651,7 +5698,7 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                                 }
                                 if (profile.model.isNotBlank()) {
                                     Text(
-                                        text = profile.model,
+                                        text = "${profile.model} · ${tr(llmRequestTypeLabel(profile.requestType))}",
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
                                     )

@@ -40,6 +40,7 @@ import com.example.lxb_ignition.service.CoreClientGateway
 import com.example.lxb_ignition.service.LocalLinkClient
 import com.example.lxb_ignition.service.WirelessAdbBootstrapService
 import com.lxb.server.cortex.LlmClient
+import com.lxb.server.cortex.LlmConfig
 import com.lxb.server.protocol.CommandIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -92,6 +93,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val apiBaseUrl: String,
         val apiKey: String,
         val model: String,
+        val requestType: String,
         val updatedAt: Long
     )
 
@@ -123,6 +125,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_LLM_BASE_URL = "llm_base_url"
         private const val KEY_LLM_API_KEY = "llm_api_key"
         private const val KEY_LLM_MODEL = "llm_model"
+        private const val KEY_LLM_REQUEST_TYPE = "llm_request_type"
         private const val KEY_LLM_PROFILES_JSON = "llm_profiles_json"
         private const val KEY_ACTIVE_LLM_PROFILE_ID = "active_llm_profile_id"
         private const val KEY_AUTO_UNLOCK_BEFORE_ROUTE = "auto_unlock_before_route"
@@ -256,6 +259,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val llmBaseUrl = MutableStateFlow(prefs.getString(KEY_LLM_BASE_URL, "") ?: "")
     val llmApiKey = MutableStateFlow(prefs.getString(KEY_LLM_API_KEY, "") ?: "")
     val llmModel = MutableStateFlow(prefs.getString(KEY_LLM_MODEL, "") ?: "")
+    val llmRequestType = MutableStateFlow(
+        LlmConfig.normalizeRequestType(prefs.getString(KEY_LLM_REQUEST_TYPE, ""))
+    )
     val llmProfileDraftName = MutableStateFlow("")
     val autoUnlockBeforeRoute = MutableStateFlow(prefs.getBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, true))
     val autoLockAfterTask = MutableStateFlow(prefs.getBoolean(KEY_AUTO_LOCK_AFTER_TASK, true))
@@ -1793,6 +1799,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             apiBaseUrl = llmBaseUrl.value,
             apiKey = llmApiKey.value,
             model = llmModel.value,
+            requestType = LlmConfig.normalizeRequestType(llmRequestType.value),
             autoUnlockBeforeRoute = autoUnlockBeforeRoute.value,
             autoLockAfterTask = autoLockAfterTask.value,
             unlockPin = unlockPin.value,
@@ -1874,6 +1881,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             apiBaseUrl = obj.optString("api_base_url", ""),
                             apiKey = obj.optString("api_key", ""),
                             model = obj.optString("model", ""),
+                            requestType = LlmConfig.normalizeRequestType(obj.optString("request_type", "")),
                             updatedAt = obj.optLong("updated_at", 0L)
                         )
                     )
@@ -1901,6 +1909,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .put("api_base_url", profile.apiBaseUrl)
                     .put("api_key", profile.apiKey)
                     .put("model", profile.model)
+                    .put("request_type", LlmConfig.normalizeRequestType(profile.requestType))
                     .put("updated_at", profile.updatedAt)
             )
         }
@@ -1929,6 +1938,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     apiBaseUrl = llmBaseUrl.value.trim(),
                     apiKey = llmApiKey.value,
                     model = llmModel.value.trim(),
+                    requestType = LlmConfig.normalizeRequestType(llmRequestType.value),
                     updatedAt = now
                 )
             )
@@ -1959,6 +1969,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             apiBaseUrl = llmBaseUrl.value.trim(),
             apiKey = llmApiKey.value,
             model = llmModel.value.trim(),
+            requestType = LlmConfig.normalizeRequestType(llmRequestType.value),
             updatedAt = System.currentTimeMillis()
         )
         val next = current.toMutableList()
@@ -1979,6 +1990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         llmBaseUrl.value = profile.apiBaseUrl
         llmApiKey.value = profile.apiKey
         llmModel.value = profile.model
+        llmRequestType.value = LlmConfig.normalizeRequestType(profile.requestType)
         llmProfileDraftName.value = profile.name
         persistActiveLlmProfileId(profile.id)
         saveConfig()
@@ -2063,7 +2075,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val config = com.lxb.server.cortex.LlmConfig(
                         baseUrl,
                         llmApiKey.value.trim(),
-                        model
+                        model,
+                        LlmConfig.normalizeRequestType(llmRequestType.value)
                     )
                     val response = LlmClient().chatOnce(
                         config,
@@ -2343,6 +2356,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putString(KEY_LLM_BASE_URL, llmBaseUrl.value)
             .putString(KEY_LLM_API_KEY, llmApiKey.value)
             .putString(KEY_LLM_MODEL, llmModel.value)
+            .putString(KEY_LLM_REQUEST_TYPE, LlmConfig.normalizeRequestType(llmRequestType.value))
             .putString(KEY_ACTIVE_LLM_PROFILE_ID, _activeLlmProfileId.value)
             .putBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, autoUnlockBeforeRoute.value)
             .putBoolean(KEY_AUTO_LOCK_AFTER_TASK, autoLockAfterTask.value)
