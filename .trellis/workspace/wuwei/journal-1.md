@@ -110,3 +110,36 @@ Added workflow-level playbooks across backend, portable bundles, and app editing
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Support multiple LLM request APIs
+
+**Date**: 2026-06-07
+**Task**: Support multiple LLM request APIs
+**Branch**: `master`
+
+### Summary
+
+Added selectable LLM request types for OpenAI Chat Completions, Gemini generateContent, and Anthropic Messages; updated config sync, UI, docs, tests, and provider API quality guidance.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `81f4f9b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

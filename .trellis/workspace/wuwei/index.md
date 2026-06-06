@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-06-05
+- **Total Sessions**: 4
+- **Last Active**: 2026-06-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~112 | Active |
+| `journal-1.md` | ~145 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-06-07 | Support multiple LLM request APIs | `81f4f9b` | `master` |
 | 3 | 2026-06-05 | Workflow global playbook and VISION_ACT memory cleanup | `fba10d0`, `7f9870f`, `8cdb9df`, `a514557` | `master` |
 | 2 | 2026-06-03 | Finish workflow template portable UI | `78f28d8` | `master` |
 | 1 | 2026-06-01 | Bootstrap Trellis guidelines | - | `master` |
