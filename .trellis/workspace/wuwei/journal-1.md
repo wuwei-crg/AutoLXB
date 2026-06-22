@@ -143,3 +143,36 @@ Added selectable LLM request types for OpenAI Chat Completions, Gemini generateC
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Unify route lookup by template id
+
+**Date**: 2026-06-23
+**Task**: Unify route lookup by template id
+**Branch**: `dev`
+
+### Summary
+
+Unified Cortex task route storage and lookup on template_id, removed source-based route inference, added legacy route migration and tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2618f29` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
