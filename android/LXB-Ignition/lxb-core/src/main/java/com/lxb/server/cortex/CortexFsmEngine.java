@@ -531,7 +531,7 @@ public class CortexFsmEngine {
         String initialPackageName = packageName != null ? packageName : "";
         ctx.selectedPackage = initialPackageName;
         loadUnlockPolicyFromConfig(ctx);
-        String routeId = resolveRouteId(ctx.source, ctx.sourceId, ctx.taskId);
+        String routeId = "template".equals(ctx.source) ? stringOrEmpty(ctx.sourceId) : "";
         ctx.taskRouteKey = TaskRouteKey.route(
                 ctx.source,
                 ctx.sourceId,
@@ -4598,18 +4598,6 @@ public class CortexFsmEngine {
         }
 
         return new SkipCandidate(x, y, score, label);
-    }
-
-    private static String resolveRouteId(String source, String sourceId, String taskId) {
-        String src = stringOrEmpty(source);
-        String sid = stringOrEmpty(sourceId);
-        if ("schedule".equals(src) && !sid.isEmpty()) {
-            return "schedule:" + sid;
-        }
-        if ("notify_trigger".equals(src) && !sid.isEmpty()) {
-            return "notify:" + sid;
-        }
-        return stringOrEmpty(taskId);
     }
 
     private static int parseIntLike(Object o, int def) {

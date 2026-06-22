@@ -46,10 +46,7 @@ public final class TaskTemplate {
         mapPath = stringOrEmpty(mapPath);
         userPlaybook = stringOrEmpty(userPlaybook);
         taskMapMode = normalizeTaskMapMode(taskMapMode);
-        routeId = stringOrEmpty(routeId);
-        if (routeId.isEmpty()) {
-            routeId = "template:" + templateId;
-        }
+        routeId = templateId;
         legacyKind = stringOrEmpty(legacyKind);
         legacyId = stringOrEmpty(legacyId);
         long now = System.currentTimeMillis();
@@ -104,6 +101,9 @@ public final class TaskTemplate {
         out.updatedAtMs = toLong(row.get("updated_at_ms"), out.createdAtMs);
         if (out.templateId.isEmpty()) {
             return null;
+        }
+        if (out.routeId.isEmpty()) {
+            out.routeId = out.templateId;
         }
         return out;
     }

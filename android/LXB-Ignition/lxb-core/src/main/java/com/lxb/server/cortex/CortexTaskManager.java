@@ -117,6 +117,7 @@ public class CortexTaskManager {
         loadTaskMemoryFromDisk();
         loadSchedulesFromDisk();
         migrateSchedulesToWorkflows();
+        migrateTemplateRouteStorage();
         loadTaskRunsFromDisk();
         this.workerThread = new Thread(this::workerLoop, "CortexFsmWorker");
         this.workerThread.setDaemon(true);
@@ -358,6 +359,7 @@ public class CortexTaskManager {
         instance.packageName = packageName != null ? packageName.trim() : "";
         instance.taskMapMode = taskMapMode != null ? taskMapMode.trim() : "off";
         instance.sourceId = sourceId != null ? sourceId.trim() : "";
+        instance.routeId = "template".equals(instance.source) ? instance.sourceId : "";
         instance.sourceConfigHash = "";
         instance.decomposeEnabled = decomposeEnabled;
         instance.suppressAutoLockAfterTask = suppressAutoLockAfterTask;
@@ -1133,7 +1135,7 @@ public class CortexTaskManager {
                         Boolean.valueOf(template.recordEnabled),
                         null,
                         template.taskMapMode,
-                        template.routeId,
+                        template.templateId,
                         "",
                         template.decomposeEnabled,
                         true
@@ -1757,6 +1759,7 @@ public class CortexTaskManager {
         String scheduleId;       // nullable
         String userPlaybook;     // optional guidance text
         String sourceId;
+        String routeId;
         String sourceConfigHash;
         String taskMapMode;
         boolean decomposeEnabled = true;
@@ -1813,7 +1816,7 @@ public class CortexTaskManager {
         out.put("record_enabled", inst.recordEnabled);
         out.put("record_started", inst.recordStarted);
         out.put("record_file", inst.recordFilePath);
-        String routeId = resolveRouteId(inst.source, inst.sourceId, inst.taskId);
+        String routeId = stringOrEmpty(inst.routeId);
         out.put("route_id", routeId);
         out.put("has_task_map", taskMapStore.hasMap(routeId));
         out.put("task_summary", inst.taskSummary);
@@ -1863,7 +1866,7 @@ public class CortexTaskManager {
             row.put("record_enabled", inst.recordEnabled);
             row.put("record_started", inst.recordStarted);
             row.put("record_file", inst.recordFilePath);
-            String routeId = resolveRouteId(inst.source, inst.sourceId, inst.taskId);
+            String routeId = stringOrEmpty(inst.routeId);
             row.put("route_id", routeId);
             row.put("has_task_map", taskMapStore.hasMap(routeId));
             row.put("task_summary", inst.taskSummary);
@@ -1884,7 +1887,7 @@ public class CortexTaskManager {
             boolean includeDetails
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String resolved = resolvePersistedTaskKeyHash(taskKeyHash, taskId, source, sourceId, packageName, userTask, userPlaybook, taskMapMode);
+        String resolved = resolveExactTaskMapRouteId(taskKeyHash, taskId);
         if (resolved.isEmpty()) {
             out.put("ok", false);
             out.put("err", "task_key_unresolved");
@@ -1929,7 +1932,7 @@ public class CortexTaskManager {
             String taskMapMode
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String resolved = resolvePersistedTaskKeyHash(taskKeyHash, taskId, source, sourceId, packageName, userTask, userPlaybook, taskMapMode);
+        String resolved = resolveExactTaskMapRouteId(taskKeyHash, taskId);
         if (resolved.isEmpty()) {
             out.put("ok", false);
             out.put("err", "task_key_unresolved");
@@ -1939,7 +1942,6 @@ public class CortexTaskManager {
         out.put("ok", true);
         out.put("deleted", deleted);
         out.put("route_id", resolved);
-        out.put("route_id", resolved); // legacy alias.
         return out;
     }
 
@@ -1950,7 +1952,7 @@ public class CortexTaskManager {
             boolean finishAfterReplay
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String resolved = resolvePersistedTaskKeyHash(taskKeyHash, taskId, "", "", "", "", "", "manual");
+        String resolved = resolveExactTaskMapRouteId(taskKeyHash, taskId);
         if (resolved.isEmpty()) {
             out.put("ok", false);
             out.put("err", "task_key_unresolved");
@@ -1987,7 +1989,6 @@ public class CortexTaskManager {
         out.put("ok", saved);
         out.put("saved", saved);
         out.put("route_id", resolved);
-        out.put("route_id", resolved); // legacy alias.
         out.put("segment_count", map.segments.size());
         out.put("step_count", map.stepCount());
         out.put("finish_after_replay", map.finishAfterReplay);
@@ -2006,7 +2007,7 @@ public class CortexTaskManager {
             String taskMapMode
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String resolved = resolvePersistedTaskKeyHash(taskKeyHash, taskId, source, sourceId, packageName, userTask, userPlaybook, taskMapMode);
+        String resolved = resolveExactTaskMapRouteId(taskKeyHash, taskId);
         if (resolved.isEmpty()) {
             out.put("ok", false);
             out.put("err", "task_key_unresolved");
@@ -2025,7 +2026,6 @@ public class CortexTaskManager {
         PortableTaskRouteCodec.ExportResult exported = PortableTaskRouteCodec.exportPortable(map, record);
         out.put("ok", true);
         out.put("route_id", resolved);
-        out.put("route_id", resolved); // legacy alias.
         out.put("schema", PortableTaskRouteCodec.PORTABLE_SCHEMA);
         out.put("bundle_json", Json.stringify(exported.bundle));
         out.put("locator_step_count", exported.locatorStepCount);
@@ -2045,16 +2045,7 @@ public class CortexTaskManager {
             String taskMapMode
     ) {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
-        String normalizedKey = resolveTaskKeyHash(
-                targetTaskKeyHash,
-                "",
-                source,
-                sourceId,
-                packageName,
-                userTask,
-                userPlaybook,
-                taskMapMode
-        );
+        String normalizedKey = stringOrEmpty(targetTaskKeyHash);
         String normalizedSource = stringOrEmpty(source);
         String normalizedSourceId = stringOrEmpty(sourceId);
         String normalizedPackage = firstNonEmpty(stringOrEmpty(targetPackageName), stringOrEmpty(packageName));
@@ -2090,7 +2081,6 @@ public class CortexTaskManager {
             out.put("saved", saved);
             out.put("task_id", normalizedKey);
             out.put("route_id", normalizedKey);
-            out.put("route_id", normalizedKey); // legacy alias.
             out.put("task_info", new LinkedHashMap<String, Object>(imported.taskInfo));
             out.put("pending_adaptation_count", imported.pendingAdaptationCount);
             out.put("materialized_count", imported.executableImportCount);
@@ -2138,6 +2128,7 @@ public class CortexTaskManager {
                 stringOrEmpty(taskInfo.get("route_id")),
                 stringOrEmpty(taskInfo.get("task_id"))
         );
+        inst.routeId = id;
         inst.sourceConfigHash = "";
         inst.userPlaybook = "";
         inst.taskMapMode = "manual";
@@ -2167,17 +2158,9 @@ public class CortexTaskManager {
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         String normalizedMode = normalizeTaskMapMode(mode);
         boolean updated = false;
-        if ("schedule".equals(source) && sourceId != null && !sourceId.trim().isEmpty()) {
-            ScheduledTaskDef def = scheduleRegistry.get(sourceId.trim());
-            if (def != null) {
-                def.taskMapMode = normalizedMode;
-                saveSchedulesToDisk();
-                updated = true;
-            }
-        }
-        if (!updated && "template".equals(source) && sourceId != null && !sourceId.trim().isEmpty()) {
+        if ("template".equals(source) && sourceId != null && !sourceId.trim().isEmpty()) {
             for (TaskTemplate template : workflowStore.listTemplates()) {
-                if (sourceId.trim().equals(template.routeId) || sourceId.trim().equals(template.templateId)) {
+                if (sourceId.trim().equals(template.templateId)) {
                     template.taskMapMode = normalizedMode;
                     workflowStore.saveTemplate(template);
                     updated = true;
@@ -2240,54 +2223,19 @@ public class CortexTaskManager {
         return "task:" + s;
     }
 
-    private String resolveTaskKeyHash(
-            String taskKeyHash,
-            String taskId,
-            String source,
-            String sourceId,
-            String packageName,
-            String userTask,
-            String userPlaybook,
-            String taskMapMode
-    ) {
+    private String resolveExactTaskMapRouteId(String taskKeyHash, String taskId) {
         String direct = stringOrEmpty(taskKeyHash);
         if (!direct.isEmpty()) {
             return direct;
         }
         String tid = stringOrEmpty(taskId);
-        String resolved = resolveRouteId(source, sourceId, tid);
-        if (!resolved.isEmpty()) {
-            return resolved;
+        if (!tid.isEmpty()) {
+            TaskInstance inst = taskRegistry.get(tid);
+            if (inst != null) {
+                return stringOrEmpty(inst.routeId);
+            }
         }
         return "";
-    }
-
-    private String resolvePersistedTaskKeyHash(
-            String taskKeyHash,
-            String taskId,
-            String source,
-            String sourceId,
-            String packageName,
-            String userTask,
-            String userPlaybook,
-            String taskMapMode
-    ) {
-        return resolveTaskKeyHash(taskKeyHash, taskId, source, sourceId, packageName, userTask, userPlaybook, taskMapMode);
-    }
-
-    private static String resolveRouteId(String source, String sourceId, String taskId) {
-        String src = stringOrEmpty(source);
-        String sid = stringOrEmpty(sourceId);
-        if ("schedule".equals(src) && !sid.isEmpty()) {
-            return "schedule:" + sid;
-        }
-        if ("notify_trigger".equals(src) && !sid.isEmpty()) {
-            return "notify:" + sid;
-        }
-        if ("template".equals(src) && !sid.isEmpty()) {
-            return sid;
-        }
-        return stringOrEmpty(taskId);
     }
 
     private static String normalizeTaskMapMode(String mode) {
@@ -2306,6 +2254,11 @@ public class CortexTaskManager {
     private static String firstNonEmpty(String a, String b) {
         String av = stringOrEmpty(a);
         return !av.isEmpty() ? av : stringOrEmpty(b);
+    }
+
+    private static String canonicalTemplateRouteId(String routeId) {
+        String value = stringOrEmpty(routeId);
+        return value.startsWith("template:") ? value.substring("template:".length()).trim() : value;
     }
 
     private Map<String, Object> selectTaskMemoryHint(String taskKey, String scheduleId) {
@@ -2471,7 +2424,7 @@ public class CortexTaskManager {
             template.userPlaybook = stringOrEmpty(def.userPlaybook);
             template.recordEnabled = def.recordEnabled;
             template.taskMapMode = normalizeTaskMapMode(def.taskMapMode);
-            template.routeId = "schedule:" + def.scheduleId;
+            template.routeId = template.templateId;
             template.legacyKind = "schedule";
             template.legacyId = def.scheduleId;
             template.decomposeEnabled = false;
@@ -2506,6 +2459,44 @@ public class CortexTaskManager {
         }
     }
 
+    private void migrateTemplateRouteStorage() {
+        boolean changed = false;
+        for (TaskTemplate template : workflowStore.listTemplates()) {
+            if (template == null) {
+                continue;
+            }
+            String templateId = stringOrEmpty(template.templateId);
+            if (templateId.isEmpty()) {
+                continue;
+            }
+            LinkedHashSet<String> legacyKeys = new LinkedHashSet<String>();
+            String currentRouteId = stringOrEmpty(template.routeId);
+            if (!currentRouteId.isEmpty() && !templateId.equals(currentRouteId)) {
+                legacyKeys.add(currentRouteId);
+            }
+            legacyKeys.add("template:" + templateId);
+            String legacyKind = stringOrEmpty(template.legacyKind);
+            String legacyId = stringOrEmpty(template.legacyId);
+            if ("schedule".equals(legacyKind) && !legacyId.isEmpty()) {
+                legacyKeys.add("schedule:" + legacyId);
+            } else if ("notification".equals(legacyKind) && !legacyId.isEmpty()) {
+                legacyKeys.add("notify:" + legacyId);
+            }
+            for (String legacyKey : legacyKeys) {
+                if (taskMapStore.migrateRouteKey(legacyKey, templateId, "template")) {
+                    changed = true;
+                }
+            }
+            if (!templateId.equals(currentRouteId)) {
+                template.routeId = templateId;
+                changed = true;
+            }
+        }
+        if (changed) {
+            workflowStore.saveAll();
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public void migrateNotificationRulesToWorkflows(List<Map<String, Object>> rules) {
         if (rules == null || rules.isEmpty()) {
@@ -2532,7 +2523,7 @@ public class CortexTaskManager {
             template.userPlaybook = stringOrEmpty(action.get("user_playbook"));
             template.recordEnabled = toBool(action.get("record_enabled"), false);
             template.taskMapMode = normalizeTaskMapMode(stringOrEmpty(action.get("task_map_mode")));
-            template.routeId = "notify:" + ruleId;
+            template.routeId = template.templateId;
             template.legacyKind = "notification";
             template.legacyId = ruleId;
             template.decomposeEnabled = false;
@@ -2738,7 +2729,7 @@ public class CortexTaskManager {
         row.put("record_enabled", inst.recordEnabled);
         row.put("record_started", inst.recordStarted);
         row.put("record_file", inst.recordFilePath);
-        String routeId = resolveRouteId(inst.source, inst.sourceId, inst.taskId);
+        String routeId = stringOrEmpty(inst.routeId);
         row.put("route_id", routeId);
         row.put("has_task_map", taskMapStore.hasMap(routeId));
         row.put("task_summary", inst.taskSummary);
@@ -2770,6 +2761,13 @@ public class CortexTaskManager {
             inst.recordEnabled = toBool(row.get("record_enabled"), false);
             inst.recordStarted = toBool(row.get("record_started"), false);
             inst.recordFilePath = stringOrEmpty(row.get("record_file"));
+            inst.routeId = stringOrEmpty(row.get("route_id"));
+            if ("template".equals(inst.source)) {
+                inst.routeId = canonicalTemplateRouteId(firstNonEmpty(inst.routeId, inst.sourceId));
+                inst.sourceId = inst.routeId;
+            } else {
+                inst.routeId = "";
+            }
             inst.taskSummary = stringOrEmpty(row.get("task_summary"));
             return inst;
         } catch (Exception ignored) {

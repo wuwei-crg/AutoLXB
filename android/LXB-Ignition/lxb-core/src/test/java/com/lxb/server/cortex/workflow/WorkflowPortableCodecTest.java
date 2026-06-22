@@ -112,8 +112,8 @@ public class WorkflowPortableCodecTest {
 
         assertEquals("template", imported.importedType);
         assertEquals("", imported.workflowId);
-        assertEquals("template:" + template.templateId, template.routeId);
-        assertTrue(target.mapStore.hasMap(template.routeId));
+        assertEquals(template.templateId, template.routeId);
+        assertTrue(target.mapStore.hasMap(template.templateId));
     }
 
     private static Fixture fixture() throws Exception {

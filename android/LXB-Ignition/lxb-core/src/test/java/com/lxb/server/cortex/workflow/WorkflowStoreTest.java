@@ -26,7 +26,7 @@ public class WorkflowStoreTest {
         TaskTemplate saved = store.saveTemplate(template);
 
         assertFalse(saved.templateId.isEmpty());
-        assertEquals("template:" + saved.templateId, saved.routeId);
+        assertEquals(saved.templateId, saved.routeId);
         assertFalse(saved.decomposeEnabled);
     }
 

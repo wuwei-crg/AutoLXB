@@ -71,6 +71,44 @@ public class TaskMapStoreTest {
     }
 
     @Test
+    public void migrateRouteKey_movesLegacyTemplateArtifactsToTemplateId() throws Exception {
+        File dir = Files.createTempDirectory("taskmap-store-migrate-template").toFile();
+        TaskMapStore store = new TaskMapStore(dir);
+
+        TaskRouteRecord record = new TaskRouteRecord();
+        record.taskKeyHash = "template:tpl_1";
+        record.source = "template";
+        record.sourceId = "template:tpl_1";
+        record.packageName = "com.demo";
+        record.rootTask = "open demo";
+        record.status = "success";
+        TaskRouteRecord.Action action = new TaskRouteRecord.Action();
+        action.actionId = "a0001";
+        action.subTaskId = "default";
+        action.op = "TAP";
+        action.args.addAll(Arrays.asList("1", "2"));
+        action.locator.put("resource_id", "button_a");
+        record.actions.add(action);
+        Assert.assertTrue(store.saveLatestSuccessRecord(record));
+        TaskMap map = TaskMapAssembler.assemble(record, Collections.<String>emptySet(), "manual");
+        Assert.assertTrue(store.saveMap(map));
+
+        Assert.assertTrue(store.migrateRouteKey("template:tpl_1", "tpl_1", "template"));
+
+        Assert.assertFalse(store.hasAnyArtifact("template:tpl_1"));
+        Assert.assertTrue(store.hasMap("tpl_1"));
+        TaskMap migratedMap = store.loadMap("tpl_1");
+        Assert.assertEquals("tpl_1", migratedMap.taskKeyHash);
+        Assert.assertEquals("template", migratedMap.source);
+        Assert.assertEquals("tpl_1", migratedMap.sourceId);
+        TaskRouteRecord migratedRecord = store.loadLatestSuccessRecord("tpl_1");
+        Assert.assertNotNull(migratedRecord);
+        Assert.assertEquals("tpl_1", migratedRecord.taskKeyHash);
+        Assert.assertEquals("template", migratedRecord.source);
+        Assert.assertEquals("tpl_1", migratedRecord.sourceId);
+    }
+
+    @Test
     public void rootFallsBackToMapDirSiblingTaskMapsInsteadOfTmp() throws Exception {
         String oldTaskMapsRoot = System.getProperty("lxb.task.maps.root");
         String oldMapDir = System.getProperty("lxb.map.dir");

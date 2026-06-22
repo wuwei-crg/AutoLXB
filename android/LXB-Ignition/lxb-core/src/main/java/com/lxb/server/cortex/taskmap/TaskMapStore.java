@@ -36,7 +36,7 @@ public final class TaskMapStore {
     }
 
     public boolean hasMap(String taskKeyHash) {
-        return loadMap(taskKeyHash) != null;
+        return !normalize(taskKeyHash).isEmpty() && loadMap(taskKeyHash) != null;
     }
 
     public boolean hasMap(TaskRouteKey key) {
@@ -52,6 +52,9 @@ public final class TaskMapStore {
     }
 
     public TaskMap loadMap(String taskKeyHash) {
+        if (normalize(taskKeyHash).isEmpty()) {
+            return null;
+        }
         Object obj = loadJson(mapFile(taskKeyHash));
         TaskMap map = TaskMap.fromObject(obj);
         if (map != null && map.taskKeyHash.isEmpty()) {
@@ -135,9 +138,50 @@ public final class TaskMapStore {
     }
 
     public boolean deleteMap(String taskKeyHash) {
-        boolean deleted = mapFile(taskKeyHash).delete();
-        updateIndexEntry(taskKeyHash, null, null, null, null);
-        return deleted;
+        return deleteArtifacts(taskKeyHash);
+    }
+
+    public boolean migrateRouteKey(String oldTaskKeyHash, String newTaskKeyHash, String source) {
+        String oldKey = normalize(oldTaskKeyHash);
+        String newKey = normalize(newTaskKeyHash);
+        if (oldKey.isEmpty() || newKey.isEmpty() || oldKey.equals(newKey) || !hasAnyArtifact(oldKey)) {
+            return false;
+        }
+
+        boolean saved = false;
+        String normalizedSource = normalize(source);
+
+        if (!mapFile(newKey).isFile()) {
+            TaskMap map = loadMap(oldKey);
+            if (map != null) {
+                map.taskKeyHash = newKey;
+                map.source = normalizedSource;
+                map.sourceId = newKey;
+                saved = saveMap(map) || saved;
+            }
+        }
+
+        if (!successRecordFile(newKey).isFile()) {
+            TaskRouteRecord success = loadLatestSuccessRecord(oldKey);
+            if (success != null) {
+                canonicalizeRecord(success, newKey, normalizedSource);
+                saved = saveLatestSuccessRecord(success) || saved;
+            }
+        }
+
+        if (!attemptRecordFile(newKey).isFile()) {
+            TaskRouteRecord attempt = loadLatestAttemptRecord(oldKey);
+            if (attempt != null) {
+                canonicalizeRecord(attempt, newKey, normalizedSource);
+                saved = saveLatestAttemptRecord(attempt) || saved;
+            }
+        }
+
+        if (saved || hasAnyArtifact(newKey)) {
+            deleteArtifacts(oldKey);
+            return true;
+        }
+        return false;
     }
 
     public Map<String, Object> getStatus(String taskKeyHash) {
@@ -193,6 +237,25 @@ public final class TaskMapStore {
         updateIndexEntry(map.taskKeyHash, map.source, map.sourceId, map.packageName, map);
     }
 
+    private void canonicalizeRecord(TaskRouteRecord record, String routeId, String source) {
+        record.taskKeyHash = normalize(routeId);
+        record.source = normalize(source);
+        record.sourceId = normalize(routeId);
+    }
+
+    private boolean deleteArtifacts(String taskKeyHash) {
+        String key = normalize(taskKeyHash);
+        if (key.isEmpty()) {
+            return false;
+        }
+        boolean deleted = false;
+        deleted = mapFile(key).delete() || deleted;
+        deleted = successRecordFile(key).delete() || deleted;
+        deleted = attemptRecordFile(key).delete() || deleted;
+        updateIndexEntry(key, null, null, null, null);
+        return deleted;
+    }
+
     @SuppressWarnings("unchecked")
     private void updateIndexEntry(String taskKeyHash, String source, String sourceId, String packageName, TaskMap map) {
         try {
@@ -203,6 +266,11 @@ public final class TaskMapStore {
                 root.put("entries", index);
             }
             if (taskKeyHash == null || taskKeyHash.trim().isEmpty()) {
+                return;
+            }
+            if (map == null && source == null && sourceId == null && packageName == null) {
+                index.remove(taskKeyHash);
+                saveJson(indexFile, root);
                 return;
             }
             Map<String, Object> row = new LinkedHashMap<String, Object>();

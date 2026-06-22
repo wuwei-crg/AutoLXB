@@ -61,6 +61,46 @@ public class CortexWorkflowSaveTest {
         });
     }
 
+    @Test
+    public void taskMapStatus_requiresDirectTemplateRouteId() throws Exception {
+        withTempState("lxb-route-direct", new Body() {
+            @Override
+            public void run(CortexTaskManager manager) {
+                Map<String, Object> template = manager.saveTaskTemplate(template("Template", "Do it"));
+                String templateId = String.valueOf(template.get("template_id"));
+
+                Assert.assertEquals(templateId, template.get("route_id"));
+
+                Map<String, Object> sourceOnly = manager.getTaskMapStatus(
+                        "",
+                        "",
+                        "template",
+                        templateId,
+                        "",
+                        "",
+                        "",
+                        "manual",
+                        false
+                );
+                Assert.assertEquals(Boolean.FALSE, sourceOnly.get("ok"));
+
+                Map<String, Object> direct = manager.getTaskMapStatus(
+                        templateId,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "manual",
+                        false
+                );
+                Assert.assertEquals(Boolean.TRUE, direct.get("ok"));
+                Assert.assertEquals(templateId, direct.get("route_id"));
+            }
+        });
+    }
+
     private static Map<String, Object> template(String name, String description) {
         Map<String, Object> row = new LinkedHashMap<String, Object>();
         row.put("name", name);

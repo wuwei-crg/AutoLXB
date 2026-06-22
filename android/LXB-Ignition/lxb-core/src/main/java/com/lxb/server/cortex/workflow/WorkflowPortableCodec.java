@@ -280,7 +280,7 @@ public final class WorkflowPortableCodec {
         template.recordEnabled = toBool(row.get("record_enabled"), false);
         template.taskMapMode = TaskTemplate.normalizeTaskMapMode(firstNonEmpty(str(row.get("task_map_mode")), "manual"));
         template.decomposeEnabled = toBool(row.get("decompose_enabled"), false);
-        template.routeId = "template:" + template.templateId;
+        template.routeId = template.templateId;
 
         PlannedTemplate planned = new PlannedTemplate();
         planned.template = template;
@@ -405,12 +405,13 @@ public final class WorkflowPortableCodec {
         out.put("record_enabled", template.recordEnabled);
         out.put("task_map_mode", template.taskMapMode);
         out.put("decompose_enabled", template.decomposeEnabled);
-        if (taskMapStore != null && !str(template.routeId).isEmpty()) {
-            TaskMap map = taskMapStore.loadMap(template.routeId);
+        String routeId = str(template.templateId);
+        if (taskMapStore != null && !routeId.isEmpty()) {
+            TaskMap map = taskMapStore.loadMap(routeId);
             if (map != null) {
-                TaskRouteRecord record = taskMapStore.loadLatestAttemptRecord(template.routeId);
+                TaskRouteRecord record = taskMapStore.loadLatestAttemptRecord(routeId);
                 if (record == null || record.actions.isEmpty()) {
-                    record = taskMapStore.loadLatestSuccessRecord(template.routeId);
+                    record = taskMapStore.loadLatestSuccessRecord(routeId);
                 }
                 PortableTaskRouteCodec.ExportResult route = PortableTaskRouteCodec.exportPortable(map, record);
                 out.put("route", route.bundle);

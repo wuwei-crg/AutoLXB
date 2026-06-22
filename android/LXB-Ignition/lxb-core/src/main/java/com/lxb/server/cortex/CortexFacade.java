@@ -964,7 +964,6 @@ public class CortexFacade {
                 if (toBool(out.get("ok"), false)) {
                     Map<String, Object> ev = new LinkedHashMap<>();
                     ev.put("route_id", out.get("route_id"));
-            ev.put("route_id", out.get("route_id"));
                     trace.event("task_map_deleted", ev);
                 }
             } else if ("save_manual".equals(action)) {
@@ -1017,7 +1016,6 @@ public class CortexFacade {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("action", action);
             ev.put("ok", toBool(out.get("ok"), false));
-            ev.put("route_id", out.get("route_id"));
             ev.put("route_id", out.get("route_id"));
             trace.event("cortex_task_map_api", ev);
             return ok(Json.stringify(out));

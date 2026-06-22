@@ -37,6 +37,9 @@ public final class WorkflowStore {
                     if (!(o instanceof Map)) continue;
                     TaskTemplate t = TaskTemplate.fromMap((Map<String, Object>) o);
                     if (t != null && !t.templateId.isEmpty()) {
+                        if (TaskTemplate.stringOrEmpty(t.routeId).isEmpty()) {
+                            t.routeId = t.templateId;
+                        }
                         templates.put(t.templateId, t);
                     }
                 }

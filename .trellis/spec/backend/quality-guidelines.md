@@ -78,8 +78,10 @@ possible.
   - `CMD_CORTEX_TEMPLATE_LIST/GET/SAVE/DELETE/RUN`
   - `CMD_CORTEX_WORKFLOW_LIST/GET/SAVE/DELETE/RUN/CANCEL/STATUS`
 - Runtime adapter:
-  - template task runs use `source="template"` and `source_id=<route_id>`.
-  - `resolveRouteId("template", sourceId, taskId)` must return `sourceId`.
+  - template task runs use `source="template"` and `source_id=<template_id>`.
+  - route lookup reads the explicit `route_id` or the task run's stored
+    `route_id`; it must not derive route keys from schedule/notification
+    sources.
 
 ### 3. Contracts
 
@@ -88,7 +90,7 @@ possible.
   `map_path`, `user_playbook`, `record_enabled`, `task_map_mode`, `route_id`,
   `decompose_enabled`, `created_at_ms`, `updated_at_ms`.
 - New templates default `decompose_enabled=false`; if `route_id` is omitted,
-  save normalizes it to `template:<template_id>`.
+  save normalizes it to the plain `template_id`.
 - `Workflow` fields use snake_case:
   `workflow_id`, `name`, `description`, `steps`, `failure_policy`,
   `trigger_type`, `trigger_enabled`, `trigger_config`, timestamps.

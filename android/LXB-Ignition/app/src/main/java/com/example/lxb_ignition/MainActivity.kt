@@ -2280,7 +2280,7 @@ private val ZhMap = mapOf(
 private data class RouteEditorTarget(
     val title: String,
     val source: String,
-    val sourceId: String,
+    val routeId: String,
     val packageName: String = "",
     val userTask: String = "",
     val userPlaybook: String = "",
@@ -2484,7 +2484,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                                         routeEditorTarget = RouteEditorTarget(
                                             title = template.name.ifBlank { template.description },
                                             source = "template",
-                                            sourceId = template.routeId,
+                                            routeId = template.templateId,
                                             packageName = template.packageName,
                                             userTask = template.description,
                                             userPlaybook = template.userPlaybook,
@@ -2571,7 +2571,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         routeEditorTarget = RouteEditorTarget(
                             title = templateName.ifBlank { templateDescription },
                             source = "template",
-                            sourceId = if (viewModel.templateId.value.isBlank()) "" else "template:${viewModel.templateId.value}",
+                            routeId = viewModel.templateId.value.trim(),
                             packageName = templatePackage,
                             userTask = templateDescription,
                             userPlaybook = templatePlaybook,
@@ -2871,12 +2871,11 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
 
         pageTaskRouteEditor -> {
             val target = routeEditorTarget
-            LaunchedEffect(target?.source, target?.sourceId, target?.packageName, target?.userTask, target?.userPlaybook, target?.mode) {
+            LaunchedEffect(target?.source, target?.routeId, target?.packageName, target?.userTask, target?.userPlaybook, target?.mode) {
                 if (target != null) {
                     viewModel.clearTaskMapDetail()
                     viewModel.loadTaskMapDetailByQuery(
-                        source = target.source,
-                        sourceId = target.sourceId,
+                        routeId = target.routeId,
                         packageName = target.packageName,
                         userTask = target.userTask,
                         userPlaybook = target.userPlaybook,
@@ -2914,8 +2913,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     },
                     onRefresh = {
                         viewModel.loadTaskMapDetailByQuery(
-                            source = target.source,
-                            sourceId = target.sourceId,
+                            routeId = target.routeId,
                             packageName = target.packageName,
                             userTask = target.userTask,
                             userPlaybook = target.userPlaybook,
@@ -2923,15 +2921,14 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                         )
                     },
                     onSaveManualTaskMap = { deleteIds, finishAfterReplay ->
-                        val key = taskMapDetail?.routeId.orEmpty()
+                        val key = taskMapDetail?.routeId.orEmpty().ifBlank { target.routeId }
                         viewModel.saveManualTaskMapByKey(
                             routeId = key,
                             deleteActionIds = deleteIds,
                             finishAfterReplay = finishAfterReplay
                         ) {
                             viewModel.loadTaskMapDetailByQuery(
-                                source = target.source,
-                                sourceId = target.sourceId,
+                                routeId = target.routeId,
                                 packageName = target.packageName,
                                 userTask = target.userTask,
                                 userPlaybook = target.userPlaybook,
