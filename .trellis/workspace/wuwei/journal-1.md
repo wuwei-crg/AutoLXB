@@ -176,3 +176,36 @@ Unified Cortex task route storage and lookup on template_id, removed source-base
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Clean deprecated Android leftovers
+
+**Date**: 2026-06-23
+**Task**: Clean deprecated Android leftovers
+**Branch**: `dev`
+
+### Summary
+
+Removed stale Android assets, scripts, debug entrypoints, and web_console remnants; narrowed APK runtime assets and updated trace docs and frontend specs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cabbd94` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

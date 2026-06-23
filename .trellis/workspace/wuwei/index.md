@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~178 | Active |
+| `journal-1.md` | ~211 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-06-23 | Clean deprecated Android leftovers | `cabbd94` | `dev` |
 | 5 | 2026-06-23 | Unify route lookup by template id | `2618f29` | `dev` |
 | 4 | 2026-06-07 | Support multiple LLM request APIs | `81f4f9b` | `master` |
 | 3 | 2026-06-05 | Workflow global playbook and VISION_ACT memory cleanup | `fba10d0`, `7f9870f`, `8cdb9df`, `a514557` | `master` |
