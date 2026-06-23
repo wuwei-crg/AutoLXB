@@ -209,3 +209,37 @@ Removed stale Android assets, scripts, debug entrypoints, and web_console remnan
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Unify app/core logging
+
+**Date**: 2026-06-23
+**Task**: Unify app/core logging
+**Branch**: `dev`
+
+### Summary
+
+Unified app startup logs and core trace into one Logs/export flow, removed quick-task session logging, added redaction, tests, and specs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d664fc0` | (see git log) |
+| `20117dc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
