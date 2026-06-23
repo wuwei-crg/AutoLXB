@@ -53,6 +53,43 @@ cd android/LXB-Ignition
 When a UI change only affects Compose layout, at minimum run the app unit tests
 and inspect the changed screen manually on a device/emulator if available.
 
+## Scenario: Unified Logs Page
+
+### 1. Scope / Trigger
+- Trigger: changing the Logs tab, Quick Task runtime surface, or log export flow.
+
+### 2. Signatures
+- `MainViewModel.appLogEntries` exposes App-side `UnifiedLogEntry` rows.
+- `MainViewModel.traceLines` exposes Core-side `TraceEntry` rows adapted to `level`, `logger`, and `message`.
+- `exportAllLogsToDevice()` is the only log export entry point.
+
+### 3. Contracts
+- Logs UI shows coarse `App` and `Core` pages, not business-category filters.
+- Quick Task input stays on the Tasks page and must not keep a separate chat/session log stream.
+- Displayed trace details and exported rows must both stay redacted.
+
+### 4. Validation & Error Matrix
+- Invalid core port during trace refresh/export -> user-visible status message and App log row.
+- Empty log sources during export -> `LogExportUiState.status == "empty"`.
+- Sensitive values in trace raw JSON or parsed fields -> redact before storing in UI state.
+
+### 5. Good/Base/Bad Cases
+- Good: App startup logs are visible before export, Core traces stream in separately, and one export includes both.
+- Base: Core page still uses trace-specific detail rendering while sharing the same envelope fields.
+- Bad: rebuilding a separate Quick Task log, or only merging App/Core at export time.
+
+### 6. Tests Required
+- `CoreApiParserTest` covers redacted trace parsing.
+- `AppLogStoreTest` covers App log redaction/export envelope.
+- App JVM tests must stay green after `LogsTab` / `MainViewModel` contract changes.
+
+### 7. Wrong vs Correct
+#### Wrong
+Use one source for the Logs tab and a different merge path for export.
+
+#### Correct
+Keep one app-facing log model, then render it as App/Core pages and export it together.
+
 ## Scenario: Workflow And Template Portable UI
 
 ### 1. Scope / Trigger

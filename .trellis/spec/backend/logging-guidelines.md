@@ -60,3 +60,39 @@ Reference files:
 
 Use app-side `appendLog("[MAP] ...")` and system messages for user-visible
 status. Use backend Trace for daemon execution facts.
+
+## Scenario: Unified App/Core Log Envelope
+
+### 1. Scope / Trigger
+- Trigger: changing app support logs, core trace rows, or log export/display.
+
+### 2. Signatures
+- App rows use `seq`, `ts`, `level`, `logger`, `message`, `attrs`, and `source="app"`.
+- Core trace rows use `event` plus the auto-injected `ts`, `logger`, `level`, and `message`.
+
+### 3. Contracts
+- App logs are persisted in a bounded recent window of 1000 entries.
+- Core trace remains in-memory for MVP.
+- Logs-page export writes one JSONL file containing both sources.
+
+### 4. Validation & Error Matrix
+- Missing App logger or level -> infer from caller or message.
+- Sensitive API keys, tokens, and PIN/pairing values -> redact before persistence/export.
+- Newer App log writes must not be overwritten by slower older file rewrites.
+
+### 5. Good/Base/Bad Cases
+- Good: startup/bootstrap rows appear in App logs immediately and export with the same envelope.
+- Base: older trace rows without a logger are inferred when parsed for display/export.
+- Bad: export-only merging or a separate Quick Task session log surface.
+
+### 6. Tests Required
+- `AppLogStoreTest` covers JSONL envelope and redaction.
+- `TraceLoggerTest` covers auto-added logger/level/message.
+- Parser tests cover redaction after core trace pull.
+
+### 7. Wrong vs Correct
+#### Wrong
+Keep one format for app display and a different format for export.
+
+#### Correct
+Use the same unified envelope for both display and export, with App/Core only as physical sources.
