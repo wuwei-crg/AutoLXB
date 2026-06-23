@@ -1,5 +1,6 @@
 package com.example.lxb_ignition.core
 
+import com.example.lxb_ignition.logging.AppLogStore
 import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskMapSegmentSnapshot
@@ -16,6 +17,7 @@ import com.example.lxb_ignition.model.WorkflowStepSummary
 import com.example.lxb_ignition.model.WorkflowSummary
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 data class TaskSubmitParsed(
     val message: String,
@@ -566,14 +568,18 @@ object CoreApiParser {
 
     private fun parseTraceEntry(line: String, seq: Long): TraceEntry {
         val obj = runCatching { JSONObject(line) }.getOrNull()
+        val safeRawLine = AppLogStore.redact(line)
         if (obj == null) {
             return TraceEntry(
                 seq = seq,
-                rawLine = line,
+                rawLine = safeRawLine,
                 timestamp = "",
                 event = "raw",
+                level = "info",
+                logger = "CoreTrace",
+                message = safeRawLine.take(120),
                 taskId = "",
-                summary = line.take(120),
+                summary = safeRawLine.take(120),
                 detail = "",
                 isError = false,
                 meta = emptyList(),
@@ -591,11 +597,19 @@ object CoreApiParser {
             event.contains("error", ignoreCase = true) ||
             event.contains("invalid", ignoreCase = true) ||
             obj.has("error")
+        val level = normalizeLogLevel(obj.optString("level", "").trim().ifBlank {
+            if (isError) "error" else "info"
+        })
+        val logger = obj.optString("logger", "").trim().ifBlank { inferTraceLogger(event) }
+        val message = obj.optString("message", "").trim().ifBlank { summary.ifBlank { event } }
         return TraceEntry(
             seq = seq,
-            rawLine = line,
+            rawLine = safeRawLine,
             timestamp = ts,
             event = event,
+            level = level,
+            logger = logger,
+            message = AppLogStore.redact(message.take(160)),
             taskId = taskId,
             summary = summary,
             detail = detail,
@@ -648,7 +662,7 @@ object CoreApiParser {
         val keys = obj.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            if (key == "event" || key == "ts") continue
+            if (key == "event" || key == "ts" || key == "level" || key == "logger" || key == "message") continue
             val text = optText(obj, key, 320)
             if (text.isNotEmpty()) {
                 parts.add(TraceMetaItem(label = key, value = text))
@@ -810,11 +824,11 @@ object CoreApiParser {
     private fun optText(obj: JSONObject, key: String, maxLen: Int = 180): String {
         if (!obj.has(key)) return ""
         val value = obj.opt(key) ?: return ""
-        return normalizeText(value.toString(), maxLen)
+        return normalizeText(AppLogStore.redactValue(key, value.toString()), maxLen)
     }
 
     private fun normalizeText(value: String, maxLen: Int = 180): String {
-        val normalized = value
+        val normalized = AppLogStore.redact(value)
             .replace('\n', ' ')
             .replace('\r', ' ')
             .replace(Regex("\\s+"), " ")
@@ -836,6 +850,30 @@ object CoreApiParser {
 
     private fun joinNonBlank(separator: String, vararg values: String): String {
         return values.filter { it.isNotBlank() }.joinToString(separator)
+    }
+
+    private fun normalizeLogLevel(raw: String): String {
+        return when (raw.trim().lowercase(Locale.US)) {
+            "debug" -> "debug"
+            "warn", "warning" -> "warn"
+            "error", "err", "fatal" -> "error"
+            else -> "info"
+        }
+    }
+
+    private fun inferTraceLogger(event: String): String {
+        return when {
+            event.startsWith("list_apps_") -> "ExecutionEngine"
+            event.startsWith("exec_") -> "ExecutionEngine"
+            event.startsWith("llm_") -> "LlmClient"
+            event.startsWith("vision_") || event.startsWith("planner_") -> "PerceptionEngine"
+            event.startsWith("resolve_") -> "LocatorResolver"
+            event.startsWith("notify_") -> "NotificationTriggerModule"
+            event.startsWith("map_") || event.startsWith("task_map_") || event.startsWith("route_") -> "CortexTaskManager"
+            event.startsWith("fsm_") || event.startsWith("cortex_") -> "CortexFsmEngine"
+            event.contains("unlock", ignoreCase = true) -> "CortexFsmEngine"
+            else -> "CoreTrace"
+        }
     }
 
     private fun jsonArrayToStringList(arr: JSONArray?): List<String> {

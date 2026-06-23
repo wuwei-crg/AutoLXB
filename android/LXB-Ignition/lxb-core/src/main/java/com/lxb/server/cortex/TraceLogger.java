@@ -71,8 +71,7 @@ public class TraceLogger {
             new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US);
 
     // Optional push target for streaming selected trace events over TCP.
-    // For now this is used by the Cortex FSM to push per-task progress to
-    // the Android front-end chat UI.
+    // The Android app uses this for runtime/task progress indicators.
     private String pushHost;
     private int pushPort;
     private String pushTaskId;
@@ -116,6 +115,15 @@ public class TraceLogger {
                 : new LinkedHashMap<String, Object>();
         o.put("ts", tsFmt.format(new Date()));
         o.put("event", event);
+        if (!o.containsKey("logger")) {
+            o.put("logger", inferCallerLogger());
+        }
+        if (!o.containsKey("level")) {
+            o.put("level", inferLevel(event, o));
+        }
+        if (!o.containsKey("message")) {
+            o.put("message", event != null ? event : "trace_event");
+        }
 
         String line = Json.stringify(o);
         synchronized (this) {
@@ -127,6 +135,42 @@ public class TraceLogger {
 
     public void event(String event) {
         event(event, null);
+    }
+
+    private String inferCallerLogger() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (StackTraceElement element : stack) {
+            if (element == null) continue;
+            String className = element.getClassName();
+            if (className == null || className.isEmpty()) continue;
+            if (className.equals(Thread.class.getName())) continue;
+            if (className.equals(TraceLogger.class.getName())) continue;
+            if (className.startsWith("java.lang.reflect.")) continue;
+            int lastDot = className.lastIndexOf('.');
+            String simple = lastDot >= 0 ? className.substring(lastDot + 1) : className;
+            int nested = simple.indexOf('$');
+            if (nested > 0) {
+                simple = simple.substring(0, nested);
+            }
+            if (!simple.isEmpty()) {
+                return simple;
+            }
+        }
+        return "CoreTrace";
+    }
+
+    private String inferLevel(String event, Map<String, Object> fields) {
+        String e = event != null ? event.toLowerCase(Locale.US) : "";
+        if (fields != null && (fields.containsKey("error") || fields.containsKey("err"))) {
+            return "error";
+        }
+        if (e.contains("fail") || e.contains("error") || e.contains("invalid") || e.endsWith("_err")) {
+            return "error";
+        }
+        if (e.contains("fallback") || e.contains("empty") || e.contains("retry") || e.contains("unavailable")) {
+            return "warn";
+        }
+        return "info";
     }
 
     private void appendLine(String line) {

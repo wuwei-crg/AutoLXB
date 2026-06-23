@@ -167,10 +167,24 @@ data class TraceEntry(
     val rawLine: String,
     val timestamp: String,
     val event: String,
+    val level: String = "info",
+    val logger: String = "CoreTrace",
+    val message: String = "",
     val taskId: String,
     val summary: String,
     val detail: String,
     val isError: Boolean,
     val meta: List<TraceMetaItem>,
     val fields: List<TraceMetaItem>
+)
+
+data class UnifiedLogEntry(
+    val source: String,
+    val seq: Long,
+    val timestamp: String,
+    val level: String,
+    val logger: String,
+    val message: String,
+    val attrs: Map<String, String> = emptyMap(),
+    val rawLine: String = ""
 )

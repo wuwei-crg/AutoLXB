@@ -27,7 +27,6 @@ class TaskRuntimeController(
     private val scope: CoroutineScope,
     private val tracePort: Int,
     private val appendLog: (String) -> Unit,
-    private val appendSystemMessage: (String) -> Unit,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main
 ) {
@@ -170,7 +169,6 @@ class TaskRuntimeController(
     private fun onTraceEvent(obj: JSONObject) {
         val mapped = TraceEventMapper.map(obj) ?: return
         applyTraceRuntimeUpdate(mapped.taskId, mapped.runtimeUpdate)
-        mapped.messages.forEach { appendSystemMessage(it) }
     }
 
     private fun sendServiceAction(action: String, taskId: String, phase: String, detail: String) {

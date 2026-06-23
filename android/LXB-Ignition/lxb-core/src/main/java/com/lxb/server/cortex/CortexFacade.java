@@ -58,6 +58,10 @@ public class CortexFacade {
         migrateLegacyNotificationRules();
     }
 
+    public TraceLogger traceLogger() {
+        return trace;
+    }
+
     public byte[] handleMapSetGz(byte[] payload) {
         // payload: package_len[2B] + package[UTF-8] + gzipped_map_json[...]
         try {

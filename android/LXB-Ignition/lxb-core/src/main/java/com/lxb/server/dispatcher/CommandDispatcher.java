@@ -32,6 +32,7 @@ public class CommandDispatcher {
         this.executionEngine = executionEngine;
         this.circuitBreaker = circuitBreaker;
         this.cortexFacade = new CortexFacade(perceptionEngine, executionEngine);
+        this.executionEngine.setTraceLogger(this.cortexFacade.traceLogger());
     }
 
     /**

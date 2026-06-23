@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import com.example.lxb_ignition.MainActivity
 import com.example.lxb_ignition.R
+import com.example.lxb_ignition.logging.AppLogStore
 import com.example.lxb_ignition.storage.AppStatePaths
 import io.github.muntashirakon.adb.AdbPairingRequiredException
 import kotlinx.coroutines.CoroutineScope
@@ -95,6 +96,7 @@ class WirelessAdbBootstrapService : Service() {
         private const val REMOTE_STARTER_PATH = "/data/local/tmp/lxb-starter"
         private const val REMOTE_LOG_PATH = "/data/local/tmp/lxb-core.log"
         private const val REMOTE_APP_LABELS_PATH = "/data/local/tmp/lxb-app-labels.tsv"
+        private const val LOGGER = "WirelessAdbBootstrapService"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -132,6 +134,7 @@ class WirelessAdbBootstrapService : Service() {
     private var watchdogJob: Job? = null
     private var startRetryJob: Job? = null
     private var pendingStopAfterPairing = false
+    private var lastLoggedState: Pair<String, String>? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -140,6 +143,16 @@ class WirelessAdbBootstrapService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        appLog(
+            level = "info",
+            message = "Wireless bootstrap action received",
+            attrs = mapOf(
+                "action" to (intent?.action ?: "implicit"),
+                "startId" to startId,
+                "running" to running,
+                "state" to currentState
+            )
+        )
         when (intent?.action) {
             ACTION_START -> startBootstrap()
             ACTION_START_GUIDE -> startBootstrap()
@@ -175,16 +188,43 @@ class WirelessAdbBootstrapService : Service() {
         super.onDestroy()
     }
 
-    private fun startBootstrap() {
-        pendingStopAfterPairing = false
-        if (!running) {
-            running = true
-            val notification = buildNotification()
+    private fun startForegroundWithNotification(action: String) {
+        val notification = buildNotification()
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(NOTIFICATION_ID, notification, SERVICE_TYPE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            appLog(
+                level = "info",
+                message = "Foreground bootstrap service started",
+                attrs = mapOf(
+                    "action" to action,
+                    "sdk" to Build.VERSION.SDK_INT,
+                    "serviceType" to SERVICE_TYPE
+                )
+            )
+        } catch (e: Exception) {
+            appLog(
+                level = "error",
+                message = "Foreground bootstrap service start failed",
+                attrs = mapOf(
+                    "action" to action,
+                    "sdk" to Build.VERSION.SDK_INT,
+                    "serviceType" to SERVICE_TYPE,
+                    "error" to (e.message ?: e.javaClass.simpleName)
+                )
+            )
+            throw e
+        }
+    }
+
+    private fun startBootstrap() {
+        pendingStopAfterPairing = false
+        if (!running) {
+            running = true
+            startForegroundWithNotification("startBootstrap")
         }
         setState("GUIDE_SETTINGS", "Open Developer Options and enable Wireless debugging.")
         startDiscovery()
@@ -201,12 +241,7 @@ class WirelessAdbBootstrapService : Service() {
             return
         }
         running = true
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, SERVICE_TYPE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForegroundWithNotification("ensureForegroundRunning")
     }
 
     private fun startCoreNative() {
@@ -255,6 +290,15 @@ class WirelessAdbBootstrapService : Service() {
         updateNotification()
         scope.launch {
             val localReachableBefore = isCoreReachableLocal()
+            appLog(
+                level = "info",
+                message = "Core stop requested",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "endpoint" to (loadWirelessEndpoint()?.asText().orEmpty()),
+                    "localReachableBefore" to localReachableBefore
+                )
+            )
             val okByEndpoint = stopCoreViaSavedEndpoint()
             val ok = okByEndpoint
             if (ok) {
@@ -306,8 +350,18 @@ class WirelessAdbBootstrapService : Service() {
     }
 
     private fun stopCoreViaRootDirect(): Pair<Boolean, String> {
+        appLog(
+            level = "info",
+            message = "Core stop via root started",
+            attrs = mapOf("mode" to "root")
+        )
         val starterStop = runStarterStopViaRoot()
         if (starterStop.ok) {
+            appLog(
+                level = "info",
+                message = "Core stop via root result",
+                attrs = mapOf("mode" to "root", "ok" to true, "detail" to starterStop.detail)
+            )
             return Pair(true, starterStop.detail)
         }
         val fallbackCmd = "for p in ${'$'}(ps -A | grep -E 'lxb_core|com\\.lxb\\.server\\.Main' | grep -v grep | awk '{print ${'$'}2}'); do kill -9 ${'$'}p; done; true"
@@ -316,8 +370,18 @@ class WirelessAdbBootstrapService : Service() {
             8000
         )
         return if (fallback.ok) {
+            appLog(
+                level = "info",
+                message = "Core stop via root result",
+                attrs = mapOf("mode" to "root", "ok" to true, "detail" to fallback.shortOutput())
+            )
             Pair(true, "fallback_kill_ok: ${fallback.shortOutput()}")
         } else {
+            appLog(
+                level = "warn",
+                message = "Core stop via root result",
+                attrs = mapOf("mode" to "root", "ok" to false, "detail" to fallback.shortOutput())
+            )
             Pair(false, "starter=${starterStop.detail}; fallback=${fallback.shortOutput()}")
         }
     }
@@ -339,6 +403,11 @@ class WirelessAdbBootstrapService : Service() {
         startRetryJob?.cancel()
         watchdogJob?.cancel()
         startDiscovery()
+        appLog(
+            level = "warn",
+            message = "Core stop requires pairing",
+            attrs = mapOf("detail" to detail)
+        )
         setState(
             "STOP_PAIRING_REQUIRED",
             "Please pair and connect first, then AutoLXB can stop the running core. $detail"
@@ -367,6 +436,15 @@ class WirelessAdbBootstrapService : Service() {
                     }
                 )
                 updateNotification()
+                appLog(
+                    level = "info",
+                    message = "Core start retry scheduled",
+                    attrs = mapOf(
+                        "attempt" to attempt,
+                        "maxAttempts" to START_RETRY_MAX_ATTEMPTS,
+                        "promptedSettings" to promptedSettings
+                    )
+                )
                 val res = relaunchCoreViaSavedEndpoint()
                 if (res.ok) {
                     val port = getConfiguredPort()
@@ -374,6 +452,11 @@ class WirelessAdbBootstrapService : Service() {
                     return@launch
                 }
             }
+            appLog(
+                level = "error",
+                message = "Core start retry exhausted",
+                attrs = mapOf("maxAttempts" to START_RETRY_MAX_ATTEMPTS)
+            )
             finishBootstrap(
                 "FAILED",
                 "Native start failed after retries. Please enable Wireless debugging and tap Start again."
@@ -383,7 +466,17 @@ class WirelessAdbBootstrapService : Service() {
 
     private fun submitPairing(pairCodeRaw: String) {
         val pairCode = normalizePairCode(pairCodeRaw)
+        appLog(
+            level = "info",
+            message = "Wireless ADB pairing submitted",
+            attrs = mapOf("pairCodeLength" to pairCode.length)
+        )
         if (pairCode.isEmpty()) {
+            appLog(
+                level = "warn",
+                message = "Wireless ADB pairing input invalid",
+                attrs = mapOf("pairCodeLength" to 0)
+            )
             setState("WAIT_INPUT", "Invalid input. Please provide pairing code.")
             updateNotification()
             return
@@ -391,6 +484,11 @@ class WirelessAdbBootstrapService : Service() {
 
         val pairing = latestPairingEndpoint
         if (pairing == null) {
+            appLog(
+                level = "warn",
+                message = "Wireless ADB pairing endpoint missing",
+                attrs = mapOf("connectEndpoint" to latestConnectEndpoint?.asText().orEmpty())
+            )
             setState("WAIT_INPUT", "Pairing endpoint not detected yet. Keep Wireless debugging pairing page open and retry.")
             updateNotification()
             return
@@ -402,11 +500,25 @@ class WirelessAdbBootstrapService : Service() {
             updateNotification()
 
             val reachable = checkTcpReachable(pairing.host, pairing.port, 3000)
+            appLog(
+                level = if (reachable) "info" else "warn",
+                message = "Wireless ADB pairing endpoint reachability result",
+                attrs = mapOf(
+                    "pairingHost" to pairing.host,
+                    "pairingPort" to pairing.port,
+                    "reachable" to reachable
+                )
+            )
             if (!reachable) {
                 finishBootstrap("FAILED", "Pairing endpoint not reachable: ${pairing.host}:${pairing.port}")
                 return@launch
             }
             val tlsPrep = prepareConscryptProvider()
+            appLog(
+                level = if (tlsPrep.startsWith("unavailable")) "warn" else "info",
+                message = "Wireless ADB TLS provider prepared",
+                attrs = mapOf("provider" to tlsPrep)
+            )
             setState("PAIRING", "TLS provider prepared: $tlsPrep")
             updateNotification()
             val manager = WirelessAdbConnectionManager(applicationContext)
@@ -417,10 +529,24 @@ class WirelessAdbBootstrapService : Service() {
                 manager.setHostAddress(pairing.host)
                 val pairOk = runCatching { manager.pair(pairing.port, pairCode) }.getOrElse { e ->
                     val reason = e.message.orEmpty()
+                    appLog(
+                        level = "warn",
+                        message = "Wireless ADB pairing attempt failed",
+                        attrs = mapOf(
+                            "pairingHost" to pairing.host,
+                            "pairingPort" to pairing.port,
+                            "reason" to formatExceptionChain(e)
+                        )
+                    )
                     // Rotate key material once for TLS/RSA provider errors.
                     if (isLikelyTlsRsaError(reason)) {
                         runCatching { manager.rotateKeyMaterial() }
                         val retryWithNewKey = runCatching { manager.pair(pairing.port, pairCode) }.getOrElse { e3 ->
+                            appLog(
+                                level = "error",
+                                message = "Wireless ADB pairing retry failed",
+                                attrs = mapOf("reason" to formatExceptionChain(e3))
+                            )
                             finishBootstrap("FAILED", "ADB pair failed (TLS/RSA): ${formatExceptionChain(e3)}. Reopen pairing dialog and retry.")
                             return@launch
                         }
@@ -435,14 +561,33 @@ class WirelessAdbBootstrapService : Service() {
                     if (retryEndpoint != null) {
                         manager.setHostAddress(retryEndpoint.host)
                         return@getOrElse runCatching { manager.pair(retryEndpoint.port, pairCode) }.getOrElse { e2 ->
+                            appLog(
+                                level = "error",
+                                message = "Wireless ADB pairing retry failed",
+                                attrs = mapOf(
+                                    "pairingHost" to retryEndpoint.host,
+                                    "pairingPort" to retryEndpoint.port,
+                                    "reason" to formatExceptionChain(e2)
+                                )
+                            )
                             finishBootstrap("FAILED", "ADB pair failed (TLS/protocol): ${formatExceptionChain(e2)}. Reopen \"Pair device with pairing code\" and try again.")
                             return@launch
                         }
                     }
+                    appLog(
+                        level = "error",
+                        message = "Wireless ADB pairing failed",
+                        attrs = mapOf("reason" to formatExceptionChain(e))
+                    )
                     finishBootstrap("FAILED", "ADB pair failed (TLS/protocol): ${formatExceptionChain(e)}. Reopen \"Pair device with pairing code\" and try again.")
                     return@launch
                 }
                 if (!pairOk) {
+                    appLog(
+                        level = "error",
+                        message = "Wireless ADB pairing failed",
+                        attrs = mapOf("reason" to "pair returned false")
+                    )
                     finishBootstrap("FAILED", "ADB pair returned false. Reopen pairing dialog and retry.")
                     return@launch
                 }
@@ -451,6 +596,17 @@ class WirelessAdbBootstrapService : Service() {
                 val connectReady = waitForConnectEndpoint(CONNECT_ENDPOINT_WAIT_MS)
                 val persisted = connectReady ?: connect ?: Endpoint(pairing.host, 5555)
                 persistWirelessEndpoint(persisted)
+                appLog(
+                    level = "info",
+                    message = "Wireless ADB pairing succeeded",
+                    attrs = mapOf(
+                        "pairingHost" to pairing.host,
+                        "pairingPort" to pairing.port,
+                        "connectHost" to persisted.host,
+                        "connectPort" to persisted.port,
+                        "connectDiscovered" to (connectReady != null)
+                    )
+                )
 
                 if (pendingStopAfterPairing) {
                     setState("CONNECTING", "Pairing succeeded. Connecting to stop the running core...")
@@ -475,8 +631,18 @@ class WirelessAdbBootstrapService : Service() {
                 )
                 updateNotification()
             } catch (e: AdbPairingRequiredException) {
+                appLog(
+                    level = "error",
+                    message = "Wireless ADB pairing required",
+                    attrs = mapOf("reason" to formatExceptionChain(e))
+                )
                 finishBootstrap("FAILED", "ADB reports pairing required: ${formatExceptionChain(e)}")
             } catch (e: Exception) {
+                appLog(
+                    level = "error",
+                    message = "Wireless bootstrap failed",
+                    attrs = mapOf("reason" to formatExceptionChain(e))
+                )
                 finishBootstrap("FAILED", "Wireless bootstrap failed: ${formatExceptionChain(e)}")
             } finally {
                 runCatching { manager.close() }
@@ -562,11 +728,32 @@ class WirelessAdbBootstrapService : Service() {
 
     private fun startDiscovery() {
         stopDiscovery()
-        val mgr = nsdManager ?: return
+        val mgr = nsdManager ?: run {
+            appLog(
+                level = "warn",
+                message = "Wireless ADB discovery unavailable",
+                attrs = mapOf("reason" to "NsdManager unavailable")
+            )
+            return
+        }
+        appLog(
+            level = "info",
+            message = "Wireless ADB discovery started",
+            attrs = mapOf("serviceType" to "$PAIRING_SERVICE_TYPE,$CONNECT_SERVICE_TYPE")
+        )
 
         pairingResolveListener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                // no-op
+                appLog(
+                    level = "warn",
+                    message = "Wireless ADB endpoint resolve failed",
+                    attrs = mapOf(
+                        "kind" to "pairing",
+                        "serviceName" to serviceInfo.serviceName,
+                        "serviceType" to serviceInfo.serviceType,
+                        "errorCode" to errorCode
+                    )
+                )
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
@@ -574,6 +761,11 @@ class WirelessAdbBootstrapService : Service() {
                 val port = serviceInfo.port
                 if (host.isNotBlank() && port in 1..65535) {
                     latestPairingEndpoint = Endpoint(host, port)
+                    appLog(
+                        level = "info",
+                        message = "Wireless ADB endpoint detected",
+                        attrs = mapOf("kind" to "pairing", "host" to host, "port" to port)
+                    )
                     if (currentState == "WAIT_INPUT" || currentState == "STOP_PAIRING_REQUIRED") {
                         val nextState = if (currentState == "STOP_PAIRING_REQUIRED") "STOP_PAIRING_REQUIRED" else "WAIT_INPUT"
                         setState(nextState, "Detected pairing endpoint: ${latestPairingEndpoint?.asText().orEmpty()}")
@@ -584,7 +776,16 @@ class WirelessAdbBootstrapService : Service() {
         }
         connectResolveListener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                // no-op
+                appLog(
+                    level = "warn",
+                    message = "Wireless ADB endpoint resolve failed",
+                    attrs = mapOf(
+                        "kind" to "connect",
+                        "serviceName" to serviceInfo.serviceName,
+                        "serviceType" to serviceInfo.serviceType,
+                        "errorCode" to errorCode
+                    )
+                )
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
@@ -592,6 +793,11 @@ class WirelessAdbBootstrapService : Service() {
                 val port = serviceInfo.port
                 if (host.isNotBlank() && port in 1..65535) {
                     latestConnectEndpoint = Endpoint(host, port)
+                    appLog(
+                        level = "info",
+                        message = "Wireless ADB endpoint detected",
+                        attrs = mapOf("kind" to "connect", "host" to host, "port" to port)
+                    )
                     if (currentState == "WAIT_INPUT" || currentState == "STOP_PAIRING_REQUIRED") {
                         val nextState = if (currentState == "STOP_PAIRING_REQUIRED") "STOP_PAIRING_REQUIRED" else "WAIT_INPUT"
                         setState(nextState, "Detected connect endpoint: ${latestConnectEndpoint?.asText().orEmpty()}")
@@ -603,6 +809,11 @@ class WirelessAdbBootstrapService : Service() {
 
         pairingDiscoveryListener = object : NsdManager.DiscoveryListener {
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                appLog(
+                    level = "warn",
+                    message = "Wireless ADB discovery start failed",
+                    attrs = mapOf("serviceType" to serviceType, "errorCode" to errorCode)
+                )
                 setState("WAIT_INPUT", "NSD discovery start failed: $errorCode")
                 updateNotification()
             }
@@ -612,7 +823,11 @@ class WirelessAdbBootstrapService : Service() {
             }
 
             override fun onDiscoveryStarted(serviceType: String) {
-                // no-op
+                appLog(
+                    level = "info",
+                    message = "Wireless ADB discovery started",
+                    attrs = mapOf("serviceType" to serviceType)
+                )
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
@@ -636,13 +851,25 @@ class WirelessAdbBootstrapService : Service() {
                 pairingDiscoveryListener
             )
         }.onFailure {
+            appLog(
+                level = "warn",
+                message = "Wireless ADB discovery unavailable",
+                attrs = mapOf(
+                    "serviceType" to PAIRING_SERVICE_TYPE,
+                    "error" to (it.message ?: it.javaClass.simpleName)
+                )
+            )
             setState("WAIT_INPUT", "NSD discovery unavailable: ${it.message}")
             updateNotification()
         }
 
         connectDiscoveryListener = object : NsdManager.DiscoveryListener {
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                // no-op
+                appLog(
+                    level = "warn",
+                    message = "Wireless ADB discovery start failed",
+                    attrs = mapOf("serviceType" to serviceType, "errorCode" to errorCode)
+                )
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
@@ -650,7 +877,11 @@ class WirelessAdbBootstrapService : Service() {
             }
 
             override fun onDiscoveryStarted(serviceType: String) {
-                // no-op
+                appLog(
+                    level = "info",
+                    message = "Wireless ADB discovery started",
+                    attrs = mapOf("serviceType" to serviceType)
+                )
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
@@ -673,6 +904,15 @@ class WirelessAdbBootstrapService : Service() {
                 NsdManager.PROTOCOL_DNS_SD,
                 connectDiscoveryListener
             )
+        }.onFailure {
+            appLog(
+                level = "warn",
+                message = "Wireless ADB discovery unavailable",
+                attrs = mapOf(
+                    "serviceType" to CONNECT_SERVICE_TYPE,
+                    "error" to (it.message ?: it.javaClass.simpleName)
+                )
+            )
         }
     }
 
@@ -687,6 +927,7 @@ class WirelessAdbBootstrapService : Service() {
     }
 
     private fun setState(state: String, message: String) {
+        val previousState = currentState
         currentState = state
         currentMessage = message
         val broadcast = Intent(ACTION_STATUS).apply {
@@ -696,6 +937,49 @@ class WirelessAdbBootstrapService : Service() {
             putExtra(EXTRA_RUNNING, running)
         }
         sendBroadcast(broadcast)
+        logStateTransition(previousState, state, message)
+    }
+
+    private fun logStateTransition(previousState: String, state: String, message: String) {
+        val key = Pair(state, message)
+        if (lastLoggedState == key) return
+        lastLoggedState = key
+        appLog(
+            level = levelForState(state, message),
+            message = message,
+            attrs = mapOf(
+                "state" to state,
+                "previousState" to previousState,
+                "running" to running
+            )
+        )
+    }
+
+    private fun levelForState(state: String, message: String): String {
+        return when {
+            state == "FAILED" -> "error"
+            state == "RECONNECTING" || state == "STOP_PAIRING_REQUIRED" -> "warn"
+            state == "WAIT_WIRELESS_DEBUGGING" -> "warn"
+            message.contains("failed", ignoreCase = true) ||
+                message.contains("not reachable", ignoreCase = true) ||
+                message.contains("unavailable", ignoreCase = true) ||
+                message.contains("invalid", ignoreCase = true) -> "warn"
+            else -> "info"
+        }
+    }
+
+    private fun appLog(
+        level: String,
+        message: String,
+        attrs: Map<String, Any?> = emptyMap()
+    ) {
+        AppLogStore.write(
+            context = applicationContext,
+            level = level,
+            logger = LOGGER,
+            message = message,
+            attrs = attrs
+        )
     }
 
     private fun finishBootstrap(state: String, message: String) {
@@ -725,11 +1009,26 @@ class WirelessAdbBootstrapService : Service() {
 
                 setState("RECONNECTING", "Core not reachable, trying wireless ADB relaunch...")
                 updateNotification()
+                appLog(
+                    level = "warn",
+                    message = "Core watchdog relaunch started",
+                    attrs = mapOf("port" to getConfiguredPort())
+                )
                 val relaunched = relaunchCoreViaSavedEndpoint()
                 if (relaunched.ok) {
                     setState("RUNNING", "Wireless ADB keepalive recovered core process.")
+                    appLog(
+                        level = "info",
+                        message = "Core watchdog relaunch succeeded",
+                        attrs = mapOf("port" to getConfiguredPort(), "detail" to relaunched.detail)
+                    )
                 } else {
                     setState("RECONNECTING", "Reconnect failed: ${relaunched.detail}")
+                    appLog(
+                        level = "warn",
+                        message = "Core watchdog relaunch failed",
+                        attrs = mapOf("port" to getConfiguredPort(), "detail" to relaunched.detail)
+                    )
                 }
                 updateNotification()
             }
@@ -799,11 +1098,31 @@ class WirelessAdbBootstrapService : Service() {
         if (connectDiscovered != null) endpointCandidates.add(connectDiscovered)
         if (pairingDiscovered != null) endpointCandidates.add(Endpoint(pairingDiscovered.host, 5555))
         if (endpointCandidates.isEmpty()) {
+            appLog(
+                level = "warn",
+                message = "Core relaunch endpoint candidates prepared",
+                attrs = mapOf(
+                    "candidateCount" to 0,
+                    "savedEndpoint" to ep?.asText().orEmpty(),
+                    "discoveredConnect" to connectDiscovered?.asText().orEmpty(),
+                    "discoveredPairing" to pairingDiscovered?.asText().orEmpty()
+                )
+            )
             return RelaunchResult(
                 false,
                 "no endpoint available. keep wireless debugging on, ensure same Wi-Fi, then retry."
             )
         }
+        appLog(
+            level = "info",
+            message = "Core relaunch endpoint candidates prepared",
+            attrs = mapOf(
+                "candidateCount" to endpointCandidates.size,
+                "savedEndpoint" to ep?.asText().orEmpty(),
+                "discoveredConnect" to connectDiscovered?.asText().orEmpty(),
+                "discoveredPairing" to pairingDiscovered?.asText().orEmpty()
+            )
+        )
 
         val manager = WirelessAdbConnectionManager(applicationContext)
         manager.setTimeout(10, TimeUnit.SECONDS)
@@ -819,6 +1138,17 @@ class WirelessAdbBootstrapService : Service() {
                     false
                 }
                 val connected = direct || auto || manager.isConnected
+                appLog(
+                    level = if (connected) "info" else "warn",
+                    message = "Wireless ADB endpoint connect result",
+                    attrs = mapOf(
+                        "host" to candidate.host,
+                        "port" to candidate.port,
+                        "direct" to direct,
+                        "auto" to auto,
+                        "connected" to connected
+                    )
+                )
                 if (!connected) {
                     connectErrors.add("${candidate.asText()}(connect=false)")
                     continue
@@ -829,6 +1159,15 @@ class WirelessAdbBootstrapService : Service() {
                 if (launch.ok) {
                     return RelaunchResult(true, "connected=${candidate.asText()}")
                 }
+                appLog(
+                    level = "warn",
+                    message = "Core launch through wireless endpoint failed",
+                    attrs = mapOf(
+                        "host" to candidate.host,
+                        "port" to candidate.port,
+                        "detail" to launch.detail
+                    )
+                )
                 connectErrors.add("${candidate.asText()}(launch=${launch.detail})")
             }
             RelaunchResult(
@@ -836,6 +1175,11 @@ class WirelessAdbBootstrapService : Service() {
                 "cannot connect/launch via endpoints=${connectErrors.joinToString("; ")}"
             )
         } catch (e: Exception) {
+            appLog(
+                level = "error",
+                message = "Core relaunch through wireless endpoint failed",
+                attrs = mapOf("reason" to formatExceptionChain(e))
+            )
             RelaunchResult(false, "exception=${formatExceptionChain(e)}")
         } finally {
             runCatching { manager.close() }
@@ -856,13 +1200,53 @@ class WirelessAdbBootstrapService : Service() {
         manager: WirelessAdbConnectionManager,
         port: Int
     ): RelaunchResult {
+        appLog(
+            level = "info",
+            message = "Core launch verification started",
+            attrs = mapOf("mode" to "wireless", "port" to port)
+        )
         val starterAsset = resolveStarterAssetForDevice()
-            ?: return RelaunchResult(false, unsupportedAbiDetail())
+        if (starterAsset == null) {
+            val detail = unsupportedAbiDetail()
+            appLog(
+                level = "error",
+                message = "Starter asset unsupported",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "supportedAbis" to STARTER_ASSET_BY_ABI.keys.joinToString(","),
+                    "deviceAbis" to Build.SUPPORTED_ABIS.joinToString(","),
+                    "detail" to detail
+                )
+            )
+            return RelaunchResult(false, detail)
+        }
+        appLog(
+            level = "info",
+            message = "Starter asset resolved",
+            attrs = mapOf("mode" to "wireless", "abi" to starterAsset.abi, "assetName" to starterAsset.assetName)
+        )
         val deploy = deployCoreJarViaShell(manager)
+        appLog(
+            level = if (deploy.ok) "info" else "error",
+            message = "Core jar deploy result",
+            attrs = mapOf("mode" to "wireless", "remotePath" to REMOTE_JAR_PATH, "ok" to deploy.ok, "detail" to deploy.detail)
+        )
         if (!deploy.ok) {
             return RelaunchResult(false, "deploy_failed=${deploy.detail}")
         }
         val starterDeploy = deployStarterBinaryViaShell(manager, starterAsset)
+        appLog(
+            level = if (starterDeploy.ok) "info" else "error",
+            message = "Starter binary deploy result",
+            attrs = mapOf(
+                "mode" to "wireless",
+                "abi" to starterAsset.abi,
+                "assetName" to starterAsset.assetName,
+                "remotePath" to REMOTE_STARTER_PATH,
+                "ok" to starterDeploy.ok,
+                "detail" to starterDeploy.detail
+            )
+        )
         if (!starterDeploy.ok) {
             return RelaunchResult(
                 false,
@@ -870,6 +1254,16 @@ class WirelessAdbBootstrapService : Service() {
             )
         }
         val appLabelsDeploy = deployAppLabelsSnapshotViaShell(manager)
+        appLog(
+            level = if (appLabelsDeploy.ok) "info" else "warn",
+            message = "App labels snapshot deploy result",
+            attrs = mapOf(
+                "mode" to "wireless",
+                "remotePath" to REMOTE_APP_LABELS_PATH,
+                "ok" to appLabelsDeploy.ok,
+                "detail" to appLabelsDeploy.detail
+            )
+        )
         val appLabelsNote = if (appLabelsDeploy.ok) {
             "labels_ok"
         } else {
@@ -881,21 +1275,82 @@ class WirelessAdbBootstrapService : Service() {
             waitLocalPortClosed(port, 2500L, 200L)
             Thread.sleep(350L)
             val launch = runStarterStart(manager, port)
-            if (waitLocalPortReady(port, 3500L, 200L)) {
+            appLog(
+                level = if (launch.ok) "info" else "error",
+                message = "Starter launch attempt result",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "starterOk" to launch.ok,
+                    "detail" to launch.detail
+                )
+            )
+            val readyFast = waitLocalPortReady(port, 3500L, 200L)
+            appLog(
+                level = if (readyFast) "info" else "warn",
+                message = "Core port readiness result",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "ready" to readyFast,
+                    "waitMs" to 3500
+                )
+            )
+            if (readyFast) {
                 return RelaunchResult(true, "ok;$appLabelsNote")
             }
             if (!launch.ok) {
                 errors.add("a$attempt:starter_start_failed ${launch.detail}")
                 continue
             }
-            if (waitLocalPortReady(port, 7000L, 250L)) {
+            val readySlow = waitLocalPortReady(port, 7000L, 250L)
+            appLog(
+                level = if (readySlow) "info" else "warn",
+                message = "Core port readiness result",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "ready" to readySlow,
+                    "waitMs" to 7000
+                )
+            )
+            if (readySlow) {
                 return RelaunchResult(true, "ok;$appLabelsNote")
             }
+            appLog(
+                level = "warn",
+                message = "Core port not ready after starter launch",
+                attrs = mapOf("mode" to "wireless", "attempt" to attempt, "port" to port)
+            )
             val tail = runShellCommand(manager, "tail -n 40 $REMOTE_LOG_PATH", 8000)
             val ps = runShellCommand(
                 manager,
                 "ps -A | grep -E 'lxb_core|com\\.lxb\\.server\\.Main|app_process' | grep -v grep | head -n 12 || true",
                 8000
+            )
+            appLog(
+                level = "warn",
+                message = "Remote core log tail captured",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "attempt" to attempt,
+                    "path" to REMOTE_LOG_PATH,
+                    "ok" to tail.ok,
+                    "tail" to tail.shortOutput()
+                )
+            )
+            appLog(
+                level = "warn",
+                message = "Remote process snapshot captured",
+                attrs = mapOf(
+                    "mode" to "wireless",
+                    "attempt" to attempt,
+                    "ok" to ps.ok,
+                    "processSnapshot" to ps.shortOutput()
+                )
             )
             errors.add(
                 "a$attempt:port_not_ready starter=${launch.detail} ps=${ps.shortOutput()} log=${tail.shortOutput()}"
@@ -1176,13 +1631,53 @@ class WirelessAdbBootstrapService : Service() {
     }
 
     private fun launchCoreWithRootVerification(port: Int): RelaunchResult {
+        appLog(
+            level = "info",
+            message = "Core launch verification started",
+            attrs = mapOf("mode" to "root", "port" to port)
+        )
         val starterAsset = resolveStarterAssetForDevice()
-            ?: return RelaunchResult(false, unsupportedAbiDetail())
+        if (starterAsset == null) {
+            val detail = unsupportedAbiDetail()
+            appLog(
+                level = "error",
+                message = "Starter asset unsupported",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "supportedAbis" to STARTER_ASSET_BY_ABI.keys.joinToString(","),
+                    "deviceAbis" to Build.SUPPORTED_ABIS.joinToString(","),
+                    "detail" to detail
+                )
+            )
+            return RelaunchResult(false, detail)
+        }
+        appLog(
+            level = "info",
+            message = "Starter asset resolved",
+            attrs = mapOf("mode" to "root", "abi" to starterAsset.abi, "assetName" to starterAsset.assetName)
+        )
         val deploy = deployCoreJarViaRoot()
+        appLog(
+            level = if (deploy.ok) "info" else "error",
+            message = "Core jar deploy result",
+            attrs = mapOf("mode" to "root", "remotePath" to REMOTE_JAR_PATH, "ok" to deploy.ok, "detail" to deploy.detail)
+        )
         if (!deploy.ok) {
             return RelaunchResult(false, "deploy_failed=${deploy.detail}")
         }
         val starterDeploy = deployStarterBinaryViaRoot(starterAsset)
+        appLog(
+            level = if (starterDeploy.ok) "info" else "error",
+            message = "Starter binary deploy result",
+            attrs = mapOf(
+                "mode" to "root",
+                "abi" to starterAsset.abi,
+                "assetName" to starterAsset.assetName,
+                "remotePath" to REMOTE_STARTER_PATH,
+                "ok" to starterDeploy.ok,
+                "detail" to starterDeploy.detail
+            )
+        )
         if (!starterDeploy.ok) {
             return RelaunchResult(
                 false,
@@ -1190,6 +1685,16 @@ class WirelessAdbBootstrapService : Service() {
             )
         }
         val appLabelsDeploy = deployAppLabelsSnapshotViaRoot()
+        appLog(
+            level = if (appLabelsDeploy.ok) "info" else "warn",
+            message = "App labels snapshot deploy result",
+            attrs = mapOf(
+                "mode" to "root",
+                "remotePath" to REMOTE_APP_LABELS_PATH,
+                "ok" to appLabelsDeploy.ok,
+                "detail" to appLabelsDeploy.detail
+            )
+        )
         val appLabelsNote = if (appLabelsDeploy.ok) {
             "labels_ok"
         } else {
@@ -1201,20 +1706,81 @@ class WirelessAdbBootstrapService : Service() {
             waitLocalPortClosed(port, 2500L, 200L)
             Thread.sleep(350L)
             val launch = runStarterStartViaRoot(port)
-            if (waitLocalPortReady(port, 3500L, 200L)) {
+            appLog(
+                level = if (launch.ok) "info" else "error",
+                message = "Starter launch attempt result",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "starterOk" to launch.ok,
+                    "detail" to launch.detail
+                )
+            )
+            val readyFast = waitLocalPortReady(port, 3500L, 200L)
+            appLog(
+                level = if (readyFast) "info" else "warn",
+                message = "Core port readiness result",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "ready" to readyFast,
+                    "waitMs" to 3500
+                )
+            )
+            if (readyFast) {
                 return RelaunchResult(true, "ok;$appLabelsNote")
             }
             if (!launch.ok) {
                 errors.add("a$attempt:starter_start_failed ${launch.detail}")
                 continue
             }
-            if (waitLocalPortReady(port, 7000L, 250L)) {
+            val readySlow = waitLocalPortReady(port, 7000L, 250L)
+            appLog(
+                level = if (readySlow) "info" else "warn",
+                message = "Core port readiness result",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "attempt" to attempt,
+                    "port" to port,
+                    "ready" to readySlow,
+                    "waitMs" to 7000
+                )
+            )
+            if (readySlow) {
                 return RelaunchResult(true, "ok;$appLabelsNote")
             }
+            appLog(
+                level = "warn",
+                message = "Core port not ready after starter launch",
+                attrs = mapOf("mode" to "root", "attempt" to attempt, "port" to port)
+            )
             val tail = runRootShellCommand("tail -n 40 $REMOTE_LOG_PATH", 8000)
             val ps = runRootShellCommand(
                 "ps -A | grep -E 'lxb_core|com\\.lxb\\.server\\.Main|app_process' | grep -v grep | head -n 12 || true",
                 8000
+            )
+            appLog(
+                level = "warn",
+                message = "Remote core log tail captured",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "attempt" to attempt,
+                    "path" to REMOTE_LOG_PATH,
+                    "ok" to tail.ok,
+                    "tail" to tail.shortOutput()
+                )
+            )
+            appLog(
+                level = "warn",
+                message = "Remote process snapshot captured",
+                attrs = mapOf(
+                    "mode" to "root",
+                    "attempt" to attempt,
+                    "ok" to ps.ok,
+                    "processSnapshot" to ps.shortOutput()
+                )
             )
             errors.add(
                 "a$attempt:port_not_ready starter=${launch.detail} ps=${ps.shortOutput()} log=${tail.shortOutput()}"

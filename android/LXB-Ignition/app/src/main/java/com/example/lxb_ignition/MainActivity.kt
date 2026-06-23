@@ -102,6 +102,7 @@ import com.example.lxb_ignition.model.TaskRouteRecordSnapshot
 import com.example.lxb_ignition.model.TaskSummary
 import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TraceMetaItem
+import com.example.lxb_ignition.model.UnifiedLogEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
 import com.example.lxb_ignition.model.WirelessBootstrapStatus
 import com.example.lxb_ignition.ui.theme.LXBIgnitionTheme
@@ -1493,14 +1494,6 @@ private fun RootStartGuidePage(
 @Composable
 fun TaskSessionCard(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val requirement by viewModel.requirement.collectAsState()
-    val chatMessages by viewModel.chatMessages.collectAsState()
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(chatMessages.size) {
-        if (chatMessages.isNotEmpty()) {
-            listState.animateScrollToItem(chatMessages.size - 1)
-        }
-    }
 
     SurfacePanel(
         modifier = modifier.fillMaxWidth(),
@@ -1514,58 +1507,29 @@ fun TaskSessionCard(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SurfacePanel(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp),
-                background = MaterialTheme.colorScheme.surfaceVariant,
-                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f),
-                shape = RoundedCornerShape(22.dp)
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (chatMessages.isEmpty()) {
-                        item {
-                            Text(
-                                text = tr("Your recent task conversation will appear here after you run a task."),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
-                            )
-                        }
-                    } else {
-                        items(chatMessages) { msg ->
-                            ChatBubble(message = msg)
-                        }
-                    }
-                }
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom
+            SheetHeader(
+                title = tr("Quick task"),
+                subtitle = tr("Type one task and run it directly on this page.")
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
                     value = requirement,
                     onValueChange = { viewModel.requirement.value = it },
                     label = { Text(tr("Describe what you want to do")) },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 3
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 5
                 )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Button(
+                    onClick = { viewModel.runRequirementOnDevice() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
                 ) {
-                    Button(
-                        onClick = { viewModel.runRequirementOnDevice() },
-                        modifier = Modifier.height(46.dp)
-                    ) {
-                        Text(tr("Run"))
-                    }
+                    Text(tr("Run"))
                 }
             }
         }
@@ -2326,12 +2290,11 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val pageHome = 0
     val pageRecentRuns = 1
     val pageTaskRouteEditor = 2
-    val pageQuickTask = 3
-    val pageTemplateList = 4
-    val pageTemplateForm = 5
-    val pageWorkflowList = 6
-    val pageWorkflowForm = 7
-    val pageTemplatePicker = 8
+    val pageTemplateList = 3
+    val pageTemplateForm = 4
+    val pageWorkflowList = 5
+    val pageWorkflowForm = 6
+    val pageTemplatePicker = 7
     val portableImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -2406,7 +2369,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     onStop = { viewModel.cancelCurrentTaskOnDevice() }
                 )
 
-                CompactEntryRow(title = tr("Quick task"), meta = tr("Direct task"), onClick = { page = pageQuickTask })
+                TaskSessionCard(viewModel = viewModel)
                 CompactEntryRow(title = tr("Templates"), meta = "${templates.size} ${tr("items")}", onClick = { page = pageTemplateList })
                 CompactEntryRow(title = tr("Workflows"), meta = "${workflows.size} ${tr("items")}", onClick = { page = pageWorkflowList })
                 CompactEntryRow(title = tr("Recent Runs"), meta = "${tasks.size} ${tr("items")}", onClick = { page = pageRecentRuns })
@@ -2416,24 +2379,6 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                 ) {
                     Text(tr("Import Portable Bundle"))
                 }
-            }
-        }
-
-        pageQuickTask -> {
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                PageHeaderBlock(
-                    title = tr("Quick task"),
-                    subtitle = tr("Describe what you want the phone to do right now. This is the fastest way to try the product."),
-                    glyph = "⌨",
-                    onBack = { page = pageHome }
-                )
-                TaskSessionCard(viewModel = viewModel)
             }
         }
 
@@ -4455,44 +4400,6 @@ private fun formatRepeat(modeRaw: String, weekdays: Int): String {
 }
 
 @Composable
-fun ChatBubble(message: MainViewModel.ChatMessage) {
-    val isUser = message.role == MainViewModel.ChatRole.USER
-    val bgColor: Color
-    val textColor: Color
-    if (isUser) {
-        bgColor = Color(0xFF1976D2)
-        textColor = Color.White
-    } else {
-        val t = message.text
-        bgColor = when {
-            t.startsWith("Task submitted") || t.contains("finished successfully") -> Color(0xFFE8F5E9)
-            t.startsWith("Task id:") -> Color(0xFFE3F2FD)
-            t.contains("failed") || t.contains("error", ignoreCase = true) -> Color(0xFFFFEBEE)
-            t.startsWith("Cancel requested") || t.contains("cancelled") -> Color(0xFFFFF3E0)
-            else -> Color(0xFFE0E0E0)
-        }
-        textColor = if (bgColor == Color(0xFFE0E0E0)) Color.Black else Color(0xFF212121)
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = bgColor
-            )
-        ) {
-            Text(
-                text = message.text,
-                color = textColor,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-            )
-        }
-    }
-}
-
-@Composable
 fun ProcessRuntimeCard(status: CoreRuntimeStatus) {
     val (bgColor, label) = if (status.ready) {
         Color(0xFF4CAF50) to tr("Core Connected")
@@ -4622,11 +4529,15 @@ private data class TracePrependAnchor(
 
 @Composable
 fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    val appLogs by viewModel.appLogEntries.collectAsState()
     val traceLines by viewModel.traceLines.collectAsState()
     val traceHasMoreBefore by viewModel.traceHasMoreBefore.collectAsState()
     val traceLoadingOlder by viewModel.traceLoadingOlder.collectAsState()
-    val traceExportUiState by viewModel.traceExportUiState.collectAsState()
-    val listState = rememberLazyListState()
+    val logExportUiState by viewModel.logExportUiState.collectAsState()
+    val appListState = rememberLazyListState()
+    val coreListState = rememberLazyListState()
+    var selectedLogPage by rememberSaveable { mutableIntStateOf(0) }
+    var selectedAppLog by remember { mutableStateOf<UnifiedLogEntry?>(null) }
     var selectedTrace by remember { mutableStateOf<TraceEntry?>(null) }
     var initialScrollDone by rememberSaveable { mutableStateOf(false) }
     var prependAnchor by remember { mutableStateOf<TracePrependAnchor?>(null) }
@@ -4642,17 +4553,23 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         }
     }
 
+    LaunchedEffect(appLogs.size, selectedLogPage) {
+        if (selectedLogPage == 0 && appLogs.isNotEmpty()) {
+            appListState.animateScrollToItem(appLogs.lastIndex)
+        }
+    }
+
     LaunchedEffect(traceLines.size) {
         if (!initialScrollDone && traceLines.isNotEmpty()) {
-            listState.scrollToItem(traceLines.lastIndex)
+            coreListState.scrollToItem(traceLines.lastIndex)
             initialScrollDone = true
             return@LaunchedEffect
         }
-        val layout = listState.layoutInfo
+        val layout = coreListState.layoutInfo
         val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
         val isNearBottom = lastVisible >= traceLines.lastIndex - 2
         if (isNearBottom && traceLines.isNotEmpty()) {
-            listState.animateScrollToItem(traceLines.lastIndex)
+            coreListState.animateScrollToItem(traceLines.lastIndex)
         }
     }
 
@@ -4661,20 +4578,20 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
         val newOldestSeq = traceLines.firstOrNull()?.seq ?: 0L
         if (newOldestSeq < anchor.oldestSeq && traceLines.size > anchor.count) {
             val delta = traceLines.size - anchor.count
-            listState.scrollToItem((anchor.index + delta).coerceAtLeast(0), anchor.offset)
+            coreListState.scrollToItem((anchor.index + delta).coerceAtLeast(0), anchor.offset)
             prependAnchor = null
         } else if (!traceLoadingOlder) {
             prependAnchor = null
         }
     }
 
-    LaunchedEffect(listState.firstVisibleItemIndex, traceLines.size, traceHasMoreBefore, traceLoadingOlder) {
+    LaunchedEffect(coreListState.firstVisibleItemIndex, traceLines.size, traceHasMoreBefore, traceLoadingOlder) {
         if (traceLines.isEmpty()) return@LaunchedEffect
-        if (traceHasMoreBefore && !traceLoadingOlder && listState.firstVisibleItemIndex <= 6) {
+        if (selectedLogPage == 1 && traceHasMoreBefore && !traceLoadingOlder && coreListState.firstVisibleItemIndex <= 6) {
             prependAnchor = TracePrependAnchor(
                 count = traceLines.size,
-                index = listState.firstVisibleItemIndex,
-                offset = listState.firstVisibleItemScrollOffset,
+                index = coreListState.firstVisibleItemIndex,
+                offset = coreListState.firstVisibleItemScrollOffset,
                 oldestSeq = traceLines.firstOrNull()?.seq ?: 0L
             )
             viewModel.loadOlderTraceOnDevice(silent = true, limit = 80)
@@ -4689,21 +4606,59 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     ) {
         PageHeaderBlock(
             title = tr("Logs"),
-            subtitle = tr("Inspect live core traces, open structured details, and export the full trace when you need to debug."),
+            subtitle = tr("Inspect app startup logs and live core traces, then export both together for debugging."),
             glyph = "≡",
             primaryActionLabel = tr("Export"),
-            onPrimaryAction = { viewModel.exportAllTraceToDevice() },
+            onPrimaryAction = { viewModel.exportAllLogsToDevice() },
             secondaryActionLabel = tr("Refresh"),
-            onSecondaryAction = { viewModel.refreshTraceTailOnDevice(limit = 80) }
+            onSecondaryAction = {
+                viewModel.refreshAppLogs()
+                viewModel.refreshTraceTailOnDevice(limit = 80)
+            }
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (selectedLogPage == 0) {
+                Button(onClick = { selectedLogPage = 0 }, modifier = Modifier.weight(1f)) {
+                    Text(tr("App"))
+                }
+            } else {
+                OutlinedButton(onClick = { selectedLogPage = 0 }, modifier = Modifier.weight(1f)) {
+                    Text(tr("App"))
+                }
+            }
+            if (selectedLogPage == 1) {
+                Button(onClick = { selectedLogPage = 1 }, modifier = Modifier.weight(1f)) {
+                    Text(tr("Core"))
+                }
+            } else {
+                OutlinedButton(onClick = { selectedLogPage = 1 }, modifier = Modifier.weight(1f)) {
+                    Text(tr("Core"))
+                }
+            }
+        }
         LogPanel(
+            selectedPage = selectedLogPage,
+            appLogs = appLogs,
             traceLines = traceLines,
-            listState = listState,
-            showLoadingOlder = traceLoadingOlder || (traceHasMoreBefore && listState.firstVisibleItemIndex <= 6),
-            traceExportUiState = traceExportUiState,
-            onExportTrace = { viewModel.exportAllTraceToDevice() },
+            appListState = appListState,
+            coreListState = coreListState,
+            showLoadingOlder = traceLoadingOlder || (traceHasMoreBefore && coreListState.firstVisibleItemIndex <= 6),
+            logExportUiState = logExportUiState,
+            onOpenAppLog = { selectedAppLog = it },
             onOpenTrace = { selectedTrace = it },
             modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    val appDetail = selectedAppLog
+    if (appDetail != null) {
+        UnifiedLogDetailDialog(
+            title = tr("Log Details"),
+            entry = appDetail,
+            onDismiss = { selectedAppLog = null }
         )
     }
 
@@ -4793,11 +4748,14 @@ fun LogsTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 fun LogPanel(
+    selectedPage: Int,
+    appLogs: List<UnifiedLogEntry>,
     traceLines: List<TraceEntry>,
-    listState: androidx.compose.foundation.lazy.LazyListState,
+    appListState: androidx.compose.foundation.lazy.LazyListState,
+    coreListState: androidx.compose.foundation.lazy.LazyListState,
     showLoadingOlder: Boolean,
-    traceExportUiState: MainViewModel.TraceExportUiState,
-    onExportTrace: () -> Unit,
+    logExportUiState: MainViewModel.LogExportUiState,
+    onOpenAppLog: (UnifiedLogEntry) -> Unit,
     onOpenTrace: (TraceEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -4806,30 +4764,30 @@ fun LogPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         when {
-            traceExportUiState.exporting -> {
+            logExportUiState.exporting -> {
                 StatusNotice(
-                    text = tr("Exporting trace..."),
+                    text = tr("Exporting logs..."),
                     accentColor = MaterialTheme.colorScheme.primary
                 )
             }
 
-            traceExportUiState.status == "success" -> {
+            logExportUiState.status == "success" -> {
                 StatusNotice(
-                    text = "${tr("Trace exported")}: ${tr("Saved to")} ${traceExportUiState.savedPath}",
+                    text = "${tr("Logs exported")}: ${tr("Saved to")} ${logExportUiState.savedPath}",
                     accentColor = AppSuccess
                 )
             }
 
-            traceExportUiState.status == "empty" -> {
+            logExportUiState.status == "empty" -> {
                 StatusNotice(
-                    text = tr("No trace to export."),
+                    text = tr("No logs to export."),
                     accentColor = MaterialTheme.colorScheme.secondary
                 )
             }
 
-            traceExportUiState.status == "failure" -> {
+            logExportUiState.status == "failure" -> {
                 StatusNotice(
-                    text = "${tr("Trace export failed")}: ${traceExportUiState.error}",
+                    text = "${tr("Log export failed")}: ${logExportUiState.error}",
                     accentColor = AppError
                 )
             }
@@ -4841,18 +4799,32 @@ fun LogPanel(
             shape = RoundedCornerShape(24.dp)
         ) {
             LazyColumn(
-                state = listState,
+                state = if (selectedPage == 0) appListState else coreListState,
                 modifier = Modifier.fillMaxSize()
             ) {
-                item(key = "trace_hint") {
+                item(key = "log_hint") {
                     Text(
-                        text = tr("Latest traces stay at the bottom. Scroll upward to load older ones."),
+                        text = if (selectedPage == 0) {
+                            tr("Latest app logs stay at the bottom.")
+                        } else {
+                            tr("Latest core traces stay at the bottom. Scroll upward to load older ones.")
+                        },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                     )
                 }
-                if (showLoadingOlder) {
+                if (selectedPage == 0 && appLogs.isEmpty()) {
+                    item(key = "app_empty") {
+                        Text(
+                            text = tr("No app logs yet."),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                if (selectedPage == 1 && showLoadingOlder) {
                     item(key = "loading_older") {
                         Text(
                             text = tr("Load older traces..."),
@@ -4862,15 +4834,143 @@ fun LogPanel(
                         )
                     }
                 }
-                items(traceLines, key = { if (it.seq > 0L) it.seq else it.rawLine.hashCode().toLong() }) { entry ->
-                    TraceCard(entry = entry, onClick = { onOpenTrace(entry) })
+                if (selectedPage == 0) {
+                    items(appLogs, key = { "app-${it.seq}-${it.timestamp}" }) { entry ->
+                        AppLogCard(entry = entry, onClick = { onOpenAppLog(entry) })
+                    }
+                } else {
+                    items(traceLines, key = { if (it.seq > 0L) it.seq else it.rawLine.hashCode().toLong() }) { entry ->
+                        TraceCard(entry = entry, onClick = { onOpenTrace(entry) })
+                    }
                 }
-                item(key = "trace_footer_space") {
+                item(key = "log_footer_space") {
                     Spacer(modifier = Modifier.height(6.dp))
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AppLogCard(entry: UnifiedLogEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val accent = logLevelAccent(entry.level)
+    SurfacePanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        background = if (entry.level == "error") AppErrorSoft else scheme.surface,
+        borderColor = accent.copy(alpha = 0.18f),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    GlyphBadge(
+                        glyph = when (entry.level) {
+                            "error" -> "!"
+                            "warn" -> "!"
+                            else -> "•"
+                        },
+                        accentColor = accent,
+                        size = 28.dp
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(
+                            text = entry.logger,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurface
+                        )
+                        Text(
+                            text = entry.level.uppercase(Locale.US),
+                            fontSize = 10.sp,
+                            color = accent
+                        )
+                    }
+                }
+                if (entry.timestamp.isNotBlank()) {
+                    StatusTag(
+                        text = entry.timestamp.takeLast(12),
+                        accentColor = accent
+                    )
+                }
+            }
+            Text(
+                text = entry.message,
+                fontSize = 11.sp,
+                color = scheme.onSurface.copy(alpha = 0.92f),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun logLevelAccent(level: String): Color {
+    return when (level.lowercase(Locale.US)) {
+        "error" -> AppError
+        "warn" -> AppWarning
+        else -> MaterialTheme.colorScheme.primary
+    }
+}
+
+@Composable
+private fun UnifiedLogDetailDialog(
+    title: String,
+    entry: UnifiedLogEntry,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SurfacePanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    background = MaterialTheme.colorScheme.surfaceVariant,
+                    borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(entry.logger, style = MaterialTheme.typography.titleSmall)
+                        Text(entry.message, fontSize = 12.sp)
+                        if (entry.timestamp.isNotBlank()) {
+                            Text("${tr("Timestamp")}: ${entry.timestamp}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("${tr("Level")}: ${entry.level}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                TraceDetailSection(
+                    title = tr("Fields"),
+                    items = entry.attrs.map { (key, value) -> TraceMetaItem(label = key, value = value) }
+                )
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(tr("Close"))
+            }
+        }
+    )
 }
 
 @Composable
@@ -4916,7 +5016,7 @@ private fun TraceCard(entry: TraceEntry, onClick: () -> Unit) {
                         size = 28.dp
                     )
                     Text(
-                        text = entry.event,
+                        text = entry.logger.ifBlank { entry.event },
                         style = MaterialTheme.typography.bodyMedium,
                         color = scheme.onSurface
                     )
@@ -4930,7 +5030,7 @@ private fun TraceCard(entry: TraceEntry, onClick: () -> Unit) {
             }
             if (entry.summary.isNotBlank()) {
                 Text(
-                    text = entry.summary,
+                    text = "${entry.event}: ${entry.summary}",
                     fontSize = 11.sp,
                     color = scheme.onSurface.copy(alpha = 0.92f),
                     maxLines = 2

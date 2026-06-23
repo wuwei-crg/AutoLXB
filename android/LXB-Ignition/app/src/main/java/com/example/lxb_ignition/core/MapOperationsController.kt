@@ -18,14 +18,13 @@ class MapOperationsController(
     private val mapSyncResult: MutableStateFlow<String>,
     private val saveConfig: () -> Unit,
     private val syncDeviceConfig: suspend () -> Result<String>,
-    private val appendLog: (String) -> Unit,
-    private val appendSystemMessage: (String) -> Unit
+    private val appendLog: (String) -> Unit
 ) {
     fun syncStableMapsNow() {
         val base = mapRepoRawBaseUrl.value.trim()
         if (base.isEmpty()) {
             mapSyncResult.value = "Map repo raw base URL is empty."
-            appendSystemMessage("Map sync failed: empty raw base URL.")
+            appendLog("[MAP] Map sync failed: empty raw base URL.")
             return
         }
         saveConfig()
@@ -39,7 +38,6 @@ class MapOperationsController(
             withContext(Dispatchers.Main) {
                 mapSyncResult.value = msg
                 appendLog("[MAP] $msg")
-                appendSystemMessage(msg)
             }
         }
     }
@@ -50,12 +48,12 @@ class MapOperationsController(
         val mapId = mapTargetId.value.trim()
         if (base.isEmpty()) {
             mapSyncResult.value = "Map repo raw base URL is empty."
-            appendSystemMessage("Pull stable map failed: empty raw base URL.")
+            appendLog("[MAP] Pull stable map failed: empty raw base URL.")
             return
         }
         if (pkg.isEmpty() || mapId.isEmpty()) {
             mapSyncResult.value = "Package and Map ID are required."
-            appendSystemMessage("Pull stable map failed: package/map_id is empty.")
+            appendLog("[MAP] Pull stable map failed: package/map_id is empty.")
             return
         }
         saveConfig()
@@ -67,7 +65,6 @@ class MapOperationsController(
             withContext(Dispatchers.Main) {
                 mapSyncResult.value = msg
                 appendLog("[MAP] $msg")
-                appendSystemMessage(msg)
             }
         }
     }
@@ -78,12 +75,12 @@ class MapOperationsController(
         val mapId = mapTargetId.value.trim()
         if (base.isEmpty()) {
             mapSyncResult.value = "Map repo raw base URL is empty."
-            appendSystemMessage("Pull candidate map failed: empty raw base URL.")
+            appendLog("[MAP] Pull candidate map failed: empty raw base URL.")
             return
         }
         if (pkg.isEmpty() || mapId.isEmpty()) {
             mapSyncResult.value = "Package and Map ID are required."
-            appendSystemMessage("Pull candidate map failed: package/map_id is empty.")
+            appendLog("[MAP] Pull candidate map failed: package/map_id is empty.")
             return
         }
         saveConfig()
@@ -95,7 +92,6 @@ class MapOperationsController(
             withContext(Dispatchers.Main) {
                 mapSyncResult.value = msg
                 appendLog("[MAP] $msg")
-                appendSystemMessage(msg)
             }
         }
     }
@@ -109,7 +105,6 @@ class MapOperationsController(
         val msg = mapSyncManager.activeStatus(pkg)
         mapSyncResult.value = msg
         appendLog("[MAP] $msg")
-        appendSystemMessage(msg)
     }
 
     fun setMapSource(sourceRaw: String) {
@@ -131,7 +126,6 @@ class MapOperationsController(
             withContext(Dispatchers.Main) {
                 mapSyncResult.value = msg
                 appendLog("[MAP] $msg")
-                appendSystemMessage(msg)
             }
         }
     }
@@ -149,7 +143,6 @@ class MapOperationsController(
             }
             mapSyncResult.value = msg
             appendLog("[MAP] $msg")
-            appendSystemMessage(msg)
         }
     }
 }

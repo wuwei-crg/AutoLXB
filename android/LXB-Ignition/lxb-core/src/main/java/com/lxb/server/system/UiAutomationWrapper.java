@@ -1,5 +1,7 @@
 package com.lxb.server.system;
 
+import com.lxb.server.cortex.TraceLogger;
+
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -47,9 +49,14 @@ public class UiAutomationWrapper {
     private long adbKeyboardStatusTs = 0L;
     private AdbKeyboardProfile adbKeyboardProfile =
             new AdbKeyboardProfile(false, "", "", "", "", "", false);
+    private TraceLogger trace;
 
     // 反射获取的 UiAutomation 实例
     private Object uiAutomation;
+
+    public void setTraceLogger(TraceLogger trace) {
+        this.trace = trace;
+    }
 
     // 缓存的反射方法
     private Method injectInputEventMethod;
@@ -1109,9 +1116,18 @@ public class UiAutomationWrapper {
         String fallback = listAppsWithPackageOnly(filter);
         if (fallback != null && fallback.length() > 2) {
             System.err.println(TAG + " listApps snapshot unavailable; using package-only fallback");
+            traceEvent("list_apps_package_fallback", "warn", "List apps used package-only fallback", mapOf(
+                    "filter", filter,
+                    "count", countJsonArrayItems(fallback),
+                    "reason", "external_labels_unavailable"
+            ));
             return fallback;
         }
         System.err.println(TAG + " listApps snapshot unavailable; fallback empty; returning []");
+        traceEvent("list_apps_empty", "warn", "List apps returned empty", mapOf(
+                "filter", filter,
+                "reason", "external_labels_and_package_fallback_empty"
+        ));
         return "[]";
     }
 
@@ -1124,10 +1140,23 @@ public class UiAutomationWrapper {
         try {
             Map<String, String> labels = loadExternalLabelsFromFile();
             if (labels == null || labels.isEmpty()) {
+                traceEvent("list_apps_external_labels_result", "warn", "External app labels snapshot unavailable", mapOf(
+                        "filter", filter,
+                        "path", externalAppLabelsPath,
+                        "ok", false,
+                        "reason", "missing_or_empty"
+                ));
                 return null;
             }
             List<String> packages = listPackagesByShell(filter);
             if (packages.isEmpty()) {
+                traceEvent("list_apps_external_labels_result", "warn", "External app labels could not be joined", mapOf(
+                        "filter", filter,
+                        "path", externalAppLabelsPath,
+                        "ok", false,
+                        "reason", "package_list_empty",
+                        "labels", labels.size()
+                ));
                 return null;
             }
 
@@ -1148,9 +1177,21 @@ public class UiAutomationWrapper {
             System.out.println(TAG + " listAppsWithExternalLabels: filter=" + filter
                     + " total=" + packages.size() + " labeled=" + labeled
                     + " path=" + externalAppLabelsPath);
+            traceEvent("list_apps_external_labels_result", "info", "External app labels snapshot used", mapOf(
+                    "filter", filter,
+                    "path", externalAppLabelsPath,
+                    "ok", true,
+                    "total", packages.size(),
+                    "labeled", labeled
+            ));
             return sb.toString();
         } catch (Exception e) {
             System.err.println(TAG + " listAppsWithExternalLabels failed: " + e.getMessage());
+            traceEvent("list_apps_error", "error", "External app labels list failed", mapOf(
+                    "filter", filter,
+                    "path", externalAppLabelsPath,
+                    "error", String.valueOf(e.getMessage())
+            ));
             return null;
         }
     }
@@ -1205,6 +1246,10 @@ public class UiAutomationWrapper {
         try {
             List<String> packages = listPackagesByShell(filter);
             if (packages.isEmpty()) {
+                traceEvent("list_apps_package_fallback", "warn", "Package-only app list fallback empty", mapOf(
+                        "filter", filter,
+                        "count", 0
+                ));
                 return null;
             }
             StringBuilder sb = new StringBuilder();
@@ -1217,11 +1262,71 @@ public class UiAutomationWrapper {
                 appendAppJsonRow(sb, pkg, null);
             }
             sb.append("]");
+            traceEvent("list_apps_package_fallback", "warn", "Package-only app list fallback built", mapOf(
+                    "filter", filter,
+                    "count", packages.size()
+            ));
             return sb.toString();
         } catch (Exception e) {
             System.err.println(TAG + " listAppsWithPackageOnly failed: " + e.getMessage());
+            traceEvent("list_apps_error", "error", "Package-only app list fallback failed", mapOf(
+                    "filter", filter,
+                    "error", String.valueOf(e.getMessage())
+            ));
             return null;
         }
+    }
+
+    private void traceEvent(String event, String level, String message, Map<String, Object> fields) {
+        if (trace == null) return;
+        Map<String, Object> ev = fields != null ? new LinkedHashMap<>(fields) : new LinkedHashMap<String, Object>();
+        ev.put("logger", "UiAutomationWrapper");
+        ev.put("level", level);
+        ev.put("message", message);
+        trace.event(event, ev);
+    }
+
+    private Map<String, Object> mapOf(Object... values) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (values == null) return out;
+        for (int i = 0; i + 1 < values.length; i += 2) {
+            Object key = values[i];
+            if (key != null) {
+                out.put(String.valueOf(key), values[i + 1]);
+            }
+        }
+        return out;
+    }
+
+    private int countJsonArrayItems(String json) {
+        if (json == null || json.trim().isEmpty()) return 0;
+        int count = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        int objectDepth = 0;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+            if (c == '{') {
+                if (objectDepth == 0) count++;
+                objectDepth++;
+            } else if (c == '}' && objectDepth > 0) {
+                objectDepth--;
+            }
+        }
+        return count;
     }
 
     private void appendAppJsonRow(StringBuilder sb, String pkg, String label) {

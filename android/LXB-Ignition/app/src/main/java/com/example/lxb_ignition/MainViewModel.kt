@@ -25,12 +25,14 @@ import com.example.lxb_ignition.core.DeviceConfigSyncer
 import com.example.lxb_ignition.core.DeviceLlmSettings
 import com.example.lxb_ignition.core.MapOperationsController
 import com.example.lxb_ignition.core.TaskRuntimeController
+import com.example.lxb_ignition.logging.AppLogStore
 import com.example.lxb_ignition.map.MapSyncManager
 import com.example.lxb_ignition.model.AppPackageOption
 import com.example.lxb_ignition.model.CoreRuntimeStatus
 import com.example.lxb_ignition.model.TaskMapDetail
 import com.example.lxb_ignition.model.TaskTemplateSummary
 import com.example.lxb_ignition.model.TaskSummary
+import com.example.lxb_ignition.model.UnifiedLogEntry
 import com.example.lxb_ignition.model.TracePage
 import com.example.lxb_ignition.model.TraceEntry
 import com.example.lxb_ignition.model.TaskRuntimeUiStatus
@@ -68,7 +70,7 @@ import kotlin.random.Random
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    data class TraceExportUiState(
+    data class LogExportUiState(
         val exporting: Boolean = false,
         val status: String = "idle",
         val savedPath: String = "",
@@ -229,14 +231,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _logLines = MutableStateFlow<List<String>>(emptyList())
     val logLines: StateFlow<List<String>> = _logLines.asStateFlow()
+    private val _appLogEntries = MutableStateFlow<List<UnifiedLogEntry>>(emptyList())
+    val appLogEntries: StateFlow<List<UnifiedLogEntry>> = _appLogEntries.asStateFlow()
     private val _traceLines = MutableStateFlow<List<TraceEntry>>(emptyList())
     val traceLines: StateFlow<List<TraceEntry>> = _traceLines.asStateFlow()
     private val _traceHasMoreBefore = MutableStateFlow(false)
     val traceHasMoreBefore: StateFlow<Boolean> = _traceHasMoreBefore.asStateFlow()
     private val _traceLoadingOlder = MutableStateFlow(false)
     val traceLoadingOlder: StateFlow<Boolean> = _traceLoadingOlder.asStateFlow()
-    private val _traceExportUiState = MutableStateFlow(TraceExportUiState())
-    val traceExportUiState: StateFlow<TraceExportUiState> = _traceExportUiState.asStateFlow()
+    private val _logExportUiState = MutableStateFlow(LogExportUiState())
+    val logExportUiState: StateFlow<LogExportUiState> = _logExportUiState.asStateFlow()
     private val _portableOperationNotice = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val portableOperationNotice: SharedFlow<String> = _portableOperationNotice.asSharedFlow()
     private val _adbKeyboardUiState = MutableStateFlow(AdbKeyboardUiState())
@@ -314,19 +318,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val requirement = MutableStateFlow("")
     val sendResult = MutableStateFlow("")
 
-    // Chat view: one-shot task session (no cross-task context)
-    enum class ChatRole { USER, SYSTEM }
-
-    data class ChatMessage(
-        val id: Long,
-        val role: ChatRole,
-        val text: String,
-        val ts: Long = System.currentTimeMillis()
-    )
-
-    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages.asStateFlow()
-    private var nextMsgId: Long = 1L
     private var coreProbeJob: Job? = null
     private var updateCheckedOnLaunch = false
     private var taskMapDetailRequestKey: String = ""
@@ -336,8 +327,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             app = application,
             scope = viewModelScope,
             tracePort = TRACE_PUSH_PORT,
-            appendLog = ::appendLog,
-            appendSystemMessage = ::appendSystemMessage
+            appendLog = { line -> appendLog("TaskRuntimeController", line) }
         )
     }
     val taskRuntimeUiStatus: StateFlow<TaskRuntimeUiStatus>
@@ -419,8 +409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mapSyncResult = mapSyncResult,
             saveConfig = ::saveConfig,
             syncDeviceConfig = ::syncDeviceLlmConfigFile,
-            appendLog = ::appendLog,
-            appendSystemMessage = ::appendSystemMessage
+            appendLog = { line -> appendLog("MapOperationsController", line) }
         )
     }
 
@@ -439,6 +428,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        val app = getApplication<Application>()
+        _appLogEntries.value = AppLogStore.load(app)
+        viewModelScope.launch {
+            AppLogStore.entries.collect { entries ->
+                _appLogEntries.value = entries
+                _logLines.value = entries.takeLast(500).map { entry ->
+                    "${entry.level.uppercase(Locale.US)} ${entry.logger}: ${entry.message}"
+                }
+            }
+        }
         registerWirelessBootstrapReceiver()
         startCoreProbeLoop()
         // Migrate stale/invalid port values (e.g., "0") to default.
@@ -528,6 +527,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshWirelessDebuggingEnabled()
             publishCoreRuntimeStatus(probeCoreHandshakeReady(1500))
         }
+    }
+
+    fun refreshAppLogs() {
+        val app = getApplication<Application>()
+        _appLogEntries.value = AppLogStore.load(app)
     }
 
     fun refreshWirelessDebuggingEnabled() {
@@ -690,7 +694,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            // Ensure trace listener is running so that chat shows live FSM progress.
+            // Trace push updates only the runtime indicator. Detailed FSM progress stays in Core logs.
             runtimeController.ensureTraceListener()
 
             val result = withContext(Dispatchers.IO) {
@@ -1288,46 +1292,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun exportAllTraceToDevice() {
-        if (_traceExportUiState.value.exporting) return
-        val port = currentLxbPortOrNull() ?: run {
-            _traceExportUiState.value = TraceExportUiState(
-                exporting = false,
-                status = "failure",
-                error = "Invalid lxb-core port"
-            )
-            return
-        }
-        _traceExportUiState.value = TraceExportUiState(exporting = true, status = "exporting")
+        exportAllLogsToDevice()
+    }
+
+    fun exportAllLogsToDevice() {
+        if (_logExportUiState.value.exporting) return
+        _logExportUiState.value = LogExportUiState(exporting = true, status = "exporting")
         viewModelScope.launch(Dispatchers.IO) {
             val outcome = runCatching {
-                val entries = pullAllTraceEntries(port = port, limit = 200)
+                val app = getApplication<Application>()
+                AppLogStore.load(app)
+                val port = currentLxbPortOrNull()
+                val coreEntries = if (port == null) {
+                    AppLogStore.write(
+                        context = app,
+                        level = "warn",
+                        logger = "MainViewModel",
+                        message = "Core trace export skipped: invalid lxb-core port."
+                    )
+                    emptyList()
+                } else {
+                    runCatching {
+                        pullAllTraceEntries(port = port, limit = 200).map(::traceToUnifiedLogEntry)
+                    }.getOrElse { e ->
+                        AppLogStore.write(
+                            context = app,
+                            level = "warn",
+                            logger = "MainViewModel",
+                            message = "Core trace export skipped: ${e.message ?: e.javaClass.simpleName}"
+                        )
+                        emptyList()
+                    }
+                }
+                val entries = (AppLogStore.entries.value + coreEntries)
+                    .sortedWith(compareBy<UnifiedLogEntry> { it.timestamp }.thenBy { it.source }.thenBy { it.seq })
                 if (entries.isEmpty()) {
-                    return@runCatching TraceExportUiState(
+                    return@runCatching LogExportUiState(
                         exporting = false,
                         status = "empty"
                     )
                 }
-                val savedPath = writeTraceExportFile(entries)
-                TraceExportUiState(
+                val savedPath = writeUnifiedLogExportFile(entries)
+                LogExportUiState(
                     exporting = false,
                     status = "success",
                     savedPath = savedPath,
                     lineCount = entries.size
                 )
             }.getOrElse { e ->
-                TraceExportUiState(
+                LogExportUiState(
                     exporting = false,
                     status = "failure",
                     error = e.message ?: e.javaClass.simpleName
                 )
             }
             withContext(Dispatchers.Main) {
-                _traceExportUiState.value = outcome
+                _logExportUiState.value = outcome
             }
             when (outcome.status) {
-                "success" -> appendLog("[TRACE] Exported ${outcome.lineCount} lines to ${outcome.savedPath}")
-                "empty" -> appendLog("[TRACE] Export skipped: no cached trace available.")
-                "failure" -> appendLog("[TRACE] Export failed: ${outcome.error}")
+                "success" -> appendLog("MainViewModel", "Exported ${outcome.lineCount} log lines to ${outcome.savedPath}", "info")
+                "empty" -> appendLog("MainViewModel", "Log export skipped: no cached logs available.", "warn")
+                "failure" -> appendLog("MainViewModel", "Log export failed: ${outcome.error}", "error")
             }
         }
     }
@@ -2364,40 +2389,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun appendLog(line: String) {
-        val current = _logLines.value.toMutableList()
-        current.add(line)
-        if (current.size > 500) {
-            current.subList(0, current.size - 500).clear()
-        }
-        _logLines.value = current
+        appendLog("MainViewModel", line)
+    }
+
+    private fun appendLog(
+        logger: String,
+        line: String,
+        level: String? = null,
+        attrs: Map<String, Any?> = emptyMap()
+    ) {
+        val message = stripLegacyLogPrefix(line)
+        AppLogStore.write(
+            context = getApplication<Application>(),
+            level = level ?: AppLogStore.inferLevel(message),
+            logger = logger,
+            message = message,
+            attrs = attrs
+        )
+    }
+
+    private fun stripLegacyLogPrefix(line: String): String {
+        return line.trim().replaceFirst(Regex("^\\[[A-Z0-9_]+]\\s*"), "").trim()
     }
 
     private fun appendUserMessage(text: String) {
-        val msg = ChatMessage(
-            id = nextMsgId++,
-            role = ChatRole.USER,
-            text = text
+        appendLog(
+            logger = "MainViewModel",
+            line = "Quick task submitted: $text",
+            level = "info",
+            attrs = mapOf("surface" to "quick_task", "role" to "user")
         )
-        val current = _chatMessages.value.toMutableList()
-        current.add(msg)
-        if (current.size > 100) {
-            current.subList(0, current.size - 100).clear()
-        }
-        _chatMessages.value = current
     }
 
     private fun appendSystemMessage(text: String) {
-        val msg = ChatMessage(
-            id = nextMsgId++,
-            role = ChatRole.SYSTEM,
-            text = UiMessageLocalizer.localize(uiLang.value, text)
+        val message = text.trim()
+        if (message.isBlank()) return
+        val last = AppLogStore.entries.value.lastOrNull()
+        if (last?.message == message) return
+        appendLog(
+            logger = "MainViewModel",
+            line = message,
+            attrs = mapOf("surface" to "status", "role" to "system")
         )
-        val current = _chatMessages.value.toMutableList()
-        current.add(msg)
-        if (current.size > 100) {
-            current.subList(0, current.size - 100).clear()
-        }
-        _chatMessages.value = current
     }
 
     private fun showPortableNotice(text: String) {
@@ -2511,11 +2544,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return merged.values.sortedBy { it.seq }
     }
 
-    private fun writeTraceExportFile(entries: List<TraceEntry>): String {
+    private fun traceToUnifiedLogEntry(entry: TraceEntry): UnifiedLogEntry {
+        val attrs = LinkedHashMap<String, String>()
+        attrs["event"] = entry.event
+        if (entry.taskId.isNotBlank()) {
+            attrs["task_id"] = entry.taskId
+        }
+        entry.fields.forEach { item ->
+            if (item.label.isNotBlank() && item.value.isNotBlank()) {
+                attrs[item.label] = item.value
+            }
+        }
+        val logger = entry.logger.ifBlank { "CoreTrace" }
+        val level = entry.level.ifBlank { if (entry.isError) "error" else "info" }
+        val message = entry.message.ifBlank { entry.summary.ifBlank { entry.event } }
+        return UnifiedLogEntry(
+            source = "core",
+            seq = entry.seq,
+            timestamp = entry.timestamp,
+            level = level,
+            logger = logger,
+            message = message,
+            attrs = attrs,
+            rawLine = entry.rawLine
+        )
+    }
+
+    private fun writeUnifiedLogExportFile(entries: List<UnifiedLogEntry>): String {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val fileName = "lxb-trace-$stamp.jsonl"
+        val fileName = "lxb-logs-$stamp.jsonl"
         val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/LXB"
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -2530,7 +2589,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ?: throw IllegalStateException("Cannot open export file stream.")
                 stream.bufferedWriter(Charsets.UTF_8).use { writer ->
                     entries.forEach { entry ->
-                        writer.append(entry.rawLine)
+                        writer.append(AppLogStore.toJsonLine(entry))
                         writer.append('\n')
                     }
                 }
@@ -2549,7 +2608,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val fallbackFile = File(fallbackDir, fileName)
         fallbackFile.bufferedWriter(Charsets.UTF_8).use { writer ->
             entries.forEach { entry ->
-                writer.append(entry.rawLine)
+                writer.append(AppLogStore.toJsonLine(entry))
                 writer.append('\n')
             }
         }

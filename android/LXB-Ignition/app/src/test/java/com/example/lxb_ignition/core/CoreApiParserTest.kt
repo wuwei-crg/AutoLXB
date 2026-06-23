@@ -2,6 +2,7 @@ package com.example.lxb_ignition.core
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -143,6 +144,46 @@ class CoreApiParserTest {
         val parsed = CoreApiParser.parseSystemControl(payload)
         assertEquals(true, parsed.ok)
         assertTrue(parsed.detail.contains("stdout=done"))
+    }
+
+    @Test
+    fun parseTraceLines_redactsSensitiveFields() {
+        val traceLine = JSONObject()
+            .put("ts", "2026-06-23T10:11:12.123+0800")
+            .put("event", "list_apps_error")
+            .put("level", "error")
+            .put("logger", "ExecutionEngine")
+            .put("message", "List apps failed: api_key=sk-live Authorization: Bearer token-123 unlock_pin=2468 pairing_code=135790")
+            .put("api_key", "sk-live")
+            .put("unlock_pin", "2468")
+            .put("pairing_code", 135790)
+            .put("detail", "Bearer token-456")
+            .toString()
+
+        val payload = JSONObject()
+            .put("ok", true)
+            .put(
+                "items",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("seq", 1L)
+                        .put("line", traceLine)
+                )
+            )
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+
+        val parsed = CoreApiParser.parseTraceLines(payload).second.entries.single()
+
+        assertEquals("ExecutionEngine", parsed.logger)
+        assertEquals("error", parsed.level)
+        assertFalse(parsed.message.contains("sk-live"))
+        assertFalse(parsed.rawLine.contains("sk-live"))
+        assertFalse(parsed.rawLine.contains("token-123"))
+        assertFalse(parsed.rawLine.contains("2468"))
+        assertFalse(parsed.rawLine.contains("135790"))
+        assertTrue(parsed.fields.none { it.label == "api_key" && it.value != "****" })
+        assertTrue(parsed.fields.none { it.label == "unlock_pin" && it.value != "****" })
     }
 
     @Test

@@ -46,4 +46,9 @@ object AppStatePaths {
         val base = getStateBaseDir(context)
         return File(base, "task_memory.json").absolutePath
     }
+
+    fun getAppLogFile(context: Context): File {
+        val base = getStateBaseDir(context)
+        return File(base, "app-log.jsonl")
+    }
 }

@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.lxb.server.cortex.TraceLogger;
 import com.lxb.server.cortex.json.Json;
 import com.lxb.server.system.UiAutomationWrapper;
 
@@ -32,6 +33,7 @@ public class ExecutionEngine {
 
     // 系统层依赖
     private UiAutomationWrapper uiAutomation;
+    private TraceLogger trace;
     private volatile int lastScreenRecordPid = -1;
     private static final int INPUT_METHOD_ADB = 0;
     private static final int INPUT_METHOD_CLIPBOARD = 1;
@@ -45,6 +47,16 @@ public class ExecutionEngine {
      */
     public void setUiAutomation(UiAutomationWrapper wrapper) {
         this.uiAutomation = wrapper;
+        if (wrapper != null && trace != null) {
+            wrapper.setTraceLogger(trace);
+        }
+    }
+
+    public void setTraceLogger(TraceLogger trace) {
+        this.trace = trace;
+        if (uiAutomation != null) {
+            uiAutomation.setTraceLogger(trace);
+        }
     }
 
     /**
@@ -533,13 +545,38 @@ public class ExecutionEngine {
         }
 
         System.out.println(TAG + " LIST_APPS filter=" + filter);
+        traceEvent("list_apps_start", "info", "List apps request started", mapOf(
+                "filter", filter
+        ));
 
         if (uiAutomation == null) {
             System.err.println(TAG + " UiAutomation not available");
+            traceEvent("list_apps_error", "error", "List apps failed: UiAutomation not available", mapOf(
+                    "filter", filter,
+                    "error", "UiAutomation not available"
+            ));
             return new byte[]{0x00};
         }
 
-        String jsonResult = uiAutomation.listApps(filter);
+        String jsonResult;
+        try {
+            jsonResult = uiAutomation.listApps(filter);
+        } catch (Exception e) {
+            traceEvent("list_apps_error", "error", "List apps failed", mapOf(
+                    "filter", filter,
+                    "error", String.valueOf(e.getMessage())
+            ));
+            return new byte[]{0x00};
+        }
+        int count = countJsonArrayItems(jsonResult);
+        traceEvent(count > 0 ? "list_apps_result" : "list_apps_empty",
+                count > 0 ? "info" : "warn",
+                count > 0 ? "List apps request finished" : "List apps returned empty",
+                mapOf(
+                        "filter", filter,
+                        "count", count,
+                        "bytes", jsonResult != null ? jsonResult.getBytes(StandardCharsets.UTF_8).length : 0
+                ));
         byte[] jsonBytes = jsonResult.getBytes(StandardCharsets.UTF_8);
 
         // 返回: status[1B] + json_len[2B] + json_data
@@ -550,6 +587,39 @@ public class ExecutionEngine {
         response.put(jsonBytes);
 
         return response.array();
+    }
+
+    private void traceEvent(String event, String level, String message, Map<String, Object> fields) {
+        if (trace == null) return;
+        Map<String, Object> ev = fields != null ? new LinkedHashMap<>(fields) : new LinkedHashMap<String, Object>();
+        ev.put("logger", "ExecutionEngine");
+        ev.put("level", level);
+        ev.put("message", message);
+        trace.event(event, ev);
+    }
+
+    private Map<String, Object> mapOf(Object... values) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (values == null) return out;
+        for (int i = 0; i + 1 < values.length; i += 2) {
+            Object key = values[i];
+            if (key != null) {
+                out.put(String.valueOf(key), values[i + 1]);
+            }
+        }
+        return out;
+    }
+
+    private int countJsonArrayItems(String json) {
+        if (json == null || json.trim().isEmpty()) return 0;
+        try {
+            Object parsed = Json.parse(json);
+            if (parsed instanceof java.util.List) {
+                return ((java.util.List<?>) parsed).size();
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
     }
 
     /**
