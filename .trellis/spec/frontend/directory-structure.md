@@ -22,8 +22,9 @@ talks to `lxb-core`.
 - `map/` contains cloud map registry/cache/apply logic.
 - `storage/` centralizes app state paths.
 - `ui/theme/` contains Material 3 color, type, and theme definitions.
-- `src/main/assets/` contains the packaged core jar/assets produced from
-  `lxb-core`.
+- `src/main/assets/` is for static app assets. Runtime core assets are staged
+  under `app/build/generated/lxb-runtime-assets` by `syncLxbRuntimeAssets`
+  before packaging.
 
 Reference files:
 - `android/LXB-Ignition/app/src/main/java/com/example/lxb_ignition/MainActivity.kt`

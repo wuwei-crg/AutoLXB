@@ -5,6 +5,7 @@ plugins {
 }
 
 import java.io.File
+import org.gradle.api.tasks.Sync
 import java.util.Properties
 
 val localProps = Properties().apply {
@@ -58,6 +59,7 @@ fun detectNdkRoot(): File? {
 
 val starterSource = file("src/main/cpp/lxb_starter.c")
 val starterOutputDir = rootProject.file("lxb-core/build/libs")
+val runtimeAssetsDir = layout.buildDirectory.dir("generated/lxb-runtime-assets")
 
 data class StarterTarget(
     val abi: String,
@@ -175,6 +177,17 @@ tasks.register("buildLxbStarterArm64") {
     dependsOn("buildLxbStarters")
 }
 
+val syncLxbRuntimeAssets = tasks.register<Sync>("syncLxbRuntimeAssets") {
+    group = "build"
+    description = "Stage only the runtime assets deployed by the Android bootstrap service."
+    dependsOn(":lxb-core:buildDex")
+    dependsOn("buildLxbStarters")
+    from(starterOutputDir) {
+        include("lxb-core-dex.jar", "lxb-starter-*")
+    }
+    into(runtimeAssetsDir)
+}
+
 android {
     namespace = "com.example.lxb_ignition"
     compileSdk {
@@ -183,7 +196,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            assets.srcDirs("../lxb-core/build/libs")
+            assets.srcDirs("src/main/assets", runtimeAssetsDir)
         }
     }
 
@@ -291,19 +304,15 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
-// 显式声明 assets 合并任务依赖 lxb-core:jar，避免 Gradle 任务顺序不确定
+// Keep Android asset packaging limited to the staged runtime assets.
 afterEvaluate {
-    // Generate lxb-core-dex.jar before app build/install.
-    tasks.matching { it.name == "preBuild" || it.name == "installDebug" }
+    tasks.matching { it.name == "preBuild" || it.name.startsWith("install") }
         .configureEach {
-            dependsOn(":lxb-core:buildDex")
-            dependsOn("buildLxbStarters")
+            dependsOn(syncLxbRuntimeAssets)
         }
 
-    // Asset merge must wait for dex jar generation as well.
     tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
         .configureEach {
-            dependsOn(":lxb-core:buildDex")
-            dependsOn("buildLxbStarters")
+            dependsOn(syncLxbRuntimeAssets)
         }
 }

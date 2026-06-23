@@ -15,7 +15,7 @@
   "user_task": "打开 App，完成签到",
   "user_playbook": "进入首页后点击签到按钮",
   "task_map_mode": "manual",
-  "route_id": "template:daily-checkin",
+  "route_id": "daily-checkin",
   "ts": "2026-05-06T09:00:01.120+0800",
   "event": "task_route_key"
 }

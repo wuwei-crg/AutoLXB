@@ -15,7 +15,7 @@ This means the route identity for a task run has been determined. It usually app
   "user_task": "Open the app and complete check-in",
   "user_playbook": "Tap the check-in button on the home page",
   "task_map_mode": "manual",
-  "route_id": "template:daily-checkin",
+  "route_id": "daily-checkin",
   "ts": "2026-05-06T09:00:01.120+0800",
   "event": "task_route_key"
 }

@@ -7,8 +7,6 @@ object UiMessageLocalizer {
         }
         return when {
             text.startsWith("Invalid lxb-core port") -> "lxb-core 端口无效，请在配置页检查 TCP 端口。"
-            text == "Please enter a task description before sending to PC." -> "发送到 PC 前请先输入任务描述。"
-            text == "web_console IP is missing. Please fill it in Config tab." -> "web_console IP 未配置，请在配置页填写。"
             text == "Please enter a task description before running on device." -> "设备端执行前请先输入任务描述。"
             text == "Task received, checking lxb-core server status..." -> "任务已接收，正在检查 lxb-core 服务状态..."
             text == "Server is not running, please start the service first." -> "服务未运行，请先启动服务。"

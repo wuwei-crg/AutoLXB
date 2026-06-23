@@ -54,10 +54,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -118,8 +116,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val PREFS_NAME = "lxb_config"
         private const val KEY_LXB_PORT = "lxb_port"
-        private const val KEY_SERVER_IP = "server_ip"
-        private const val KEY_SERVER_PORT = "server_port"
         private const val DEFAULT_LXB_PORT = "12345"
 
         private const val KEY_LLM_BASE_URL = "llm_base_url"
@@ -250,10 +246,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lxbPort = MutableStateFlow(
         normalizePortString(prefs.getString(KEY_LXB_PORT, DEFAULT_LXB_PORT))
     )
-
-    // Config: PC web_console (kept for compatibility; Android no longer sends tasks by default)
-    val serverIp = MutableStateFlow(prefs.getString(KEY_SERVER_IP, "") ?: "")
-    val serverPort = MutableStateFlow(prefs.getString(KEY_SERVER_PORT, "5000") ?: "5000")
 
     // Config: LLM (device-side direct call)
     val llmBaseUrl = MutableStateFlow(prefs.getString(KEY_LLM_BASE_URL, "") ?: "")
@@ -654,43 +646,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ready = false,
                 detail = "Disconnected (${coreClientGateway.host}:$port)"
             )
-        }
-    }
-
-    fun sendRequirement() {
-        val req = requirement.value.trim()
-        if (req.isEmpty()) {
-            sendResult.value = "Please enter a task description first."
-            appendSystemMessage("Please enter a task description before sending to PC.")
-            return
-        }
-        val ip = serverIp.value.trim()
-        val port = serverPort.value.trim()
-        if (ip.isEmpty()) {
-            sendResult.value = "Please fill web_console IP in Config tab first."
-            appendSystemMessage("web_console IP is missing. Please fill it in Config tab.")
-            return
-        }
-        saveConfig()
-        viewModelScope.launch {
-            sendResult.value = "Sending to PC..."
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val url = "http://$ip:$port/api/cortex/fsm/start"
-                        val json = org.json.JSONObject()
-                            .put("user_task", req)
-                            .put("lxb_port", currentLxbPortOrDefault())
-                            .toString()
-                    val body = json.toRequestBody("application/json".toMediaType())
-                    val request = Request.Builder().url(url).post(body).build()
-                    httpClient.newCall(request).execute().use { resp ->
-                        "HTTP ${resp.code}: ${resp.body?.string()?.take(200) ?: "(empty body)"}"
-                    }
-                }.getOrElse { e -> "Send failed: ${e.message}" }
-            }
-            sendResult.value = result
-            appendLog("[REQ] $result")
-            appendSystemMessage("Task sent to PC web_console: $result")
         }
     }
 
@@ -2351,8 +2306,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         prefs.edit()
             .putString(KEY_LXB_PORT, normalizedPort)
-            .putString(KEY_SERVER_IP, serverIp.value)
-            .putString(KEY_SERVER_PORT, serverPort.value)
             .putString(KEY_LLM_BASE_URL, llmBaseUrl.value)
             .putString(KEY_LLM_API_KEY, llmApiKey.value)
             .putString(KEY_LLM_MODEL, llmModel.value)

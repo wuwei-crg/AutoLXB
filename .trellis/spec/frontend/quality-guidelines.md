@@ -15,6 +15,9 @@ out of Compose.
   `TaskRuntimeService` rather than scattering notification/wakelock logic.
 - Keep model config writes in `DeviceConfigSyncer` so local app config and
   core config stay consistent.
+- Keep APK runtime assets curated through `syncLxbRuntimeAssets`; do not add
+  the whole `lxb-core/build/libs` directory as an asset source. The APK should
+  package only `lxb-core-dex.jar` and `lxb-starter-*` runtime files.
 
 Reference files:
 - `android/LXB-Ignition/app/src/main/java/com/example/lxb_ignition/service/LocalLinkClient.kt`
