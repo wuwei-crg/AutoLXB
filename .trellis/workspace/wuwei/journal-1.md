@@ -309,3 +309,36 @@ Split SCRIPT_ACTION model routing into unified and separate provider-backed rout
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Fix template route mode persistence
+
+**Date**: 2026-06-25
+**Task**: Fix template route mode persistence
+**Branch**: `dev`
+
+### Summary
+
+Added a template-level route toggle in the Android app, persisted task_map_mode on template save, hardened backend template saves to preserve omitted fields during partial updates, and added regression coverage for route mode persistence.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68fec0b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
