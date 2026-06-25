@@ -276,3 +276,36 @@ Removed container_probe/tap_point construction and replay fallback. TAP routing 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 模型单独配置路由
+
+**Date**: 2026-06-25
+**Task**: 模型单独配置路由
+**Branch**: `dev`
+
+### Summary
+
+Split SCRIPT_ACTION model routing into unified and separate provider-backed routes; updated core routing, app config UI/state, tests, and spec docs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf193fd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

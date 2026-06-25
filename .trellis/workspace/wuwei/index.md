@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~278 | Active |
+| `journal-1.md` | ~311 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-25 | 模型单独配置路由 | `bf193fd` | `dev` |
 | 8 | 2026-06-25 | Locator semantic fallback | `6af653a` | `dev` |
 | 7 | 2026-06-23 | Unify app/core logging | `d664fc0`, `20117dc` | `dev` |
 | 6 | 2026-06-23 | Clean deprecated Android leftovers | `cabbd94` | `dev` |
