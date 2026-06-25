@@ -407,6 +407,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val templatePackage = MutableStateFlow("")
     val templatePlaybook = MutableStateFlow("")
     val templateDecomposeEnabled = MutableStateFlow(false)
+    val templateTaskMapMode = MutableStateFlow(TASK_MAP_MODE_OFF)
 
     val workflowId = MutableStateFlow("")
     val workflowName = MutableStateFlow("")
@@ -1479,6 +1480,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         templatePackage.value = template.packageName
         templatePlaybook.value = template.userPlaybook
         templateDecomposeEnabled.value = template.decomposeEnabled
+        templateTaskMapMode.value = normalizeTaskMapMode(template.taskMapMode)
     }
 
     fun resetTemplateForm() {
@@ -1488,6 +1490,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         templatePackage.value = ""
         templatePlaybook.value = ""
         templateDecomposeEnabled.value = false
+        templateTaskMapMode.value = TASK_MAP_MODE_OFF
     }
 
     fun saveTemplateOnDevice() {
@@ -1509,6 +1512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .put("package_name", templatePackage.value.trim())
                     .put("user_playbook", templatePlaybook.value.trim())
                     .put("decompose_enabled", templateDecomposeEnabled.value)
+                    .put("task_map_mode", normalizeTaskMapMode(templateTaskMapMode.value))
                 coreClientGateway.withClient(port = port) { client ->
                     val resp = client.sendCommand(
                         CommandIds.CMD_CORTEX_TEMPLATE_SAVE,

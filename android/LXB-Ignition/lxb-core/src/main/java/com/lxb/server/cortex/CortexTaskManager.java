@@ -680,25 +680,67 @@ public class CortexTaskManager {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> saveTaskTemplate(Map<String, Object> row) {
-        TaskTemplate t = TaskTemplate.fromMap(row);
-        if (t == null) {
-            t = new TaskTemplate();
-            if (row != null) {
-                t.templateId = stringOrEmpty(row.get("template_id"));
-                t.name = stringOrEmpty(row.get("name"));
-                t.description = stringOrEmpty(row.get("description"));
-                t.packageName = firstNonEmpty(stringOrEmpty(row.get("package_name")), stringOrEmpty(row.get("package")));
-                t.startPage = stringOrEmpty(row.get("start_page"));
-                t.mapPath = stringOrEmpty(row.get("map_path"));
-                t.userPlaybook = stringOrEmpty(row.get("user_playbook"));
-                t.recordEnabled = toBool(row.get("record_enabled"), false);
-                t.taskMapMode = stringOrEmpty(row.get("task_map_mode"));
-                t.routeId = stringOrEmpty(row.get("route_id"));
-                t.decomposeEnabled = toBool(row.get("decompose_enabled"), false);
-            }
+        Map<String, Object> input = row != null ? row : new LinkedHashMap<String, Object>();
+        String templateId = stringOrEmpty(input.get("template_id"));
+        TaskTemplate existing = templateId.isEmpty() ? null : workflowStore.getTemplate(templateId);
+        TaskTemplate t = existing != null ? copyTemplate(existing) : new TaskTemplate();
+
+        t.templateId = templateId;
+        t.name = stringOrEmpty(input.get("name"));
+        t.description = stringOrEmpty(input.get("description"));
+        if (input.containsKey("package_name") || input.containsKey("package")) {
+            t.packageName = firstNonEmpty(stringOrEmpty(input.get("package_name")), stringOrEmpty(input.get("package")));
         }
+        if (input.containsKey("start_page")) {
+            t.startPage = stringOrEmpty(input.get("start_page"));
+        }
+        if (input.containsKey("map_path")) {
+            t.mapPath = stringOrEmpty(input.get("map_path"));
+        }
+        if (input.containsKey("user_playbook")) {
+            t.userPlaybook = stringOrEmpty(input.get("user_playbook"));
+        }
+        if (input.containsKey("record_enabled")) {
+            t.recordEnabled = toBool(input.get("record_enabled"), false);
+        }
+        if (input.containsKey("task_map_mode")) {
+            t.taskMapMode = stringOrEmpty(input.get("task_map_mode"));
+        }
+        if (input.containsKey("route_id")) {
+            t.routeId = stringOrEmpty(input.get("route_id"));
+        }
+        if (input.containsKey("decompose_enabled")) {
+            t.decomposeEnabled = toBool(input.get("decompose_enabled"), false);
+        }
+        if (input.containsKey("legacy_kind")) {
+            t.legacyKind = stringOrEmpty(input.get("legacy_kind"));
+        }
+        if (input.containsKey("legacy_id")) {
+            t.legacyId = stringOrEmpty(input.get("legacy_id"));
+        }
+
         TaskTemplate saved = workflowStore.saveTemplate(t);
         return saved.toMap();
+    }
+
+    private static TaskTemplate copyTemplate(TaskTemplate src) {
+        TaskTemplate out = new TaskTemplate();
+        out.templateId = stringOrEmpty(src.templateId);
+        out.name = stringOrEmpty(src.name);
+        out.description = stringOrEmpty(src.description);
+        out.packageName = stringOrEmpty(src.packageName);
+        out.startPage = stringOrEmpty(src.startPage);
+        out.mapPath = stringOrEmpty(src.mapPath);
+        out.userPlaybook = stringOrEmpty(src.userPlaybook);
+        out.recordEnabled = src.recordEnabled;
+        out.taskMapMode = stringOrEmpty(src.taskMapMode);
+        out.routeId = stringOrEmpty(src.routeId);
+        out.decomposeEnabled = src.decomposeEnabled;
+        out.legacyKind = stringOrEmpty(src.legacyKind);
+        out.legacyId = stringOrEmpty(src.legacyId);
+        out.createdAtMs = src.createdAtMs;
+        out.updatedAtMs = src.updatedAtMs;
+        return out;
     }
 
     public boolean deleteTaskTemplate(String templateId) {

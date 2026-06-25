@@ -2211,6 +2211,7 @@ private val ZhMap = mapOf(
     "Workflow playbook (optional)" to "工作流操作提示（可选）",
     "Allow model decomposition" to "允许模型拆分任务",
     "Enable the legacy TASK_DECOMPOSE stage for this template." to "为这个模板启用旧的 TASK_DECOMPOSE 阶段。",
+    "Prefer the saved route for this template before normal execution." to "执行这个模板时，优先使用已保存的任务路线，再回落到常规执行。",
     "Route" to "路线",
     "No app" to "未指定应用",
     "No route" to "暂无路线",
@@ -2288,6 +2289,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val templatePackage by viewModel.templatePackage.collectAsState()
     val templatePlaybook by viewModel.templatePlaybook.collectAsState()
     val templateDecomposeEnabled by viewModel.templateDecomposeEnabled.collectAsState()
+    val templateTaskMapMode by viewModel.templateTaskMapMode.collectAsState()
     val workflowName by viewModel.workflowName.collectAsState()
     val workflowPlaybook by viewModel.workflowPlaybook.collectAsState()
     val workflowStepTemplateIds by viewModel.workflowStepTemplateIds.collectAsState()
@@ -2530,6 +2532,18 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                     checked = templateDecomposeEnabled,
                     onCheckedChange = { viewModel.templateDecomposeEnabled.value = it }
                 )
+                PreferenceSwitchRow(
+                    title = tr("Task route mode"),
+                    detail = tr("Prefer the saved route for this template before normal execution."),
+                    checked = templateTaskMapMode != MainViewModel.TASK_MAP_MODE_OFF,
+                    onCheckedChange = {
+                        viewModel.templateTaskMapMode.value = if (it) {
+                            MainViewModel.TASK_MAP_MODE_MANUAL
+                        } else {
+                            MainViewModel.TASK_MAP_MODE_OFF
+                        }
+                    }
+                )
                 OutlinedButton(
                     onClick = {
                         routeEditorTarget = RouteEditorTarget(
@@ -2539,7 +2553,7 @@ fun TasksTab(viewModel: MainViewModel, modifier: Modifier = Modifier) {
                             packageName = templatePackage,
                             userTask = templateDescription,
                             userPlaybook = templatePlaybook,
-                            mode = "manual"
+                            mode = templateTaskMapMode
                         )
                         page = pageTaskRouteEditor
                     },

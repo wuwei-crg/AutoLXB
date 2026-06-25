@@ -174,6 +174,10 @@ fails.
   `decompose_enabled`, `created_at_ms`, `updated_at_ms`.
 - New templates default `decompose_enabled=false`; if `route_id` is omitted,
   save normalizes it to the plain `template_id`.
+- Template save uses sparse field-merge semantics for updates: omitted
+  persisted fields such as `task_map_mode`, `package_name`,
+  `decompose_enabled`, and other template metadata must remain unchanged unless
+  the caller explicitly sends replacement values.
 - `Workflow` fields use snake_case:
   `workflow_id`, `name`, `description`, `steps`, `failure_policy`,
   `trigger_type`, `trigger_enabled`, `trigger_config`, timestamps.
@@ -185,6 +189,8 @@ fails.
 ### 4. Validation & Error Matrix
 
 - Missing `description` on template save -> `description is required`.
+- Template partial update without `task_map_mode` -> preserve the existing
+  route mode; do not silently fall back to `off`.
 - Workflow save with zero steps -> `workflow must have at least one step`.
 - Workflow step with missing/unknown template -> validation error naming the
   missing `template_id`.
@@ -205,6 +211,8 @@ fails.
 
 - Backend store tests assert template default route/decompose values and
   referenced-template delete rejection.
+- Backend template-save tests assert partial updates preserve existing
+  `task_map_mode` and other omitted template fields.
 - Command id uniqueness test must include new template/workflow ids.
 - App parser tests assert template/workflow list and workflow run response
   parsing.

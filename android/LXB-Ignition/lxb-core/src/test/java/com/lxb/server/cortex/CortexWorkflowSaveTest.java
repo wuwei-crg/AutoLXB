@@ -101,6 +101,32 @@ public class CortexWorkflowSaveTest {
         });
     }
 
+    @Test
+    public void saveTaskTemplate_partialUpdatePreservesTaskMapMode() throws Exception {
+        withTempState("lxb-template-merge", new Body() {
+            @Override
+            public void run(CortexTaskManager manager) {
+                Map<String, Object> created = template("Template", "Do it");
+                created.put("package_name", "com.demo");
+                created.put("task_map_mode", "manual");
+                created.put("decompose_enabled", true);
+                Map<String, Object> saved = manager.saveTaskTemplate(created);
+
+                Map<String, Object> partial = new LinkedHashMap<String, Object>();
+                partial.put("template_id", saved.get("template_id"));
+                partial.put("name", "Template updated");
+                partial.put("description", "Do it better");
+                Map<String, Object> updated = manager.saveTaskTemplate(partial);
+
+                Assert.assertEquals("manual", updated.get("task_map_mode"));
+                Assert.assertEquals("com.demo", updated.get("package_name"));
+                Assert.assertEquals(Boolean.TRUE, updated.get("decompose_enabled"));
+                Assert.assertEquals("Template updated", updated.get("name"));
+                Assert.assertEquals("Do it better", updated.get("description"));
+            }
+        });
+    }
+
     private static Map<String, Object> template(String name, String description) {
         Map<String, Object> row = new LinkedHashMap<String, Object>();
         row.put("name", name);
