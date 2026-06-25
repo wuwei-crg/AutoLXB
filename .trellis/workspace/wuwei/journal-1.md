@@ -342,3 +342,36 @@ Added a template-level route toggle in the Android app, persisted task_map_mode 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Fix script-act task-map visual JSON parsing
+
+**Date**: 2026-06-25
+**Task**: Fix script-act task-map visual JSON parsing
+**Branch**: `dev`
+
+### Summary
+
+Fixed script-act task-map visual resolver JSON parsing by accepting fenced or text-wrapped JSON, added resolver and TraceLogger regression tests, and documented the backend LLM JSON parsing convention.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f7383d1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

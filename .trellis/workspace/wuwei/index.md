@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~344 | Active |
+| `journal-1.md` | ~377 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-06-25 | Fix script-act task-map visual JSON parsing | `f7383d1` | `dev` |
 | 10 | 2026-06-25 | Fix template route mode persistence | `68fec0b` | `dev` |
 | 9 | 2026-06-25 | 模型单独配置路由 | `bf193fd` | `dev` |
 | 8 | 2026-06-25 | Locator semantic fallback | `6af653a` | `dev` |
