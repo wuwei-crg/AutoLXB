@@ -376,6 +376,10 @@ new importer.
   contract.
 - Text requests may map non-empty `systemPrompt` to the native protocol's
   system-instruction shape.
+- LLM call sites that require JSON output should strict-parse first, then
+  tolerate model-wrapped JSON through `CortexLlmHelper.extractJsonObjectFromText`.
+  Preserve clear `invalid_json` or call-site-specific parse errors when no
+  parseable JSON object exists.
 
 ### 4. Validation & Error Matrix
 
@@ -392,6 +396,11 @@ new importer.
   failure for that provider.
 - Native Gemini/Anthropic response without extractable official text -> clear
   LLM parse/config error, not raw JSON passed upstream.
+- JSON-only model response wrapped in markdown fences or explanatory text ->
+  parse the embedded object when it is otherwise valid.
+- JSON-only model response with no parseable JSON object -> clear
+  `invalid_json` or call-site-specific parse error; do not treat it as a Trace
+  serialization failure.
 - API keys, unlock PINs, and full secrets must not be logged or shown in Trace.
 
 ### 5. Good/Base/Bad Cases
@@ -403,6 +412,8 @@ new importer.
 - Good: split routing can point semantic locator to a small/fast visual model
   and VISION_ACT to a stronger planner model while both provider configs live
   only once in `providers`.
+- Good: a semantic locator response wrapped in markdown fences around
+  `{"result":"point","x":123,"y":456}` is parsed as the embedded object.
 - Base: an old OpenAI-compatible config with no `request_type` continues using
   `/chat/completions`.
 - Base: a config with no `providers/model_routing` continues using top-level
@@ -424,6 +435,9 @@ new importer.
 - JVM tests for request-type-specific auth/header behavior.
 - JVM tests for text and image payload shape.
 - JVM tests for response text extraction per request type.
+- JVM tests for JSON-only model consumers accepting strict JSON and
+  fenced/wrapped JSON, while still rejecting non-JSON command text as
+  `invalid_json` or an equivalent call-site parse error.
 - App JVM test for `DeviceConfigSyncer` writing `request_type`,
   `providers`, `active_provider_id`, and `model_routing` into the config JSON
   sent to core.

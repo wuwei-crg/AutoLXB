@@ -29,6 +29,27 @@ public class SemanticVisionStepResolverTest {
     }
 
     @Test
+    public void parse_markdownFencedJson_acceptsCoordinates() {
+        StepVisualResolveResult result = SemanticVisionStepResolver.parseResult(
+                "```json\n{\"result\":\"point\",\"x\":123,\"y\":456,\"reason\":\"target\"}\n```"
+        );
+
+        Assert.assertEquals(StepVisualResolveResult.STATUS_POINT, result.status);
+        Assert.assertEquals(123, result.x);
+        Assert.assertEquals(456, result.y);
+    }
+
+    @Test
+    public void parse_textWrappedJson_acceptsStatus() {
+        StepVisualResolveResult result = SemanticVisionStepResolver.parseResult(
+                "The target is not visible.\n{\"result\":\"no_match\",\"reason\":\"target missing\"}"
+        );
+
+        Assert.assertEquals(StepVisualResolveResult.STATUS_NO_MATCH, result.status);
+        Assert.assertEquals("target missing", result.reason);
+    }
+
+    @Test
     public void parse_dslTap_rejectsBusinessCommand() {
         StepVisualResolveResult result = SemanticVisionStepResolver.parseResult("TAP 100 200");
 

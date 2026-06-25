@@ -57,6 +57,22 @@ public class TraceLoggerTest {
         Assert.assertEquals(1, row.get("filter"));
     }
 
+    @Test
+    public void event_withInvalidJsonReasonStillWritesValidJsonLine() {
+        TraceLogger trace = new TraceLogger(8);
+        String reason = "java.lang.IllegalStateException:task_map_visual_error:"
+                + "invalid_json:json parse error at pos=0: unexpected char 'T'\n"
+                + "{\"raw\":\"TAP 100 200\"}";
+        Map<String, Object> fields = new LinkedHashMap<String, Object>();
+        fields.put("reason", reason);
+
+        emit(trace, "fsm_script_act_task_map_step_end", fields);
+
+        Map<String, Object> row = lastTraceObject(trace);
+        Assert.assertEquals(reason, row.get("reason"));
+        Assert.assertEquals("fsm_script_act_task_map_step_end", row.get("event"));
+    }
+
     private static void emit(TraceLogger trace, String event, Map<String, Object> fields) {
         trace.event(event, fields);
     }

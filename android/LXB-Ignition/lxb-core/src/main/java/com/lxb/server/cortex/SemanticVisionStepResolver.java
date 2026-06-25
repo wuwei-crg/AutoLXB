@@ -60,7 +60,7 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
             return StepVisualResolveResult.status(StepVisualResolveResult.STATUS_ERROR, "empty_response", RESOLVER_NAME);
         }
         try {
-            Map<String, Object> obj = Json.parseObject(raw.trim());
+            Map<String, Object> obj = parseResultObject(raw.trim());
             String status = stringOrEmpty(obj.get("result"));
             if (StepVisualResolveResult.STATUS_POINT.equals(StepVisualResolveResult.normalizeStatus(status))) {
                 int x = toInt(obj.get("x"), Integer.MIN_VALUE);
@@ -80,6 +80,18 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
         } catch (Exception e) {
             return StepVisualResolveResult.status(StepVisualResolveResult.STATUS_ERROR,
                     "invalid_json:" + e.getMessage(), RESOLVER_NAME);
+        }
+    }
+
+    private static Map<String, Object> parseResultObject(String raw) {
+        try {
+            return Json.parseObject(raw);
+        } catch (RuntimeException directError) {
+            Map<String, Object> extracted = CortexLlmHelper.extractJsonObjectFromText(raw);
+            if (!extracted.isEmpty()) {
+                return extracted;
+            }
+            throw directError;
         }
     }
 
