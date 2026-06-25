@@ -88,10 +88,16 @@ public final class TaskMap {
             out.put("op", op);
             out.put("args", new ArrayList<String>(args));
             out.put("locator", new LinkedHashMap<String, Object>(locator));
-            out.put("container_probe", new LinkedHashMap<String, Object>(containerProbe));
-            out.put("tap_point", new ArrayList<Object>(tapPoint));
+            if (!containerProbe.isEmpty()) {
+                out.put("container_probe", new LinkedHashMap<String, Object>(containerProbe));
+            }
+            if (!tapPoint.isEmpty()) {
+                out.put("tap_point", new ArrayList<Object>(tapPoint));
+            }
             out.put("swipe", new LinkedHashMap<String, Object>(swipe));
-            out.put("fallback_point", fallbackPoint);
+            if (fallbackPoint != null && !fallbackPoint.isEmpty()) {
+                out.put("fallback_point", fallbackPoint);
+            }
             out.put("semantic_note", semanticNote);
             out.put("expected", expected);
             out.put("history", new LinkedHashMap<String, Object>(history));

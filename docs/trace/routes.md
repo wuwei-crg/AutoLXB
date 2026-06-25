@@ -130,7 +130,7 @@
 | --- | --- |
 | `result` | 这一步是否成功。常见值：`ok`、`tap_fail`、`swipe_fail`、`resolve_fail`、`unsupported`。 |
 | `reason` | 失败原因。为空通常表示成功。 |
-| `picked_stage` | 系统用什么方式找到了目标，例如文字、结构、兜底点等。 |
+| `picked_stage` | 系统用什么方式找到了目标，例如 XML locator 阶段或语义视觉兜底。 |
 | `picked_bounds` | 找到的控件区域。 |
 | `picked_point` | 实际点击坐标。 |
 
@@ -188,7 +188,7 @@
 
 ## `task_map_semantic_adaptation_materialized`
 
-表示语义点击步骤已经成功适配到本机，并保存成后续可直接回放的本机路线步骤。
+表示语义点击步骤已经成功适配到本机，并保存成本机路线步骤。
 
 ```json
 {
@@ -208,7 +208,7 @@
 | `portable_kind` | 适配后的步骤类型。成功后通常表示已经变成本机可执行步骤。 |
 | `adaptation_status` | 适配结果。成功时通常表示已适配。 |
 
-看到这条 trace 后，同一台设备下次再跑这条任务路线时，通常不需要再次调用模型做语义定位。
+看到这条 trace 后，如果本次适配沉淀出了唯一 XML locator，同一台设备后续可以直接复用；如果没有唯一 XML locator，后续回放仍会对这一步走语义视觉定位。
 
 ## `task_map_semantic_adaptation_failed`
 
@@ -251,7 +251,7 @@
 | 字段 | 说明 |
 | --- | --- |
 | `failed_index` | 第几步失败。可以结合 `step_start` / `step_end` 看具体动作。 |
-| `reason` | 降级原因，例如控件找不到、坐标兜底失效、弹窗遮挡等。 |
+| `reason` | 降级原因，例如控件找不到、语义目标无法匹配、弹窗遮挡等。 |
 
 ## `fsm_routing_task_map_done`
 

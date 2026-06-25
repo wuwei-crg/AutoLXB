@@ -130,7 +130,7 @@ A route step finished. This is the most important event when diagnosing route fa
 | --- | --- |
 | `result` | Whether the step succeeded. Common values: `ok`, `tap_fail`, `swipe_fail`, `resolve_fail`, `unsupported`. |
 | `reason` | Failure reason. Empty usually means success. |
-| `picked_stage` | How the target was found, such as text, structure, or fallback point. |
+| `picked_stage` | How the target was found, such as XML locator stages or semantic visual fallback. |
 | `picked_bounds` | Bounds of the matched control. |
 | `picked_point` | Actual tap coordinate. |
 
@@ -188,7 +188,7 @@ The semantic adaptation model returned a result.
 
 ## `task_map_semantic_adaptation_materialized`
 
-The semantic tap step was adapted successfully and saved as a local executable route step.
+The semantic tap step was adapted successfully and saved as a local route step.
 
 ```json
 {
@@ -203,7 +203,7 @@ The semantic tap step was adapted successfully and saved as a local executable r
 }
 ```
 
-After this event, the same device usually does not need to call the model again for this semantic step.
+After this event, the same device can reuse any XML locator produced during adaptation. If no unique XML locator was produced, replay still falls back to semantic visual targeting for that step.
 
 ## `task_map_semantic_adaptation_failed`
 
@@ -246,7 +246,7 @@ Route replay failed and the task fell back to visual execution.
 | Field | Meaning |
 | --- | --- |
 | `failed_index` | Which step failed. Combine it with step start/end events. |
-| `reason` | Fallback reason, such as control not found, fallback coordinate invalid, or popup blocking the page. |
+| `reason` | Fallback reason, such as control not found, semantic target not matched, or popup blocking the page. |
 
 ## `fsm_routing_task_map_done`
 

@@ -25,7 +25,6 @@ public class TaskMapAssemblerTest {
         tap.args.add("200");
         tap.locator.put("resource_id", "search_box");
         tap.locator.put("class", "TextView");
-        tap.locator.put("fallback_point", java.util.Arrays.asList(100, 200));
         record.actions.add(tap);
 
         TaskRouteRecord.Action input = new TaskRouteRecord.Action();
@@ -106,6 +105,10 @@ public class TaskMapAssemblerTest {
         Assert.assertEquals("TAP", step.op);
         Assert.assertTrue(step.locator.isEmpty());
         Assert.assertTrue(step.tapPoint.isEmpty());
+        Assert.assertTrue(step.containerProbe.isEmpty());
+        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);
+        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_NONE, step.adaptationStatus);
+        Assert.assertFalse(step.semanticDescriptor.isEmpty());
         Assert.assertEquals("tap the publish entry", step.history.get("instruction"));
         Assert.assertEquals("publish page opens", step.history.get("expected"));
     }
@@ -126,7 +129,6 @@ public class TaskMapAssemblerTest {
         tap.args.add("200");
         tap.locator.put("resource_id", "search_box");
         tap.locator.put("class", "EditText");
-        tap.locator.put("fallback_point", java.util.Arrays.asList(100, 200));
         record.actions.add(tap);
 
         TaskRouteRecord.Action input = new TaskRouteRecord.Action();
@@ -146,7 +148,7 @@ public class TaskMapAssemblerTest {
     }
 
     @Test
-    public void assemble_keepsTapWithContainerProbeWhenLocatorMissing() {
+    public void assemble_buildsSemanticTapWhenLocatorMissing() {
         TaskRouteRecord record = new TaskRouteRecord();
         record.taskKeyHash = "hash";
         record.packageName = "com.demo";
@@ -157,11 +159,6 @@ public class TaskMapAssemblerTest {
         tap.actionId = "a0001";
         tap.subTaskId = "default";
         tap.op = "TAP";
-        tap.tapPoint.add(320);
-        tap.tapPoint.add(640);
-        tap.containerProbe.put("resource_id", "feed_item");
-        tap.containerProbe.put("class", "LinearLayout");
-        tap.containerProbe.put("parent_rid", "feed_list");
         tap.vision.put("action", "tap the news feed item");
         tap.vision.put("expected", "detail page opens");
         record.actions.add(tap);
@@ -170,10 +167,15 @@ public class TaskMapAssemblerTest {
 
         Assert.assertNotNull(map);
         Assert.assertEquals(1, map.stepCount());
-        Assert.assertTrue(map.segments.get(0).steps.get(0).locator.isEmpty());
-        Assert.assertEquals("feed_item", map.segments.get(0).steps.get(0).containerProbe.get("resource_id"));
-        Assert.assertEquals(2, map.segments.get(0).steps.get(0).tapPoint.size());
-        Assert.assertEquals("tap the news feed item", map.segments.get(0).steps.get(0).history.get("instruction"));
+        TaskMap.Step step = map.segments.get(0).steps.get(0);
+        Assert.assertTrue(step.locator.isEmpty());
+        Assert.assertTrue(step.containerProbe.isEmpty());
+        Assert.assertTrue(step.tapPoint.isEmpty());
+        Assert.assertEquals("", step.fallbackPoint);
+        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);
+        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_NONE, step.adaptationStatus);
+        Assert.assertEquals("tap the news feed item", step.history.get("instruction"));
+        Assert.assertEquals("tap the news feed item", step.semanticDescriptor.get("instruction"));
     }
 
     @Test

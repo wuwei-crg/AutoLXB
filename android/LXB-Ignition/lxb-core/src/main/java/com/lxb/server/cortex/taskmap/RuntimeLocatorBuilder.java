@@ -18,9 +18,7 @@ public final class RuntimeLocatorBuilder {
             int y,
             List<DumpActionsParser.ActionNode> nodes
     ) {
-        Map<String, Object> out = buildNodeLocator(x, y, nodes);
-        out.put("fallback_point", Arrays.asList(x, y));
-        return out;
+        return buildNodeLocator(x, y, nodes);
     }
 
     private static Map<String, Object> buildNodeLocator(
@@ -100,32 +98,6 @@ public final class RuntimeLocatorBuilder {
         return out;
     }
 
-    public static Map<String, Object> buildContainerProbe(
-            int x,
-            int y,
-            List<DumpActionsParser.ActionNode> actionNodes
-    ) {
-        Map<String, Object> out = new LinkedHashMap<String, Object>();
-        List<LocatorSemantics.NodeRecord> nodes = LocatorSemantics.fromActionNodes(actionNodes);
-        LocatorSemantics.NodeRecord best = findClickableRecordHitAtPoint(x, y, nodes, 0);
-        if (best == null) {
-            best = findClickableRecordHitAtPoint(x, y, nodes, 20);
-        }
-        if (best == null) {
-            return out;
-        }
-        putIfNotEmpty(out, "resource_id", informativeRidOrEmpty(best.resourceId));
-        putIfNotEmpty(out, "text", best.text);
-        putIfNotEmpty(out, "content_desc", best.contentDesc);
-        putIfNotEmpty(out, "class", best.className);
-        putIfNotEmpty(out, "parent_rid", informativeRidOrEmpty(LocatorSemantics.inferClickableParentRid(best, nodes)));
-        if (best.bounds != null) {
-            out.put("bounds_hint", Arrays.asList(best.bounds.left, best.bounds.top, best.bounds.right, best.bounds.bottom));
-            out.put("center_hint", Arrays.asList(best.bounds.centerX(), best.bounds.centerY()));
-        }
-        return out;
-    }
-
     private static String informativeRidOrEmpty(String rid) {
         String normalized = Util.normalizeResourceId(rid);
         return Util.isInformativeResourceId(normalized) ? normalized : "";
@@ -137,58 +109,11 @@ public final class RuntimeLocatorBuilder {
         }
     }
 
-    private static LocatorSemantics.NodeRecord findClickableRecordHitAtPoint(
-            int x,
-            int y,
-            List<LocatorSemantics.NodeRecord> records,
-            int margin
-    ) {
-        if (records == null || records.isEmpty()) {
-            return null;
-        }
-        LocatorSemantics.NodeRecord best = null;
-        long bestArea = Long.MAX_VALUE;
-        for (LocatorSemantics.NodeRecord record : records) {
-            if (record == null || record.bounds == null || record.actionNode == null) {
-                continue;
-            }
-            if ((record.actionNode.type & 0x01) == 0) {
-                continue;
-            }
-            BoundsExt bounds = new BoundsExt(record.bounds.left - margin, record.bounds.top - margin,
-                    record.bounds.right + margin, record.bounds.bottom + margin);
-            if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
-                continue;
-            }
-            long area = (long) Math.max(1, record.bounds.right - record.bounds.left)
-                    * (long) Math.max(1, record.bounds.bottom - record.bounds.top);
-            if (area < bestArea) {
-                bestArea = area;
-                best = record;
-            }
-        }
-        return best;
-    }
-
     private static String identityMode(boolean useText, boolean useParent, boolean useIndex) {
         StringBuilder sb = new StringBuilder("self_no_text");
         if (useText) sb.append("+text");
         if (useParent) sb.append("+parent");
         if (useIndex) sb.append("+index");
         return sb.toString();
-    }
-
-    private static final class BoundsExt {
-        final int left;
-        final int top;
-        final int right;
-        final int bottom;
-
-        BoundsExt(int left, int top, int right, int bottom) {
-            this.left = left;
-            this.top = top;
-            this.right = right;
-            this.bottom = bottom;
-        }
     }
 }

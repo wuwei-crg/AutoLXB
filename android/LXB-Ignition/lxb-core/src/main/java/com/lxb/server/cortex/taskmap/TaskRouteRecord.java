@@ -50,8 +50,12 @@ public final class TaskRouteRecord {
             out.put("args", new ArrayList<String>(args));
             out.put("raw_command", rawCommand);
             out.put("locator", new LinkedHashMap<String, Object>(locator));
-            out.put("container_probe", new LinkedHashMap<String, Object>(containerProbe));
-            out.put("tap_point", new ArrayList<Object>(tapPoint));
+            if (!containerProbe.isEmpty()) {
+                out.put("container_probe", new LinkedHashMap<String, Object>(containerProbe));
+            }
+            if (!tapPoint.isEmpty()) {
+                out.put("tap_point", new ArrayList<Object>(tapPoint));
+            }
             out.put("swipe", new LinkedHashMap<String, Object>(swipe));
             out.put("vision", new LinkedHashMap<String, Object>(vision));
             out.put("exec_result", execResult);

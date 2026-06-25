@@ -59,6 +59,89 @@ cd android/LXB-Ignition
 If a change affects app/core contracts, add or update tests on both sides where
 possible.
 
+## Scenario: Task Map Tap Targeting Modes
+
+### 1. Scope / Trigger
+
+- Trigger: changing route recording, task-map assembly, portable route
+  import/export, semantic tap adaptation, or locator replay for TAP steps.
+- Applies to `RuntimeLocatorBuilder`, `TaskMapLocalTapBuilder`,
+  `TaskMapAssembler`, `PortableTaskRouteCodec`, `SemanticStepMaterializer`,
+  `LocatorResolver`, and `CortexFsmEngine` task-map replay.
+
+### 2. Signatures
+
+- `TaskMap.Step.portableKind` allowed TAP target kinds:
+  - `local_locator` for XML/accessibility locator-backed taps.
+  - `semantic_tap` for semantic target descriptions when no unique XML locator
+    is available.
+  - `materialized` for imported semantic steps adapted on the local device.
+- XML locator fields include `resource_id`, `text`, `content_desc`, `class`,
+  `parent_rid`, `locator_index`, `locator_count`, and `bounds_hint`.
+- Legacy fields `container_probe`, `tap_point`, and `fallback_point` may still
+  be parsed for compatibility, but must not be new targeting strategies.
+
+### 3. Contracts
+
+- Route construction must first attempt an XML locator. If the uniqueness gate
+  rejects it, the TAP must become semantic-context backed instead of
+  coordinate-backed.
+- `TaskMapAssembler` keeps a locator-less TAP only when it has semantic context
+  from vision rows, page semantics, expected result, history, or a semantic
+  descriptor.
+- Runtime replay attempts XML locator resolution first. Missing or failing XML
+  locators fall back to semantic visual targeting for the current step.
+- `bounds_hint` is a locator tie-breaker only; by itself it is not a usable XML
+  locator.
+- Portable export emits either `local_locator` or `semantic_tap`; it must not
+  export `container_probe`, `tap_point`, or `source_local_kind` as target
+  strategy fields.
+
+### 4. Validation & Error Matrix
+
+- TAP with unique XML locator -> save/replay as locator-backed.
+- TAP with no XML locator and no semantic context -> drop from assembled map or
+  reject portable export as `unsupported_step:no_tap_target`.
+- TAP with no XML locator but semantic context -> save/export as
+  `semantic_tap`.
+- Locator replay failure -> retry per replay policy, then semantic visual
+  fallback.
+- Semantic visual `no_match` / `ambiguous` / `blocked` / `error` -> route step
+  fails and the task map segment falls back to normal visual execution.
+
+### 5. Good/Base/Bad Cases
+
+- Good: duplicate buttons produce `locator_index` disambiguation and no
+  `fallback_point`; locator replay uses the index before bounds hint.
+- Base: a pure icon tap with vision instruction but no XML locator becomes
+  `semantic_tap` and carries a semantic descriptor.
+- Bad: persisting a local tap point, container probe, or fallback coordinate as
+  a replay strategy for a TAP step.
+
+### 6. Tests Required
+
+- `LocatorSemanticsTest` asserts locator construction and disambiguation, and
+  that new locators do not emit fallback coordinates.
+- `TaskMapAssemblerTest` asserts locator-less semantic TAPs become
+  `semantic_tap` and pure coordinate taps without semantics are skipped.
+- `PortableTaskRouteCodecTest` asserts exports contain `local_locator` or
+  `semantic_tap` only, while legacy `source_local_kind` imports remain
+  tolerated.
+- Replay changes must preserve `:lxb-core:test`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+When locator uniqueness fails, write `container_probe`, `tap_point`, or
+`fallback_point` and replay that coordinate-backed target later.
+
+#### Correct
+
+When locator uniqueness fails, preserve semantic context as `semantic_tap`; at
+replay time, use semantic visual targeting if the XML locator is missing or
+fails.
+
 ## Scenario: Cortex Task Templates And Workflows
 
 ### 1. Scope / Trigger

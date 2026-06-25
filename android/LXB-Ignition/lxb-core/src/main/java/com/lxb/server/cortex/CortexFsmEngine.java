@@ -1020,9 +1020,7 @@ public class CortexFsmEngine {
                 action.locator.clear();
                 action.locator.putAll(payload.locator);
                 action.containerProbe.clear();
-                action.containerProbe.putAll(payload.containerProbe);
                 action.tapPoint.clear();
-                action.tapPoint.addAll(payload.tapPoint);
                 return;
             }
             if ("SWIPE".equals(cmd.op) && cmd.args.size() >= 4) {
@@ -2488,7 +2486,7 @@ public class CortexFsmEngine {
                     ctx.taskRouteKeyHash,
                     ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "",
                     step.stepId,
-                    materialized.materializedStep
+                materialized.materializedStep
             );
             if (!saved) {
                 String err = "semantic_materialized_step_save_failed";
@@ -2784,8 +2782,7 @@ public class CortexFsmEngine {
                 || !stringOrEmpty(locator.text).isEmpty()
                 || !stringOrEmpty(locator.contentDesc).isEmpty()
                 || !stringOrEmpty(locator.className).isEmpty()
-                || !stringOrEmpty(locator.parentRid).isEmpty()
-                || locator.boundsHint != null);
+                || !stringOrEmpty(locator.parentRid).isEmpty());
     }
 
     private int[] extractPoint(Object obj) {

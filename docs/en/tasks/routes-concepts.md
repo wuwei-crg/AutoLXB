@@ -23,18 +23,16 @@ When the model clicks, inputs, or swipes, Core combines the visual action with t
 
 ## Targeting strategy
 
-For tap steps, AutoLXB tries several strategies from more stable to less stable:
+For tap steps, AutoLXB now uses two targeting modes:
 
-1. **Locator targeting**: use text, content description, resource id, class, parent relation, and similar structural features.
-2. **Container probing**: validate the clickable container near the original tap point.
-3. **Local coordinate fallback**: keep a local tap point or fallback point when the UI cannot be described reliably.
-4. **Semantic adaptation**: portable export converts coordinate-backed taps into semantic descriptions; after import on another device, the first replay asks the vision model to adapt those semantic steps into local executable steps.
+1. **XML locator targeting**: use text, content description, resource id, class, parent relation, index, and bounds hints from the accessibility/XML structure.
+2. **Semantic tap targeting**: when a unique XML locator cannot be built or resolved, use the recorded instruction, expected result, page context, and screenshot to locate the target semantically.
 
 ## Local reuse and cross-device import
 
 On the same device, saved routes are optimized for local repeatability.
 
-Across devices, coordinates may not transfer perfectly because screen size, font scale, app version, and login state may differ. For imported templates or workflows, AutoLXB tries to adapt semantic steps on the new device and then writes the adapted local result back to that device's route asset.
+Across devices, coordinates may not transfer perfectly because screen size, font scale, app version, and login state may differ. Portable routes therefore use semantic tap descriptions instead of container probes or local tap points when an XML locator is unavailable.
 
 ## When a route fails
 
@@ -43,6 +41,6 @@ A route may fail if:
 - The app UI changed.
 - A popup or ad blocks the page.
 - The target account state is different.
-- A coordinate-backed step cannot be adapted on the new device.
+- A semantic tap target cannot be found confidently on the current screen.
 
 When this happens, AutoLXB can fall back to visual execution. Use Trace to see which route step failed and why.

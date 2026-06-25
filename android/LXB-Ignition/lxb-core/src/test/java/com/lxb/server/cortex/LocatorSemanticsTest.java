@@ -32,6 +32,7 @@ public class LocatorSemanticsTest {
         Assert.assertEquals(1, ((Number) locator.get("locator_index")).intValue());
         Assert.assertEquals(2, ((Number) locator.get("locator_count")).intValue());
         Assert.assertFalse(locator.containsKey("parent_rid"));
+        Assert.assertFalse(locator.containsKey("fallback_point"));
     }
 
     @Test
@@ -61,26 +62,6 @@ public class LocatorSemanticsTest {
         Assert.assertFalse(Util.isInformativeResourceId("container"));
         Assert.assertFalse(Util.isInformativeResourceId("123456"));
         Assert.assertTrue(Util.isInformativeResourceId("login_confirm_button"));
-    }
-
-    @Test
-    public void runtimeBuilder_buildsContainerProbeFromNearestContainer() throws Exception {
-        List<DumpActionsParser.ActionNode> nodes = parse(buildDumpActionsPayload(
-                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", ""),
-                actionNode((byte) 8, 60, 320, 1020, 520, "android.widget.TextView", "???", "feed_item_title", ""),
-                actionNode(40, 300, 1040, 520, "android.widget.LinearLayout", "", "feed_list", ""),
-                actionNode(80, 340, 1000, 500, "android.widget.LinearLayout", "新闻", "feed_item", "条目")
-        ));
-
-        Map<String, Object> probe = RuntimeLocatorBuilder.buildContainerProbe(200, 420, nodes);
-
-        Assert.assertEquals("feed_item", probe.get("resource_id"));
-        Assert.assertEquals("新闻", probe.get("text"));
-        Assert.assertEquals("条目", probe.get("content_desc"));
-        Assert.assertEquals("LinearLayout", probe.get("class"));
-        Assert.assertEquals("feed_list", probe.get("parent_rid"));
-        Assert.assertTrue(probe.containsKey("bounds_hint"));
-        Assert.assertTrue(probe.containsKey("center_hint"));
     }
 
     private static DumpActionsParser.ActionNode actionNode(

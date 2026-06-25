@@ -3,7 +3,6 @@ package com.lxb.server.cortex.taskmap;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +17,6 @@ public class PortableTaskRouteCodecTest {
         TaskMap.Step step = tapStep("s0001", "a0001");
         step.locator.put("resource_id", "discover_tab");
         step.locator.put("class", "TextView");
-        step.locator.put("fallback_point", Arrays.asList(100, 200));
         map.segments.get(0).steps.add(step);
 
         TaskRouteRecord record = new TaskRouteRecord();
@@ -56,15 +54,14 @@ public class PortableTaskRouteCodecTest {
     }
 
     @Test
-    public void export_containerProbeTap_becomesSemanticTap() {
+    public void export_semanticTapWithoutLocator_becomesSemanticTap() {
         TaskMap map = baseMap();
         TaskMap.Step step = tapStep("s0001", "a0001");
-        step.containerProbe.put("resource_id", "feed_item");
-        step.containerProbe.put("class", "LinearLayout");
-        step.tapPoint.add(320);
-        step.tapPoint.add(640);
+        step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
+        step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_NONE;
         step.semanticNote = "当前页面是贴吧首页";
         step.expected = "进入发布帖子页面";
+        step.semanticDescriptor.put("instruction", "点击右下角加号按钮");
         map.segments.get(0).steps.add(step);
 
         TaskRouteRecord record = new TaskRouteRecord();
@@ -79,7 +76,7 @@ public class PortableTaskRouteCodecTest {
         Map<String, Object> stepRow = firstStep(exported.bundle);
 
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, stepRow.get("portable_kind"));
-        Assert.assertEquals("container_probe", stepRow.get("source_local_kind"));
+        Assert.assertFalse(stepRow.containsKey("source_local_kind"));
         Assert.assertFalse(stepRow.containsKey("tap_point"));
         Assert.assertFalse(stepRow.containsKey("container_probe"));
         Assert.assertTrue(stepRow.containsKey("semantic_descriptor"));
@@ -126,8 +123,8 @@ public class PortableTaskRouteCodecTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "SWIPE";
-        step.swipe.put("start", Arrays.asList(1, 2));
-        step.swipe.put("end", Arrays.asList(3, 4));
+        step.swipe.put("start", java.util.Arrays.asList(1, 2));
+        step.swipe.put("end", java.util.Arrays.asList(3, 4));
         map.segments.get(0).steps.add(step);
         try {
             PortableTaskRouteCodec.exportPortable(map, null);

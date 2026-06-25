@@ -71,20 +71,9 @@ public final class TaskMapAssembler {
             if (action.locator != null) {
                 step.locator.putAll(action.locator);
             }
-            if (action.containerProbe != null) {
-                step.containerProbe.putAll(action.containerProbe);
-            }
-            if (action.tapPoint != null) {
-                step.tapPoint.addAll(action.tapPoint);
-            }
             if (action.swipe != null) {
                 step.swipe.putAll(action.swipe);
             }
-            Object fallbackPoint = action.locator != null ? action.locator.get("fallback_point") : null;
-            if (fallbackPoint == null && action.tapPoint != null && action.tapPoint.size() >= 2) {
-                fallbackPoint = action.tapPoint;
-            }
-            step.fallbackPoint = fallbackPoint != null ? String.valueOf(fallbackPoint) : "";
             step.semanticNote = action.createdPageSemantics != null ? action.createdPageSemantics : "";
             step.expected = action.vision != null ? stringOrEmpty(action.vision.get("expected")) : "";
             step.history.putAll(CortexExecutionHistory.rowFromVision(
@@ -92,6 +81,11 @@ public final class TaskMapAssembler {
                     action.createdPageSemantics,
                     action.rawCommand
             ));
+            if ("TAP".equals(op) && step.locator.isEmpty() && SemanticTapDescriptor.hasSemanticContext(step, action)) {
+                step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
+                step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_NONE;
+                step.semanticDescriptor.putAll(SemanticTapDescriptor.build(step, action));
+            }
             segment.steps.add(step);
         }
         if (segments.isEmpty()) {
@@ -114,18 +108,7 @@ public final class TaskMapAssembler {
     }
 
     private static boolean hasSemanticTapContext(TaskRouteRecord.Action action) {
-        if (action == null) {
-            return false;
-        }
-        if (action.vision != null) {
-            if (!stringOrEmpty(action.vision.get("action")).isEmpty()
-                    || !stringOrEmpty(action.vision.get("instruction")).isEmpty()
-                    || !stringOrEmpty(action.vision.get("expected")).isEmpty()
-                    || !stringOrEmpty(action.vision.get("carry_context")).isEmpty()) {
-                return true;
-            }
-        }
-        return !stringOrEmpty(action.createdPageSemantics).isEmpty();
+        return SemanticTapDescriptor.hasSemanticContext(null, action);
     }
 
     public static boolean isReplayableOp(String op) {

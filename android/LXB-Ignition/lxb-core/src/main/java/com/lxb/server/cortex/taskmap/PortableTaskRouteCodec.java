@@ -176,7 +176,7 @@ public final class PortableTaskRouteCodec {
             return out;
         }
 
-        Map<String, Object> descriptor = buildSemanticDescriptor(step, action);
+        Map<String, Object> descriptor = SemanticTapDescriptor.build(step, action);
         if (step != null && step.locator != null && !step.locator.isEmpty()) {
             out.put("portable_kind", PORTABLE_KIND_LOCAL_LOCATOR);
             out.put("locator", new LinkedHashMap<String, Object>(step.locator));
@@ -189,9 +189,8 @@ public final class PortableTaskRouteCodec {
                 && step.semanticDescriptor != null && !step.semanticDescriptor.isEmpty()) {
             descriptor = new LinkedHashMap<String, Object>(step.semanticDescriptor);
         }
-        if (step != null && hasCoordinateBackedTap(step)) {
+        if (SemanticTapDescriptor.hasSemanticContext(step, action)) {
             out.put("portable_kind", PORTABLE_KIND_SEMANTIC_TAP);
-            out.put("source_local_kind", sourceLocalKind(step));
             out.put("semantic_descriptor", descriptor);
             counters.semanticStepCount += 1;
             return out;
@@ -295,129 +294,11 @@ public final class PortableTaskRouteCodec {
         return out;
     }
 
-    private static Map<String, Object> buildSemanticDescriptor(TaskMap.Step step, TaskRouteRecord.Action action) {
-        Map<String, Object> descriptor = new LinkedHashMap<String, Object>();
-        descriptor.put("version", 1);
-        String instruction = firstNonBlank(
-                visionText(action, "action"),
-                stringOrEmpty(step != null ? step.semanticNote : ""),
-                stringOrEmpty(action != null ? action.createdPageSemantics : ""),
-                humanizeRawCommand(action != null ? action.rawCommand : ""),
-                "点击目标控件"
-        );
-        String expected = firstNonBlank(
-                visionText(action, "expected"),
-                stringOrEmpty(step != null ? step.expected : ""),
-                ""
-        );
-        String pageContext = firstNonBlank(
-                stringOrEmpty(step != null ? step.semanticNote : ""),
-                stringOrEmpty(action != null ? action.createdPageSemantics : "")
-        );
-        String targetName = firstNonBlank(
-                stringOrEmpty(action != null ? action.vision.get("target_name") : null),
-                guessTargetName(instruction, expected)
-        );
-        String targetRole = firstNonBlank(
-                stringOrEmpty(action != null ? action.vision.get("target_role") : null),
-                guessTargetRole(instruction)
-        );
-        String visualHint = firstNonBlank(
-                stringOrEmpty(action != null ? action.vision.get("visual_hint") : null),
-                targetName
-        );
-        String sourceObservation = firstNonBlank(
-                stringOrEmpty(action != null ? action.createdPageSemantics : ""),
-                stringOrEmpty(step != null ? step.semanticNote : "")
-        );
-        descriptor.put("instruction", instruction);
-        descriptor.put("target_name", targetName);
-        descriptor.put("target_role", targetRole);
-        descriptor.put("visual_hint", visualHint);
-        descriptor.put("page_context", pageContext);
-        descriptor.put("expected_after_tap", expected);
-        descriptor.put("source_observation", sourceObservation);
-        descriptor.put("source_command", stringOrEmpty(action != null ? action.rawCommand : ""));
-        descriptor.put("descriptor_quality", hasStrongDescriptor(instruction, targetName, pageContext, sourceObservation) ? "strong" : "weak");
-        return descriptor;
-    }
-
-    private static boolean hasCoordinateBackedTap(TaskMap.Step step) {
-        return step != null && (
-                (step.containerProbe != null && !step.containerProbe.isEmpty())
-                        || (step.tapPoint != null && step.tapPoint.size() >= 2)
-                        || (step.fallbackPoint != null && !step.fallbackPoint.isEmpty())
-        );
-    }
-
-    private static String sourceLocalKind(TaskMap.Step step) {
-        if (step == null) {
-            return "tap_point";
-        }
-        if (step.containerProbe != null && !step.containerProbe.isEmpty()) {
-            return "container_probe";
-        }
-        if (step.tapPoint != null && step.tapPoint.size() >= 2) {
-            return "tap_point";
-        }
-        return "fallback_point";
-    }
-
     private static String firstSegmentDescription(TaskMap map) {
         if (map == null || map.segments.isEmpty()) {
             return "";
         }
         return stringOrEmpty(map.segments.get(0).subTaskDescription);
-    }
-
-    private static String visionText(TaskRouteRecord.Action action, String key) {
-        if (action == null || action.vision == null || action.vision.isEmpty()) {
-            return "";
-        }
-        Object value = action.vision.get(key);
-        if (value == null && "action".equals(key)) {
-            value = action.vision.get("Action");
-        }
-        if (value == null && "expected".equals(key)) {
-            value = action.vision.get("expected");
-        }
-        return stringOrEmpty(value);
-    }
-
-    private static String humanizeRawCommand(String rawCommand) {
-        String raw = stringOrEmpty(rawCommand);
-        if (raw.isEmpty()) {
-            return "";
-        }
-        if (raw.toUpperCase(Locale.ROOT).startsWith("TAP")) {
-            return "";
-        }
-        return raw;
-    }
-
-    private static String guessTargetName(String instruction, String expected) {
-        String merged = firstNonBlank(instruction, expected);
-        if (merged.contains("发布")) return "发布";
-        if (merged.contains("朋友圈")) return "朋友圈";
-        if (merged.contains("发现")) return "发现";
-        if (merged.contains("加号") || merged.contains("+")) return "加号按钮";
-        return "";
-    }
-
-    private static String guessTargetRole(String instruction) {
-        String lower = stringOrEmpty(instruction).toLowerCase(Locale.ROOT);
-        if (lower.contains("tab")) return "tab";
-        if (lower.contains("button") || lower.contains("按钮") || lower.contains("入口")) return "button";
-        return "unknown";
-    }
-
-    private static boolean hasStrongDescriptor(String instruction, String targetName, String pageContext, String sourceObservation) {
-        int nonBlankCount = 0;
-        if (!stringOrEmpty(instruction).isEmpty()) nonBlankCount += 1;
-        if (!stringOrEmpty(targetName).isEmpty()) nonBlankCount += 1;
-        if (!stringOrEmpty(pageContext).isEmpty()) nonBlankCount += 1;
-        if (!stringOrEmpty(sourceObservation).isEmpty()) nonBlankCount += 1;
-        return nonBlankCount >= 2 && !"点击目标控件".equals(stringOrEmpty(instruction));
     }
 
     private static void copyStringList(Object src, List<String> out) {

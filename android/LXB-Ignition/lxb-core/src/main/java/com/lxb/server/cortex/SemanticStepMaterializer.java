@@ -88,9 +88,6 @@ public final class SemanticStepMaterializer {
                 materialized.op = pendingStep.op;
                 materialized.args.addAll(pendingStep.args);
                 materialized.locator.putAll(payload.locator);
-                materialized.containerProbe.putAll(payload.containerProbe);
-                materialized.tapPoint.addAll(payload.tapPoint);
-                materialized.fallbackPoint = payload.fallbackPoint;
                 materialized.semanticNote = pendingStep.semanticNote;
                 materialized.expected = pendingStep.expected;
                 materialized.history.putAll(pendingStep.history);

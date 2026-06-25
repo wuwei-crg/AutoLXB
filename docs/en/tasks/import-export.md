@@ -90,7 +90,7 @@ After migration, open the edit page and review target app, task description, rou
 
 ## Cross-device route adaptation
 
-Some route steps can be reused directly, such as buttons with clear text or descriptions. Other steps may have been coordinate-backed on the source device and need local adaptation on the new device.
+Some route steps can be reused directly, such as buttons with clear text or descriptions. Other steps may need semantic adaptation on the new device when an XML locator cannot be reused.
 
 On the first run after import, AutoLXB tries to use semantic descriptions and the current screen to find the target UI element again, then saves the adapted result locally.
 
