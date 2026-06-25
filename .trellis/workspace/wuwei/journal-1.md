@@ -243,3 +243,36 @@ Unified app startup logs and core trace into one Logs/export flow, removed quick
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Locator semantic fallback
+
+**Date**: 2026-06-25
+**Task**: Locator semantic fallback
+**Branch**: `dev`
+
+### Summary
+
+Removed container_probe/tap_point construction and replay fallback. TAP routing now keeps only XML locators or semantic_tap, with locator-first replay and semantic visual fallback.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6af653a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
