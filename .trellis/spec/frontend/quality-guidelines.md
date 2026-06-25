@@ -15,6 +15,9 @@ out of Compose.
   `TaskRuntimeService` rather than scattering notification/wakelock logic.
 - Keep model config writes in `DeviceConfigSyncer` so local app config and
   core config stay consistent.
+- Model routing UI must select saved provider ids and let
+  `DeviceConfigSyncer` write the provider list plus route references. Do not
+  duplicate API keys, model names, or request types into per-route UI state.
 - Keep APK runtime assets curated through `syncLxbRuntimeAssets`; do not add
   the whole `lxb-core/build/libs` directory as an asset source. The APK should
   package only `lxb-core-dex.jar` and `lxb-starter-*` runtime files.

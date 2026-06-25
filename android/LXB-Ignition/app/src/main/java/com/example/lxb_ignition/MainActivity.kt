@@ -2057,6 +2057,25 @@ private val ZhMap = mapOf(
     "Model routing" to "模型路由",
     "No model selected" to "尚未选择模型",
     "Draft only" to "仅草稿",
+    "SCRIPT_ACTION routes" to "SCRIPT_ACTION 路由",
+    "Choose whether semantic locator and vision act share one provider or use separate providers." to "选择 semantic locator 与 vision act 共用一个 provider，还是分别使用 provider。",
+    "Routing mode" to "路由模式",
+    "Unified route" to "统一路由",
+    "Separate routes" to "单独路由",
+    "Semantic locator" to "Semantic locator",
+    "Vision act" to "Vision act",
+    "Provider used when SCRIPT_ACT needs semantic visual target location." to "SCRIPT_ACT 需要语义视觉定位目标时使用的 provider。",
+    "Provider used by the VISION_ACT planner." to "VISION_ACT 规划器使用的 provider。",
+    "One provider is used for both semantic locator and vision act." to "semantic locator 与 vision act 共用一个 provider。",
+    "Provider editor" to "Provider 编辑器",
+    "Selected provider" to "当前 provider",
+    "No provider selected." to "尚未选择 provider。",
+    "No provider selected. This route will use the draft provider above." to "尚未选择 provider；此路由将使用上方草稿 provider。",
+    "No saved provider yet. Save a provider first." to "还没有已保存 provider，请先保存一个 provider。",
+    "No saved provider yet. This route will use the draft provider above." to "还没有已保存 provider；此路由将使用上方草稿 provider。",
+    "Test and sync" to "测试并同步",
+    "Sync route" to "同步路由",
+    "Save route" to "保存路由",
     "Base endpoint, API key, and model used for device-side requests." to "配置设备侧请求所使用的基础端点、API Key 与模型。",
     "Save reusable model presets locally and switch between them quickly." to "将可复用的模型预设保存到本地，并快速切换。",
     "Test LLM & sync to device" to "测试 LLM 并同步到设备",
@@ -5611,7 +5630,14 @@ fun LlmConfigCard(viewModel: MainViewModel) {
     val llmApiKey by viewModel.llmApiKey.collectAsState()
     val llmModel by viewModel.llmModel.collectAsState()
     val llmRequestType by viewModel.llmRequestType.collectAsState()
+    val llmRoutingMode by viewModel.llmRoutingMode.collectAsState()
+    val llmUnifiedProviderId by viewModel.llmUnifiedProviderId.collectAsState()
+    val llmSemanticLocatorProviderId by viewModel.llmSemanticLocatorProviderId.collectAsState()
+    val llmVisionActProviderId by viewModel.llmVisionActProviderId.collectAsState()
     val llmTestResult by viewModel.llmTestResult.collectAsState()
+    val llmUnifiedRouteResult by viewModel.llmUnifiedRouteResult.collectAsState()
+    val llmSemanticLocatorRouteResult by viewModel.llmSemanticLocatorRouteResult.collectAsState()
+    val llmVisionActRouteResult by viewModel.llmVisionActRouteResult.collectAsState()
     val llmProfileDraftName by viewModel.llmProfileDraftName.collectAsState()
     val llmProfiles by viewModel.llmProfiles.collectAsState()
     val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsState()
@@ -5634,13 +5660,74 @@ fun LlmConfigCard(viewModel: MainViewModel) {
         SummaryInfoStrip(
             glyph = "✦",
             title = tr("Model routing"),
-            primaryMetric = if (llmModel.isNotBlank()) llmModel else tr("No model selected"),
+            primaryMetric = if (llmRoutingMode == MainViewModel.LLM_ROUTING_MODE_SPLIT) tr("Separate routes") else tr("Unified route"),
             secondaryMetric = if (activeLlmProfileId.isNotBlank()) tr("Saved config") else tr("Draft only"),
             accentColor = MaterialTheme.colorScheme.primary
         )
 
         SettingsSectionCard(
-            title = tr("Connection"),
+            title = tr("SCRIPT_ACTION routes"),
+            subtitle = tr("Choose whether semantic locator and vision act share one provider or use separate providers."),
+            glyph = "⇄"
+        ) {
+            Text(
+                text = tr("Routing mode"),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = llmRoutingMode != MainViewModel.LLM_ROUTING_MODE_SPLIT,
+                    onClick = { viewModel.setLlmRoutingMode(MainViewModel.LLM_ROUTING_MODE_UNIFIED) },
+                    label = { Text(tr("Unified route")) }
+                )
+                FilterChip(
+                    selected = llmRoutingMode == MainViewModel.LLM_ROUTING_MODE_SPLIT,
+                    onClick = { viewModel.setLlmRoutingMode(MainViewModel.LLM_ROUTING_MODE_SPLIT) },
+                    label = { Text(tr("Separate routes")) }
+                )
+            }
+            if (llmRoutingMode == MainViewModel.LLM_ROUTING_MODE_SPLIT) {
+                LlmRouteProviderPanel(
+                    title = tr("Semantic locator"),
+                    description = tr("Provider used when SCRIPT_ACT needs semantic visual target location."),
+                    profiles = llmProfiles,
+                    selectedProviderId = llmSemanticLocatorProviderId,
+                    result = llmSemanticLocatorRouteResult,
+                    onProviderChange = { viewModel.setLlmRouteProvider(MainViewModel.LLM_ROUTE_SEMANTIC_LOCATOR, it) },
+                    onSave = { viewModel.saveLlmRoute(MainViewModel.LLM_ROUTE_SEMANTIC_LOCATOR) },
+                    onSync = { viewModel.syncLlmRouteConfig(MainViewModel.LLM_ROUTE_SEMANTIC_LOCATOR) },
+                    onTest = { viewModel.testLlmRouteAndSyncConfig(MainViewModel.LLM_ROUTE_SEMANTIC_LOCATOR) }
+                )
+                LlmRouteProviderPanel(
+                    title = tr("Vision act"),
+                    description = tr("Provider used by the VISION_ACT planner."),
+                    profiles = llmProfiles,
+                    selectedProviderId = llmVisionActProviderId,
+                    result = llmVisionActRouteResult,
+                    onProviderChange = { viewModel.setLlmRouteProvider(MainViewModel.LLM_ROUTE_VISION_ACT, it) },
+                    onSave = { viewModel.saveLlmRoute(MainViewModel.LLM_ROUTE_VISION_ACT) },
+                    onSync = { viewModel.syncLlmRouteConfig(MainViewModel.LLM_ROUTE_VISION_ACT) },
+                    onTest = { viewModel.testLlmRouteAndSyncConfig(MainViewModel.LLM_ROUTE_VISION_ACT) }
+                )
+            } else {
+                LlmRouteProviderPanel(
+                    title = tr("Unified route"),
+                    description = tr("One provider is used for both semantic locator and vision act."),
+                    profiles = llmProfiles,
+                    selectedProviderId = llmUnifiedProviderId,
+                    result = if (llmUnifiedRouteResult.isNotBlank()) llmUnifiedRouteResult else llmTestResult,
+                    allowDraftFallback = true,
+                    onProviderChange = { viewModel.setLlmRouteProvider(MainViewModel.LLM_ROUTE_UNIFIED, it) },
+                    onSave = { viewModel.saveLlmRoute(MainViewModel.LLM_ROUTE_UNIFIED) },
+                    onSync = { viewModel.syncLlmRouteConfig(MainViewModel.LLM_ROUTE_UNIFIED) },
+                    onTest = { viewModel.testLlmRouteAndSyncConfig(MainViewModel.LLM_ROUTE_UNIFIED) }
+                )
+            }
+        }
+
+        SettingsSectionCard(
+            title = tr("Provider editor"),
             subtitle = tr("Base endpoint, API key, and model used for device-side requests."),
             glyph = "🌐"
         ) {
@@ -5825,6 +5912,102 @@ fun LlmConfigCard(viewModel: MainViewModel) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LlmRouteProviderPanel(
+    title: String,
+    description: String,
+    profiles: List<MainViewModel.LlmProfile>,
+    selectedProviderId: String,
+    result: String,
+    allowDraftFallback: Boolean = false,
+    onProviderChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onSync: () -> Unit,
+    onTest: () -> Unit
+) {
+    val selected = profiles.firstOrNull { it.id == selectedProviderId }
+    SurfacePanel(
+        modifier = Modifier.fillMaxWidth(),
+        background = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
+        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = description,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            }
+            if (profiles.isEmpty()) {
+                StatusNotice(
+                    text = if (allowDraftFallback) {
+                        tr("No saved provider yet. This route will use the draft provider above.")
+                    } else {
+                        tr("No saved provider yet. Save a provider first.")
+                    },
+                    accentColor = AppWarning
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    profiles.forEach { profile ->
+                        FilterChip(
+                            selected = profile.id == selectedProviderId,
+                            onClick = { onProviderChange(profile.id) },
+                            label = {
+                                Text(
+                                    text = profile.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+            StatusNotice(
+                text = when {
+                    selected != null -> "${tr("Selected provider")}: ${selected.name} · ${selected.model}"
+                    allowDraftFallback -> tr("No provider selected. This route will use the draft provider above.")
+                    else -> tr("No provider selected.")
+                },
+                accentColor = if (selected != null || allowDraftFallback) MaterialTheme.colorScheme.secondary else AppWarning
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onTest,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tr("Test and sync"))
+                }
+                OutlinedButton(
+                    onClick = onSync,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(tr("Sync route"))
+                }
+            }
+            OutlinedButton(
+                onClick = onSave,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(tr("Save route"))
+            }
+            if (result.isNotBlank()) {
+                StatusNotice(
+                    text = result,
+                    accentColor = if (result.startsWith("LLM OK")) AppSuccess else MaterialTheme.colorScheme.secondary
+                )
             }
         }
     }

@@ -2457,7 +2457,7 @@ public class CortexFsmEngine {
             List<DumpActionsParser.ActionNode> nodes = captureDumpActionNodes();
             SemanticStepMaterializer.Result materialized = SemanticStepMaterializer.materialize(
                     llmClient,
-                    LlmConfig.loadDefault(),
+                    LlmConfig.loadDefaultForRoute(LlmConfig.ROUTE_SCRIPT_ACTION_SEMANTIC_LOCATOR),
                     trace,
                     ctx.taskId,
                     ctx.taskRouteKeyHash,
@@ -4111,7 +4111,7 @@ public class CortexFsmEngine {
 
         LlmConfig cfg;
         try {
-            cfg = LlmConfig.loadDefault();
+            cfg = LlmConfig.loadDefaultForRoute(LlmConfig.ROUTE_SCRIPT_ACTION_VISION_ACT);
         } catch (Exception e) {
             ctx.error = "planner_call_failed:VISION_ACT:" + e;
             Map<String, Object> fail = new LinkedHashMap<>();

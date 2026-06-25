@@ -307,11 +307,12 @@ Use `CMD_CORTEX_PORTABLE` for workflow/template bundles, keep route portable
 commands as compatibility paths only, and adapt legacy route assets inside the
 new importer.
 
-## Scenario: Device-Side LLM Request Types
+## Scenario: Device-Side LLM Request Types And Routing
 
 ### 1. Scope / Trigger
 
-- Trigger: adding or changing device-side LLM/VLM provider request protocols.
+- Trigger: adding or changing device-side LLM/VLM provider request protocols
+  or model routing between device-side LLM call sites.
 - Applies to `LlmConfig`, `LlmClient`, APK model config state,
   `DeviceConfigSyncer`, saved LLM profiles, model config UI, and model setup
   docs.
@@ -323,6 +324,14 @@ new importer.
   - `api_key: string`
   - `model: string`
   - `request_type: string`
+  - `providers: array<object>` where each row has `provider_id`, `name`,
+    `api_base_url`, `api_key`, `model`, `request_type`, and `updated_at`
+  - `active_provider_id: string`
+  - `model_routing: object`
+    - `mode: "unified" | "split"`
+    - `script_action.unified_provider_id: string`
+    - `script_action.semantic_locator_provider_id: string`
+    - `script_action.vision_act_provider_id: string`
 - Supported `request_type` values:
   - `openai_chat_completions`
   - `gemini_generate_content`
@@ -342,6 +351,18 @@ new importer.
   - OpenAI-compatible requests use `Authorization: Bearer <api_key>`.
   - Gemini native requests use the REST `key` query parameter.
   - Anthropic native requests use `x-api-key` plus `anthropic-version`.
+- Top-level `api_base_url/api_key/model/request_type` fields remain the
+  legacy fallback provider and must continue to be written by the APK.
+- Saved APK model configs are provider presets. Route configuration stores
+  provider ids only; do not copy provider credentials into each route.
+- `model_routing.mode="unified"` routes SCRIPT_ACT semantic locator and
+  VISION_ACT planner calls to `unified_provider_id` (or `active_provider_id`).
+- `model_routing.mode="split"` routes SCRIPT_ACT semantic visual locator and
+  semantic adaptation calls to `semantic_locator_provider_id`, and routes
+  VISION_ACT planner calls to `vision_act_provider_id`.
+- Other LLM call sites such as task decomposition, app resolve, and
+  notification LLM conditions keep using the default/unified config unless a
+  task explicitly changes their route.
 - Image requests preserve current behavior: user prompt plus image only. Do not
   add image+system prompt behavior unless the task explicitly changes that
   contract.
@@ -353,6 +374,14 @@ new importer.
 - Missing `api_base_url` or `model` -> config load/test failure.
 - Missing `request_type` -> normalize to `openai_chat_completions`.
 - Unknown `request_type` -> normalize to `openai_chat_completions`.
+- Missing `providers/model_routing` -> legacy top-level config loads as a
+  unified route.
+- Split routing with a missing semantic locator or vision_act provider id ->
+  clear config error; do not silently fall back to the other route.
+- Route provider id not found in `providers` -> clear config error naming the
+  missing provider id.
+- Selected provider missing `api_base_url` or `model` -> config load/test
+  failure for that provider.
 - Native Gemini/Anthropic response without extractable official text -> clear
   LLM parse/config error, not raw JSON passed upstream.
 - API keys, unlock PINs, and full secrets must not be logged or shown in Trace.
@@ -363,21 +392,33 @@ new importer.
   `https://generativelanguage.googleapis.com/v1beta`, model
   `gemini-2.0-flash`, and request type `gemini_generate_content` resolves to
   `/models/gemini-2.0-flash:generateContent`.
+- Good: split routing can point semantic locator to a small/fast visual model
+  and VISION_ACT to a stronger planner model while both provider configs live
+  only once in `providers`.
 - Base: an old OpenAI-compatible config with no `request_type` continues using
   `/chat/completions`.
+- Base: a config with no `providers/model_routing` continues using top-level
+  provider fields for all call sites.
 - Bad: creating one large vendor adapter per provider when the desired
   extension point is request protocol shape.
+- Bad: duplicating `api_key`/`model` under
+  `model_routing.script_action.semantic_locator` or silently using VISION_ACT's
+  provider when split semantic locator routing is incomplete.
 
 ### 6. Tests Required
 
 - JVM tests for config backward compatibility and request type normalization.
+- JVM tests for provider-route resolution, including unified routing, split
+  semantic locator vs vision_act routing, legacy fallback, missing provider id,
+  and missing split-route provider.
 - JVM tests for endpoint expansion, including already-complete endpoints and
   query strings.
 - JVM tests for request-type-specific auth/header behavior.
 - JVM tests for text and image payload shape.
 - JVM tests for response text extraction per request type.
-- App JVM test for `DeviceConfigSyncer` writing `request_type` into the config
-  JSON sent to core.
+- App JVM test for `DeviceConfigSyncer` writing `request_type`,
+  `providers`, `active_provider_id`, and `model_routing` into the config JSON
+  sent to core.
 
 ### 7. Wrong vs Correct
 
@@ -385,10 +426,13 @@ new importer.
 
 Infer Gemini or Anthropic behavior only from URL substrings, or add separate
 provider classes such as `GeminiProvider` and `AnthropicProvider` while leaving
-the actual request protocol implicit.
+the actual request protocol implicit. For routing, copy provider credentials
+under each route block.
 
 #### Correct
 
 Persist an explicit `request_type`, normalize unknown or missing values to
 OpenAI-compatible, and keep provider-specific URL examples as UI/documentation
-helpers instead of implementation branches.
+helpers instead of implementation branches. For routing, store provider
+credentials once in `providers` and store only provider ids under
+`model_routing`.

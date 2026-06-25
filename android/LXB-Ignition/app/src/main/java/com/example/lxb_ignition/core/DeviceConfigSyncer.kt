@@ -7,6 +7,16 @@ import com.example.lxb_ignition.storage.AppStatePaths
 import com.lxb.server.protocol.CommandIds
 import java.io.File
 
+data class DeviceLlmProviderSettings(
+    val providerId: String,
+    val name: String,
+    val apiBaseUrl: String,
+    val apiKey: String,
+    val model: String,
+    val requestType: String,
+    val updatedAt: Long
+)
+
 data class DeviceLlmSettings(
     val apiBaseUrl: String,
     val apiKey: String,
@@ -18,7 +28,13 @@ data class DeviceLlmSettings(
     val useMap: Boolean,
     val mapSource: String,
     val taskDndMode: String,
-    val maxTaskSteps: Int
+    val maxTaskSteps: Int,
+    val providers: List<DeviceLlmProviderSettings> = emptyList(),
+    val activeProviderId: String = "",
+    val routingMode: String = "unified",
+    val unifiedProviderId: String = "",
+    val semanticLocatorProviderId: String = "",
+    val visionActProviderId: String = ""
 )
 
 class DeviceConfigSyncer(
@@ -32,11 +48,40 @@ class DeviceConfigSyncer(
 
     companion object {
         fun buildConfigJsonObject(settings: DeviceLlmSettings): org.json.JSONObject {
+            val providers = org.json.JSONArray()
+            settings.providers.forEach { provider ->
+                val id = provider.providerId.trim()
+                if (id.isNotEmpty()) {
+                    providers.put(
+                        org.json.JSONObject()
+                            .put("provider_id", id)
+                            .put("name", provider.name.trim())
+                            .put("api_base_url", provider.apiBaseUrl.trim())
+                            .put("api_key", provider.apiKey)
+                            .put("model", provider.model.trim())
+                            .put("request_type", provider.requestType.trim())
+                            .put("updated_at", provider.updatedAt)
+                    )
+                }
+            }
+            val routingMode = if (settings.routingMode.trim() == "split") "split" else "unified"
+            val routing = org.json.JSONObject()
+                .put("mode", routingMode)
+                .put(
+                    "script_action",
+                    org.json.JSONObject()
+                        .put("unified_provider_id", settings.unifiedProviderId.trim())
+                        .put("semantic_locator_provider_id", settings.semanticLocatorProviderId.trim())
+                        .put("vision_act_provider_id", settings.visionActProviderId.trim())
+                )
             return org.json.JSONObject()
                 .put("api_base_url", settings.apiBaseUrl.trim())
                 .put("api_key", settings.apiKey)
                 .put("model", settings.model.trim())
                 .put("request_type", settings.requestType.trim())
+                .put("providers", providers)
+                .put("active_provider_id", settings.activeProviderId.trim())
+                .put("model_routing", routing)
                 .put("auto_unlock_before_route", settings.autoUnlockBeforeRoute)
                 .put("auto_lock_after_task", settings.autoLockAfterTask)
                 .put("unlock_pin", settings.unlockPin.trim())

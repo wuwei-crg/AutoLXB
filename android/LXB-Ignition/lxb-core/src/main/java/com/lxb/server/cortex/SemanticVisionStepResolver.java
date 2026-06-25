@@ -37,7 +37,12 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
         String prompt = buildPrompt(request);
         traceEvent("task_map_visual_resolver_begin", request, prompt, null);
         try {
-            String raw = llmClient.chatOnce(LlmConfig.loadDefault(), null, prompt, request.screenshotPng);
+            String raw = llmClient.chatOnce(
+                    LlmConfig.loadDefaultForRoute(LlmConfig.ROUTE_SCRIPT_ACTION_SEMANTIC_LOCATOR),
+                    null,
+                    prompt,
+                    request.screenshotPng
+            );
             traceEvent("task_map_visual_resolver_response", request, null, raw);
             StepVisualResolveResult result = parseResult(raw);
             traceEvent("task_map_visual_resolver_result", request, null,

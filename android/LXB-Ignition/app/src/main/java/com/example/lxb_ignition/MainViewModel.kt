@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.lxb_ignition.core.AppUpdateChecker
 import com.example.lxb_ignition.core.CoreApiParser
 import com.example.lxb_ignition.core.DeviceConfigSyncer
+import com.example.lxb_ignition.core.DeviceLlmProviderSettings
 import com.example.lxb_ignition.core.DeviceLlmSettings
 import com.example.lxb_ignition.core.MapOperationsController
 import com.example.lxb_ignition.core.TaskRuntimeController
@@ -102,6 +103,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val imagePng: ByteArray
     )
 
+    private data class LlmRouteProviderInput(
+        val apiBaseUrl: String,
+        val apiKey: String,
+        val model: String,
+        val requestType: String,
+        val label: String
+    )
+
     private data class PortableImportOutcome(
         val message: String,
         val importedType: String = "",
@@ -126,6 +135,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_LLM_REQUEST_TYPE = "llm_request_type"
         private const val KEY_LLM_PROFILES_JSON = "llm_profiles_json"
         private const val KEY_ACTIVE_LLM_PROFILE_ID = "active_llm_profile_id"
+        private const val KEY_LLM_ROUTING_MODE = "llm_routing_mode"
+        private const val KEY_LLM_UNIFIED_PROVIDER_ID = "llm_unified_provider_id"
+        private const val KEY_LLM_SEMANTIC_LOCATOR_PROVIDER_ID = "llm_semantic_locator_provider_id"
+        private const val KEY_LLM_VISION_ACT_PROVIDER_ID = "llm_vision_act_provider_id"
         private const val KEY_AUTO_UNLOCK_BEFORE_ROUTE = "auto_unlock_before_route"
         private const val KEY_AUTO_LOCK_AFTER_TASK = "auto_lock_after_task"
         private const val KEY_UNLOCK_PIN = "unlock_pin"
@@ -163,6 +176,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val TASK_MAP_MODE_OFF = "off"
         const val TASK_MAP_MODE_AI = "ai"
         const val TASK_MAP_MODE_MANUAL = "manual"
+        const val LLM_ROUTING_MODE_UNIFIED = "unified"
+        const val LLM_ROUTING_MODE_SPLIT = "split"
+        const val LLM_ROUTE_UNIFIED = "unified"
+        const val LLM_ROUTE_SEMANTIC_LOCATOR = "semantic_locator"
+        const val LLM_ROUTE_VISION_ACT = "vision_act"
 
         private fun normalizePortString(raw: String?): String {
             val p = raw?.trim()?.toIntOrNull() ?: return DEFAULT_LXB_PORT
@@ -172,6 +190,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private fun normalizeUiLang(raw: String?): String {
             val v = raw?.trim()?.lowercase() ?: "en"
             return if (v == "zh") "zh" else "en"
+        }
+
+        private fun normalizeLlmRoutingMode(raw: String?): String {
+            val v = raw?.trim()?.lowercase() ?: LLM_ROUTING_MODE_UNIFIED
+            return if (v == LLM_ROUTING_MODE_SPLIT) LLM_ROUTING_MODE_SPLIT else LLM_ROUTING_MODE_UNIFIED
         }
 
         private fun normalizeMapSource(raw: String?): String {
@@ -258,6 +281,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val llmRequestType = MutableStateFlow(
         LlmConfig.normalizeRequestType(prefs.getString(KEY_LLM_REQUEST_TYPE, ""))
     )
+    private fun initialLlmRouteProviderId(key: String): String {
+        val saved = prefs.getString(key, "") ?: ""
+        if (saved.isNotBlank()) {
+            return saved
+        }
+        return prefs.getString(KEY_ACTIVE_LLM_PROFILE_ID, "") ?: ""
+    }
+    val llmRoutingMode = MutableStateFlow(
+        normalizeLlmRoutingMode(prefs.getString(KEY_LLM_ROUTING_MODE, LLM_ROUTING_MODE_UNIFIED))
+    )
+    val llmUnifiedProviderId = MutableStateFlow(initialLlmRouteProviderId(KEY_LLM_UNIFIED_PROVIDER_ID))
+    val llmSemanticLocatorProviderId = MutableStateFlow(initialLlmRouteProviderId(KEY_LLM_SEMANTIC_LOCATOR_PROVIDER_ID))
+    val llmVisionActProviderId = MutableStateFlow(initialLlmRouteProviderId(KEY_LLM_VISION_ACT_PROVIDER_ID))
     val llmProfileDraftName = MutableStateFlow("")
     val autoUnlockBeforeRoute = MutableStateFlow(prefs.getBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, true))
     val autoLockAfterTask = MutableStateFlow(prefs.getBoolean(KEY_AUTO_LOCK_AFTER_TASK, true))
@@ -279,6 +315,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val mapTargetPackage = MutableStateFlow("")
     val mapTargetId = MutableStateFlow("")
     val llmTestResult = MutableStateFlow("")
+    val llmUnifiedRouteResult = MutableStateFlow("")
+    val llmSemanticLocatorRouteResult = MutableStateFlow("")
+    val llmVisionActRouteResult = MutableStateFlow("")
     val llmProfileResult = MutableStateFlow("")
     val coreConfigResult = MutableStateFlow("")
     val mapSyncResult = MutableStateFlow("")
@@ -1786,7 +1825,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             useMap = useMap.value,
             mapSource = mapSource.value,
             taskDndMode = taskDndMode.value,
-            maxTaskSteps = currentMaxTaskStepsValue()
+            maxTaskSteps = currentMaxTaskStepsValue(),
+            providers = _llmProfiles.value.map { profile ->
+                DeviceLlmProviderSettings(
+                    providerId = profile.id,
+                    name = profile.name,
+                    apiBaseUrl = profile.apiBaseUrl,
+                    apiKey = profile.apiKey,
+                    model = profile.model,
+                    requestType = LlmConfig.normalizeRequestType(profile.requestType),
+                    updatedAt = profile.updatedAt
+                )
+            },
+            activeProviderId = _activeLlmProfileId.value,
+            routingMode = normalizeLlmRoutingMode(llmRoutingMode.value),
+            unifiedProviderId = llmUnifiedProviderId.value,
+            semanticLocatorProviderId = llmSemanticLocatorProviderId.value,
+            visionActProviderId = llmVisionActProviderId.value
         )
     }
 
@@ -1873,6 +1928,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _activeLlmProfileId.value = ""
             prefs.edit().remove(KEY_ACTIVE_LLM_PROFILE_ID).apply()
         }
+        clearMissingLlmRouteProviderIds(list.map { it.id }.toSet())
         val active = list.firstOrNull { it.id == _activeLlmProfileId.value }
         if (active != null && llmProfileDraftName.value.isBlank()) {
             llmProfileDraftName.value = active.name
@@ -1902,6 +1958,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putString(KEY_ACTIVE_LLM_PROFILE_ID, profileId).apply()
     }
 
+    private fun clearMissingLlmRouteProviderIds(validIds: Set<String>) {
+        var changed = false
+        if (llmUnifiedProviderId.value.isNotBlank() && llmUnifiedProviderId.value !in validIds) {
+            llmUnifiedProviderId.value = ""
+            changed = true
+        }
+        if (llmSemanticLocatorProviderId.value.isNotBlank() && llmSemanticLocatorProviderId.value !in validIds) {
+            llmSemanticLocatorProviderId.value = ""
+            changed = true
+        }
+        if (llmVisionActProviderId.value.isNotBlank() && llmVisionActProviderId.value !in validIds) {
+            llmVisionActProviderId.value = ""
+            changed = true
+        }
+        if (changed) {
+            prefs.edit()
+                .putString(KEY_LLM_UNIFIED_PROVIDER_ID, llmUnifiedProviderId.value)
+                .putString(KEY_LLM_SEMANTIC_LOCATOR_PROVIDER_ID, llmSemanticLocatorProviderId.value)
+                .putString(KEY_LLM_VISION_ACT_PROVIDER_ID, llmVisionActProviderId.value)
+                .apply()
+        }
+    }
+
     fun saveCurrentLlmAsNewProfile() {
         val name = llmProfileDraftName.value.trim()
         if (name.isEmpty()) {
@@ -1926,6 +2005,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistLlmProfiles(next)
         val created = next.first()
         persistActiveLlmProfileId(created.id)
+        if (llmUnifiedProviderId.value.isBlank() || normalizeLlmRoutingMode(llmRoutingMode.value) == LLM_ROUTING_MODE_UNIFIED) {
+            llmUnifiedProviderId.value = created.id
+        }
+        if (llmSemanticLocatorProviderId.value.isBlank()) {
+            llmSemanticLocatorProviderId.value = created.id
+        }
+        if (llmVisionActProviderId.value.isBlank()) {
+            llmVisionActProviderId.value = created.id
+        }
         saveConfig()
         llmProfileResult.value = localizeLlmProfileMessage("Saved new LLM config: ${created.name}")
     }
@@ -1973,6 +2061,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         llmRequestType.value = LlmConfig.normalizeRequestType(profile.requestType)
         llmProfileDraftName.value = profile.name
         persistActiveLlmProfileId(profile.id)
+        if (normalizeLlmRoutingMode(llmRoutingMode.value) == LLM_ROUTING_MODE_UNIFIED) {
+            llmUnifiedProviderId.value = profile.id
+        }
         saveConfig()
         llmProfileResult.value = localizeLlmProfileMessage("Loaded LLM config: ${profile.name}")
     }
@@ -1984,9 +2075,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_activeLlmProfileId.value == profileId) {
             persistActiveLlmProfileId("")
         }
+        if (llmUnifiedProviderId.value == profileId) {
+            llmUnifiedProviderId.value = ""
+        }
+        if (llmSemanticLocatorProviderId.value == profileId) {
+            llmSemanticLocatorProviderId.value = ""
+        }
+        if (llmVisionActProviderId.value == profileId) {
+            llmVisionActProviderId.value = ""
+        }
         if (llmProfileDraftName.value.trim() == profile.name) {
             llmProfileDraftName.value = ""
         }
+        saveConfig()
         llmProfileResult.value = localizeLlmProfileMessage("Deleted LLM config: ${profile.name}")
     }
 
@@ -1997,6 +2098,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 port = currentLxbPortOrNull()
             )
         }
+    }
+
+    private fun llmRouteResultFlow(route: String): MutableStateFlow<String> {
+        return when (route) {
+            LLM_ROUTE_SEMANTIC_LOCATOR -> llmSemanticLocatorRouteResult
+            LLM_ROUTE_VISION_ACT -> llmVisionActRouteResult
+            else -> llmUnifiedRouteResult
+        }
+    }
+
+    private fun llmRouteLabel(route: String): String {
+        return when (route) {
+            LLM_ROUTE_SEMANTIC_LOCATOR -> "Semantic locator"
+            LLM_ROUTE_VISION_ACT -> "Vision act"
+            else -> "Unified route"
+        }
+    }
+
+    private fun selectedLlmRouteProviderId(route: String): String {
+        return when (route) {
+            LLM_ROUTE_SEMANTIC_LOCATOR -> llmSemanticLocatorProviderId.value
+            LLM_ROUTE_VISION_ACT -> llmVisionActProviderId.value
+            else -> llmUnifiedProviderId.value
+        }.trim()
+    }
+
+    fun setLlmRoutingMode(mode: String) {
+        llmRoutingMode.value = normalizeLlmRoutingMode(mode)
+        saveConfig()
+    }
+
+    fun setLlmRouteProvider(route: String, providerId: String) {
+        val normalized = providerId.trim()
+        when (route) {
+            LLM_ROUTE_SEMANTIC_LOCATOR -> llmSemanticLocatorProviderId.value = normalized
+            LLM_ROUTE_VISION_ACT -> llmVisionActProviderId.value = normalized
+            else -> llmUnifiedProviderId.value = normalized
+        }
+        saveConfig()
+    }
+
+    fun saveLlmRoute(route: String) {
+        saveConfig()
+        val label = llmRouteLabel(route)
+        llmRouteResultFlow(route).value = "$label saved."
+    }
+
+    private fun resolveLlmRouteProviderInput(route: String): Result<LlmRouteProviderInput> {
+        val mode = normalizeLlmRoutingMode(llmRoutingMode.value)
+        val providerId = selectedLlmRouteProviderId(route)
+        if (providerId.isNotBlank()) {
+            val profile = _llmProfiles.value.firstOrNull { it.id == providerId }
+                ?: return Result.failure(IllegalStateException("Selected provider was not found."))
+            return Result.success(
+                LlmRouteProviderInput(
+                    apiBaseUrl = profile.apiBaseUrl.trim(),
+                    apiKey = profile.apiKey,
+                    model = profile.model.trim(),
+                    requestType = LlmConfig.normalizeRequestType(profile.requestType),
+                    label = profile.name
+                )
+            )
+        }
+        if (mode == LLM_ROUTING_MODE_SPLIT && route != LLM_ROUTE_UNIFIED) {
+            return Result.failure(IllegalStateException("Please select a saved provider first."))
+        }
+        return Result.success(
+            LlmRouteProviderInput(
+                apiBaseUrl = llmBaseUrl.value.trim(),
+                apiKey = llmApiKey.value,
+                model = llmModel.value.trim(),
+                requestType = LlmConfig.normalizeRequestType(llmRequestType.value),
+                label = "Draft"
+            )
+        )
     }
 
     fun syncDeviceConfigOnly() {
@@ -2017,6 +2193,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun syncLlmRouteConfig(route: String) {
+        saveConfig()
+        val label = llmRouteLabel(route)
+        val resultFlow = llmRouteResultFlow(route)
+        resolveLlmRouteProviderInput(route).onFailure { e ->
+            resultFlow.value = "$label sync failed: ${e.message}"
+            return
+        }
+        viewModelScope.launch {
+            resultFlow.value = "Syncing $label config..."
+            val sync = syncDeviceLlmConfigFile()
+            if (sync.isSuccess) {
+                val path = sync.getOrNull().orEmpty()
+                val msg = "$label config synced: $path"
+                resultFlow.value = msg
+                appendLog("[LLM] $msg")
+            } else {
+                val msg = "Failed to sync $label config: ${sync.exceptionOrNull()?.message}"
+                resultFlow.value = msg
+                appendLog("[LLM] $msg")
+            }
+        }
+    }
+
     fun syncStableMapsNow() = mapOperationsController.syncStableMapsNow()
     fun pullStableByIdentifierNow() = mapOperationsController.pullStableByIdentifierNow()
     fun pullCandidateByIdentifierNow() = mapOperationsController.pullCandidateByIdentifierNow()
@@ -2025,38 +2225,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUseMap(enabled: Boolean) = mapOperationsController.setUseMap(enabled)
 
     fun testLlmAndSyncConfig() {
-        val baseUrl = llmBaseUrl.value.trim()
-        val model = llmModel.value.trim()
-        if (baseUrl.isEmpty() || model.isEmpty()) {
-            llmTestResult.value = "Please fill LLM API Base URL and Model first."
+        testLlmRouteAndSyncConfig(LLM_ROUTE_UNIFIED)
+    }
+
+    fun testLlmRouteAndSyncConfig(route: String) {
+        val label = llmRouteLabel(route)
+        val resultFlow = llmRouteResultFlow(route)
+        val provider = resolveLlmRouteProviderInput(route).getOrElse { e ->
+            val msg = "$label test failed: ${e.message}"
+            resultFlow.value = msg
+            if (route == LLM_ROUTE_UNIFIED) {
+                llmTestResult.value = msg
+            }
+            return
+        }
+        if (provider.apiBaseUrl.isEmpty() || provider.model.isEmpty()) {
+            val msg = "$label test failed: please fill API Base URL and Model first."
+            resultFlow.value = msg
+            if (route == LLM_ROUTE_UNIFIED) {
+                llmTestResult.value = msg
+            }
             return
         }
 
         saveConfig()
 
         viewModelScope.launch {
-            llmTestResult.value = "Testing LLM text + image input..."
+            resultFlow.value = "Testing $label text + image input..."
+            if (route == LLM_ROUTE_UNIFIED) {
+                llmTestResult.value = resultFlow.value
+            }
 
-            // 1) Write device-side config file (shell readable)
             val sync = syncDeviceLlmConfigFile()
             if (sync.isFailure) {
-                val msg = "Failed to write device config: ${sync.exceptionOrNull()?.message}"
-                llmTestResult.value = msg
+                val msg = "Failed to write $label config: ${sync.exceptionOrNull()?.message}"
+                resultFlow.value = msg
+                if (route == LLM_ROUTE_UNIFIED) {
+                    llmTestResult.value = msg
+                }
                 appendLog("[LLM] $msg")
                 return@launch
             }
             val llmConfigPath = sync.getOrNull().orEmpty()
-            appendLog("[LLM] Config synced to $llmConfigPath")
+            appendLog("[LLM] $label config synced to $llmConfigPath")
 
-            // 2) Directly call cloud LLM from APK with a small probe image to validate multimodal input.
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val challenge = buildVisionProbeChallenge()
-                    val config = com.lxb.server.cortex.LlmConfig(
-                        baseUrl,
-                        llmApiKey.value.trim(),
-                        model,
-                        LlmConfig.normalizeRequestType(llmRequestType.value)
+                    val config = LlmConfig(
+                        provider.apiBaseUrl,
+                        provider.apiKey.trim(),
+                        provider.model,
+                        provider.requestType
                     )
                     val response = LlmClient().chatOnce(
                         config,
@@ -2067,14 +2287,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         60_000
                     ).trim()
                     if (response == challenge.answer) {
-                        "LLM OK: text + image input passed; challenge=${challenge.answer}; device config synced: $llmConfigPath"
+                        "LLM OK: $label (${provider.label}) text + image input passed; challenge=${challenge.answer}; device config synced: $llmConfigPath"
                     } else {
-                        "LLM test failed: expected `${challenge.answer}`, got `${response.take(120)}`"
+                        "$label test failed: expected `${challenge.answer}`, got `${response.take(120)}`"
                     }
-                }.getOrElse { e -> "LLM call failed: ${e.message}" }
+                }.getOrElse { e -> "$label LLM call failed: ${e.message}" }
             }
 
-            llmTestResult.value = result
+            resultFlow.value = result
+            if (route == LLM_ROUTE_UNIFIED) {
+                llmTestResult.value = result
+            }
             appendLog("[LLM] $result")
         }
     }
@@ -2329,6 +2552,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (normalizedMaxTaskSteps != maxTaskSteps.value) {
             maxTaskSteps.value = normalizedMaxTaskSteps
         }
+        val normalizedRoutingMode = normalizeLlmRoutingMode(llmRoutingMode.value)
+        if (normalizedRoutingMode != llmRoutingMode.value) {
+            llmRoutingMode.value = normalizedRoutingMode
+        }
         prefs.edit()
             .putString(KEY_LXB_PORT, normalizedPort)
             .putString(KEY_LLM_BASE_URL, llmBaseUrl.value)
@@ -2336,6 +2563,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putString(KEY_LLM_MODEL, llmModel.value)
             .putString(KEY_LLM_REQUEST_TYPE, LlmConfig.normalizeRequestType(llmRequestType.value))
             .putString(KEY_ACTIVE_LLM_PROFILE_ID, _activeLlmProfileId.value)
+            .putString(KEY_LLM_ROUTING_MODE, normalizedRoutingMode)
+            .putString(KEY_LLM_UNIFIED_PROVIDER_ID, llmUnifiedProviderId.value.trim())
+            .putString(KEY_LLM_SEMANTIC_LOCATOR_PROVIDER_ID, llmSemanticLocatorProviderId.value.trim())
+            .putString(KEY_LLM_VISION_ACT_PROVIDER_ID, llmVisionActProviderId.value.trim())
             .putBoolean(KEY_AUTO_UNLOCK_BEFORE_ROUTE, autoUnlockBeforeRoute.value)
             .putBoolean(KEY_AUTO_LOCK_AFTER_TASK, autoLockAfterTask.value)
             .putString(KEY_UNLOCK_PIN, unlockPin.value)
