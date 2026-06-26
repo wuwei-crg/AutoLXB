@@ -475,3 +475,36 @@ Added semantic tap post-verification with JSON model output, checkpoint-based re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: FSM manual stop safe-point cancellation
+
+**Date**: 2026-06-27
+**Task**: FSM manual stop safe-point cancellation
+**Branch**: `dev`
+
+### Summary
+
+Added unified cancellation safe-point checks across Cortex FSM shared wait/retry paths, covered SCRIPT_ACT and VISION_ACT regression cases, and documented the cancel trace contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6a65293` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
