@@ -302,8 +302,8 @@ public final class WorkflowPortableCodec {
                 imported.map.packageName = template.packageName;
             }
             planned.routeMap = imported.map;
-            planned.pendingAdaptationCount = imported.pendingAdaptationCount;
-            planned.materializedCount = imported.executableImportCount;
+            planned.pendingAdaptationCount = imported.semanticLocatorStepCount;
+            planned.materializedCount = imported.xmlLocatorStepCount;
         }
         return planned;
     }

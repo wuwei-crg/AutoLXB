@@ -10,7 +10,7 @@ public final class SemanticAdaptationPromptBuilder {
 
     public static String buildPrompt(String pkg, TaskMap.Step step) {
         StringBuilder sb = new StringBuilder();
-        sb.append("You are adapting an imported mobile task-route TAP step to the current device.\n");
+        sb.append("You are locating a mobile task-route TAP step on the current device.\n");
         sb.append("Use the screenshot to find the target UI element described below.\n");
         sb.append("Return JSON only.\n");
         sb.append("Allowed outputs:\n");
@@ -21,7 +21,7 @@ public final class SemanticAdaptationPromptBuilder {
         sb.append("Package: ").append(stringOrEmpty(pkg)).append("\n");
         sb.append("Step ID: ").append(stringOrEmpty(step != null ? step.stepId : "")).append("\n");
         sb.append("Expected after tap: ").append(stringOrEmpty(step != null ? step.expected : "")).append("\n");
-        Map<String, Object> descriptor = step != null ? step.semanticDescriptor : null;
+        Map<String, Object> descriptor = step != null ? step.semanticLocator : null;
         if (descriptor != null && !descriptor.isEmpty()) {
             sb.append("Instruction: ").append(stringOrEmpty(descriptor.get("instruction"))).append("\n");
             sb.append("Target name: ").append(stringOrEmpty(descriptor.get("target_name"))).append("\n");

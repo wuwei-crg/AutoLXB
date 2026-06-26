@@ -140,8 +140,8 @@ public class TaskMapStoreTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
-        step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
-        step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_PENDING;
+        step.xmlLocator.put("resource_id", "old_button");
+        step.semanticLocator.put("instruction", "old instruction");
         segment.steps.add(step);
         map.segments.add(segment);
         Assert.assertTrue(store.saveMap(map));
@@ -149,26 +149,23 @@ public class TaskMapStoreTest {
         TaskMap.Step materialized = new TaskMap.Step();
         materialized.stepId = "s0001";
         materialized.op = "TAP";
-        materialized.locator.put("resource_id", "publish_button");
+        materialized.xmlLocator.put("resource_id", "publish_button");
+        materialized.semanticLocator.put("instruction", "tap publish");
         materialized.history.put("instruction", "tap publish");
         materialized.history.put("expected", "publish opens");
-        materialized.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED;
-        materialized.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED;
-        materialized.materializedAtMs = 12L;
 
         Assert.assertTrue(store.saveMaterializedStep("hash2", "seg0001", "s0001", materialized));
         TaskMap restored = store.loadMap("hash2");
         Assert.assertNotNull(restored);
         TaskMap.Step restoredStep = restored.segments.get(0).steps.get(0);
-        Assert.assertEquals("publish_button", restoredStep.locator.get("resource_id"));
+        Assert.assertEquals("publish_button", restoredStep.xmlLocator.get("resource_id"));
+        Assert.assertEquals("tap publish", restoredStep.semanticLocator.get("instruction"));
         Assert.assertEquals("tap publish", restoredStep.history.get("instruction"));
         Assert.assertEquals("publish opens", restoredStep.history.get("expected"));
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED, restoredStep.portableKind);
-        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED, restoredStep.adaptationStatus);
     }
 
     @Test
-    public void failedAdaptation_persistsAcrossReload() throws Exception {
+    public void markSemanticStepAdaptationFailed_clearsXmlLocatorAndTapPayload() throws Exception {
         File dir = Files.createTempDirectory("taskmap-store-failed").toFile();
         TaskMapStore store = new TaskMapStore(dir);
 
@@ -182,8 +179,8 @@ public class TaskMapStoreTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
-        step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
-        step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_PENDING;
+        step.xmlLocator.put("resource_id", "publish_button");
+        step.semanticLocator.put("instruction", "tap publish");
         segment.steps.add(step);
         map.segments.add(segment);
         Assert.assertTrue(store.saveMap(map));
@@ -193,10 +190,10 @@ public class TaskMapStoreTest {
         TaskMap restored = store.loadMap("hash3");
         Assert.assertNotNull(restored);
         TaskMap.Step restoredStep = restored.segments.get(0).steps.get(0);
-        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_FAILED, restoredStep.adaptationStatus);
-        Assert.assertEquals("no_match", restoredStep.adaptationError);
-        Assert.assertEquals(77L, restoredStep.adaptationAttemptedAtMs);
+        Assert.assertTrue(restoredStep.xmlLocator.isEmpty());
+        Assert.assertEquals("tap publish", restoredStep.semanticLocator.get("instruction"));
         Assert.assertTrue(restoredStep.tapPoint.isEmpty());
+        Assert.assertTrue(restoredStep.containerProbe.isEmpty());
     }
 
 

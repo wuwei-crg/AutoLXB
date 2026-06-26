@@ -87,12 +87,12 @@ public final class SemanticStepMaterializer {
                 materialized.sourceActionId = pendingStep.sourceActionId;
                 materialized.op = pendingStep.op;
                 materialized.args.addAll(pendingStep.args);
-                materialized.locator.putAll(payload.locator);
+                materialized.xmlLocator.putAll(payload.locator);
                 materialized.semanticNote = pendingStep.semanticNote;
                 materialized.expected = pendingStep.expected;
                 materialized.history.putAll(pendingStep.history);
                 materialized.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_MATERIALIZED;
-                materialized.semanticDescriptor.putAll(pendingStep.semanticDescriptor);
+                materialized.semanticLocator.putAll(pendingStep.semanticLocator);
                 materialized.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_ADAPTED;
                 materialized.adaptationError = "";
                 materialized.adaptationAttemptedAtMs = System.currentTimeMillis();

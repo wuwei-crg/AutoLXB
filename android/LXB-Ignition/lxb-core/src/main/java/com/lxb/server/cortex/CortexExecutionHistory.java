@@ -218,7 +218,7 @@ public final class CortexExecutionHistory {
         String instruction = firstNonEmpty(
                 stringOrEmpty(seed.get(KEY_INSTRUCTION)),
                 firstNonEmpty(
-                        stringOrEmpty(step != null && step.semanticDescriptor != null ? step.semanticDescriptor.get("instruction") : ""),
+                        stringOrEmpty(step != null && step.semanticLocator != null ? step.semanticLocator.get("instruction") : ""),
                         firstNonEmpty(
                                 stringOrEmpty(step != null ? step.semanticNote : ""),
                                 "Replay route step " + stepId

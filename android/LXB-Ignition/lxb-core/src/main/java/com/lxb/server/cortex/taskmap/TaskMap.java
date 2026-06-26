@@ -65,7 +65,9 @@ public final class TaskMap {
         public String sourceActionId = "";
         public String op = "";
         public final List<String> args = new ArrayList<String>();
-        public Map<String, Object> locator = new LinkedHashMap<String, Object>();
+        public final Map<String, Object> xmlLocator = new LinkedHashMap<String, Object>();
+        @Deprecated
+        public final Map<String, Object> locator = xmlLocator;
         public Map<String, Object> containerProbe = new LinkedHashMap<String, Object>();
         public final List<Object> tapPoint = new ArrayList<Object>();
         public Map<String, Object> swipe = new LinkedHashMap<String, Object>();
@@ -73,12 +75,20 @@ public final class TaskMap {
         public String semanticNote = "";
         public String expected = "";
         public Map<String, Object> history = new LinkedHashMap<String, Object>();
+        public final Map<String, Object> semanticLocator = new LinkedHashMap<String, Object>();
+        @Deprecated
+        public final Map<String, Object> semanticDescriptor = semanticLocator;
+        @Deprecated
         public String portableKind = "";
-        public Map<String, Object> semanticDescriptor = new LinkedHashMap<String, Object>();
+        @Deprecated
         public String adaptationStatus = "";
+        @Deprecated
         public String adaptationError = "";
+        @Deprecated
         public long adaptationAttemptedAtMs;
+        @Deprecated
         public String materializedFromStepId = "";
+        @Deprecated
         public long materializedAtMs;
 
         public Map<String, Object> toMap() {
@@ -87,7 +97,7 @@ public final class TaskMap {
             out.put("source_action_id", sourceActionId);
             out.put("op", op);
             out.put("args", new ArrayList<String>(args));
-            out.put("locator", new LinkedHashMap<String, Object>(locator));
+            out.put("xml_locator", new LinkedHashMap<String, Object>(xmlLocator));
             if (!containerProbe.isEmpty()) {
                 out.put("container_probe", new LinkedHashMap<String, Object>(containerProbe));
             }
@@ -101,13 +111,7 @@ public final class TaskMap {
             out.put("semantic_note", semanticNote);
             out.put("expected", expected);
             out.put("history", new LinkedHashMap<String, Object>(history));
-            out.put("portable_kind", portableKind);
-            out.put("semantic_descriptor", new LinkedHashMap<String, Object>(semanticDescriptor));
-            out.put("adaptation_status", adaptationStatus);
-            out.put("adaptation_error", adaptationError);
-            out.put("adaptation_attempted_at_ms", adaptationAttemptedAtMs);
-            out.put("materialized_from_step_id", materializedFromStepId);
-            out.put("materialized_at_ms", materializedAtMs);
+            out.put("semantic_locator", new LinkedHashMap<String, Object>(semanticLocator));
             return out;
         }
     }
@@ -207,8 +211,11 @@ public final class TaskMap {
                             }
                         }
                         Object locatorObj = sRow.get("locator");
+                        if (locatorObj == null) {
+                            locatorObj = sRow.get("xml_locator");
+                        }
                         if (locatorObj instanceof Map) {
-                            step.locator.putAll((Map<String, Object>) locatorObj);
+                            step.xmlLocator.putAll((Map<String, Object>) locatorObj);
                         }
                         Object containerProbeObj = sRow.get("container_probe");
                         if (containerProbeObj instanceof Map) {
@@ -229,16 +236,22 @@ public final class TaskMap {
                         if (historyObj instanceof Map) {
                             step.history.putAll((Map<String, Object>) historyObj);
                         }
-                        step.portableKind = stringOrEmpty(sRow.get("portable_kind"));
-                        Object semanticDescriptorObj = sRow.get("semantic_descriptor");
-                        if (semanticDescriptorObj instanceof Map) {
-                            step.semanticDescriptor.putAll((Map<String, Object>) semanticDescriptorObj);
+                        Object semanticLocatorObj = sRow.get("semantic_locator");
+                        if (semanticLocatorObj == null) {
+                            semanticLocatorObj = sRow.get("semantic_descriptor");
                         }
+                        if (semanticLocatorObj instanceof Map) {
+                            step.semanticLocator.putAll((Map<String, Object>) semanticLocatorObj);
+                        }
+                        step.portableKind = stringOrEmpty(sRow.get("portable_kind"));
                         step.adaptationStatus = stringOrEmpty(sRow.get("adaptation_status"));
                         step.adaptationError = stringOrEmpty(sRow.get("adaptation_error"));
                         step.adaptationAttemptedAtMs = toLong(sRow.get("adaptation_attempted_at_ms"), 0L);
                         step.materializedFromStepId = stringOrEmpty(sRow.get("materialized_from_step_id"));
                         step.materializedAtMs = toLong(sRow.get("materialized_at_ms"), 0L);
+                        if ("TAP".equalsIgnoreCase(step.op) && step.semanticLocator.isEmpty()) {
+                            step.semanticLocator.putAll(SemanticTapDescriptor.build(step, null));
+                        }
                         seg.steps.add(step);
                     }
                 }

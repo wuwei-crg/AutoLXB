@@ -50,13 +50,14 @@ public class TaskMapAssemblerTest {
         Assert.assertEquals(1, map.segments.size());
         Assert.assertEquals(2, map.stepCount());
         Assert.assertEquals("TAP", map.segments.get(0).steps.get(0).op);
-        Assert.assertEquals("search_box", map.segments.get(0).steps.get(0).locator.get("resource_id"));
+        Assert.assertEquals("search_box", map.segments.get(0).steps.get(0).xmlLocator.get("resource_id"));
+        Assert.assertFalse(map.segments.get(0).steps.get(0).semanticLocator.isEmpty());
         Assert.assertEquals("INPUT", map.segments.get(0).steps.get(1).op);
         Assert.assertEquals("secret", map.segments.get(0).steps.get(1).args.get(0));
     }
 
     @Test
-    public void assemble_skipsPureCoordinateTapWithoutLocatorOrSemanticContext() {
+    public void assemble_buildsFallbackSemanticLocatorForPureCoordinateTap() {
         TaskRouteRecord record = new TaskRouteRecord();
         record.taskKeyHash = "hash";
         record.packageName = "com.demo";
@@ -75,11 +76,17 @@ public class TaskMapAssemblerTest {
 
         TaskMap map = TaskMapAssembler.assemble(record, Collections.<String>emptySet(), "ai");
 
-        Assert.assertNull(map);
+        Assert.assertNotNull(map);
+        Assert.assertEquals(1, map.stepCount());
+        TaskMap.Step step = map.segments.get(0).steps.get(0);
+        Assert.assertTrue(step.xmlLocator.isEmpty());
+        Assert.assertFalse(step.semanticLocator.isEmpty());
+        Assert.assertEquals("点击目标控件", step.semanticLocator.get("instruction"));
+        Assert.assertEquals("", step.history.get("instruction"));
     }
 
     @Test
-    public void assemble_keepsSemanticTapWithoutLocatorForVisualFallback() {
+    public void assemble_buildsSemanticLocatorWithoutXmlLocatorForVisualFallback() {
         TaskRouteRecord record = new TaskRouteRecord();
         record.taskKeyHash = "hash";
         record.packageName = "com.demo";
@@ -103,12 +110,12 @@ public class TaskMapAssemblerTest {
         Assert.assertEquals(1, map.stepCount());
         TaskMap.Step step = map.segments.get(0).steps.get(0);
         Assert.assertEquals("TAP", step.op);
-        Assert.assertTrue(step.locator.isEmpty());
+        Assert.assertTrue(step.xmlLocator.isEmpty());
         Assert.assertTrue(step.tapPoint.isEmpty());
         Assert.assertTrue(step.containerProbe.isEmpty());
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);
-        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_NONE, step.adaptationStatus);
-        Assert.assertFalse(step.semanticDescriptor.isEmpty());
+        Assert.assertFalse(step.semanticLocator.isEmpty());
+        Assert.assertEquals("tap the publish entry", step.semanticLocator.get("instruction"));
+        Assert.assertEquals("publish page opens", step.semanticLocator.get("expected_after_tap"));
         Assert.assertEquals("tap the publish entry", step.history.get("instruction"));
         Assert.assertEquals("publish page opens", step.history.get("expected"));
     }
@@ -148,7 +155,7 @@ public class TaskMapAssemblerTest {
     }
 
     @Test
-    public void assemble_buildsSemanticTapWhenLocatorMissing() {
+    public void assemble_buildsSemanticLocatorWhenXmlLocatorMissing() {
         TaskRouteRecord record = new TaskRouteRecord();
         record.taskKeyHash = "hash";
         record.packageName = "com.demo";
@@ -168,14 +175,12 @@ public class TaskMapAssemblerTest {
         Assert.assertNotNull(map);
         Assert.assertEquals(1, map.stepCount());
         TaskMap.Step step = map.segments.get(0).steps.get(0);
-        Assert.assertTrue(step.locator.isEmpty());
+        Assert.assertTrue(step.xmlLocator.isEmpty());
         Assert.assertTrue(step.containerProbe.isEmpty());
         Assert.assertTrue(step.tapPoint.isEmpty());
         Assert.assertEquals("", step.fallbackPoint);
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);
-        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_NONE, step.adaptationStatus);
         Assert.assertEquals("tap the news feed item", step.history.get("instruction"));
-        Assert.assertEquals("tap the news feed item", step.semanticDescriptor.get("instruction"));
+        Assert.assertEquals("tap the news feed item", step.semanticLocator.get("instruction"));
     }
 
     @Test

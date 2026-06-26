@@ -68,7 +68,7 @@ public class SemanticVisionStepResolverTest {
                 new TaskMap.Step(),
                 new byte[]{1, 2, 3},
                 "Recent turns: none",
-                "locator missing"
+                "xml locator missing"
         ));
 
         Assert.assertTrue(prompt.contains("CURRENT route step"));
@@ -86,7 +86,7 @@ public class SemanticVisionStepResolverTest {
         step.semanticNote = "news feed item";
         step.history.put(CortexExecutionHistory.KEY_INSTRUCTION, "tap the first news card");
         step.history.put(CortexExecutionHistory.KEY_EXPECTED, "detail opens");
-        step.semanticDescriptor.put("instruction", "tap semantic target");
+        step.semanticLocator.put("instruction", "tap semantic target");
 
         String prompt = SemanticVisionStepResolver.buildPrompt(new StepVisualResolveRequest(
                 "task",
@@ -97,12 +97,13 @@ public class SemanticVisionStepResolverTest {
                 step,
                 new byte[]{1, 2, 3},
                 "1) action: previous",
-                "locator failed"
+                "xml locator failed"
         ));
 
         Assert.assertTrue(prompt.contains("tap the first news card"));
         Assert.assertTrue(prompt.contains("open detail"));
         Assert.assertTrue(prompt.contains("news feed item"));
+        Assert.assertTrue(prompt.contains("Semantic locator"));
         Assert.assertTrue(prompt.contains("Execution history before this step"));
         Assert.assertTrue(prompt.contains("previous"));
     }

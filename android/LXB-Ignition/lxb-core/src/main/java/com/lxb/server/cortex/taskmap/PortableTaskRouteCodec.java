@@ -12,25 +12,32 @@ public final class PortableTaskRouteCodec {
 
     public static final String PORTABLE_SCHEMA = "task_route_asset.v1";
     public static final String LEGACY_PORTABLE_SCHEMA = "task_route_portable.v1";
+    @Deprecated
     public static final String PORTABLE_KIND_LOCAL_LOCATOR = "local_locator";
+    @Deprecated
     public static final String PORTABLE_KIND_SEMANTIC_TAP = "semantic_tap";
+    @Deprecated
     public static final String PORTABLE_KIND_MATERIALIZED = "materialized";
+    @Deprecated
     public static final String ADAPTATION_STATUS_NONE = "none";
+    @Deprecated
     public static final String ADAPTATION_STATUS_PENDING = "pending";
+    @Deprecated
     public static final String ADAPTATION_STATUS_ADAPTED = "adapted";
+    @Deprecated
     public static final String ADAPTATION_STATUS_FAILED = "failed";
 
     public static final class ExportResult {
         public Map<String, Object> bundle = new LinkedHashMap<String, Object>();
-        public int locatorStepCount;
-        public int semanticStepCount;
+        public int xmlLocatorStepCount;
+        public int semanticLocatorStepCount;
     }
 
     public static final class ImportResult {
         public TaskMap map;
         public Map<String, Object> taskInfo = new LinkedHashMap<String, Object>();
-        public int pendingAdaptationCount;
-        public int executableImportCount;
+        public int xmlLocatorStepCount;
+        public int semanticLocatorStepCount;
     }
 
     private PortableTaskRouteCodec() {}
@@ -144,10 +151,13 @@ public final class PortableTaskRouteCodec {
                             continue;
                         }
                         TaskMap.Step step = importStep((Map<String, Object>) stepItem);
-                        if (PORTABLE_KIND_SEMANTIC_TAP.equals(step.portableKind)) {
-                            result.pendingAdaptationCount += 1;
-                        } else {
-                            result.executableImportCount += 1;
+                        if ("TAP".equals(normalizeOp(step.op))) {
+                            if (step.xmlLocator != null && !step.xmlLocator.isEmpty()) {
+                                result.xmlLocatorStepCount += 1;
+                            }
+                            if (step.semanticLocator != null && !step.semanticLocator.isEmpty()) {
+                                result.semanticLocatorStepCount += 1;
+                            }
                         }
                         segment.steps.add(step);
                     }
@@ -176,26 +186,22 @@ public final class PortableTaskRouteCodec {
             return out;
         }
 
-        Map<String, Object> descriptor = SemanticTapDescriptor.build(step, action);
-        if (step != null && step.locator != null && !step.locator.isEmpty()) {
-            out.put("portable_kind", PORTABLE_KIND_LOCAL_LOCATOR);
-            out.put("locator", new LinkedHashMap<String, Object>(step.locator));
-            out.put("semantic_descriptor", descriptor);
-            counters.locatorStepCount += 1;
-            return out;
+        Map<String, Object> xmlLocator = step != null && step.xmlLocator != null
+                ? step.xmlLocator
+                : new LinkedHashMap<String, Object>();
+        Map<String, Object> semanticLocator = step != null && step.semanticLocator != null
+                ? step.semanticLocator
+                : new LinkedHashMap<String, Object>();
+        if (semanticLocator.isEmpty()) {
+            semanticLocator = SemanticTapDescriptor.build(step, action);
         }
-
-        if (step != null && PORTABLE_KIND_SEMANTIC_TAP.equals(step.portableKind)
-                && step.semanticDescriptor != null && !step.semanticDescriptor.isEmpty()) {
-            descriptor = new LinkedHashMap<String, Object>(step.semanticDescriptor);
+        if (!xmlLocator.isEmpty()) {
+            out.put("xml_locator", new LinkedHashMap<String, Object>(xmlLocator));
+            counters.xmlLocatorStepCount += 1;
         }
-        if (SemanticTapDescriptor.hasSemanticContext(step, action)) {
-            out.put("portable_kind", PORTABLE_KIND_SEMANTIC_TAP);
-            out.put("semantic_descriptor", descriptor);
-            counters.semanticStepCount += 1;
-            return out;
-        }
-        throw new IllegalArgumentException("unsupported_step:no_tap_target");
+        out.put("semantic_locator", new LinkedHashMap<String, Object>(semanticLocator));
+        counters.semanticLocatorStepCount += 1;
+        return out;
     }
 
     private static TaskMap.Step importStep(Map<String, Object> row) {
@@ -206,56 +212,44 @@ public final class PortableTaskRouteCodec {
         copyStringList(row.get("args"), step.args);
         step.expected = stringOrEmpty(row.get("expected"));
 
-        if (!"TAP".equals(step.op)) {
-            step.portableKind = "";
-            step.adaptationStatus = ADAPTATION_STATUS_NONE;
-            return step;
+        Object xmlLocatorObj = row.get("xml_locator");
+        if (xmlLocatorObj == null) {
+            xmlLocatorObj = row.get("locator");
+        }
+        if (xmlLocatorObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> xmlLocator = (Map<String, Object>) xmlLocatorObj;
+            step.xmlLocator.putAll(xmlLocator);
         }
 
-        String portableKind = stringOrEmpty(row.get("portable_kind"));
-        if (PORTABLE_KIND_LOCAL_LOCATOR.equals(portableKind)) {
-            Object locatorObj = row.get("locator");
-            if (locatorObj instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> locator = (Map<String, Object>) locatorObj;
-                step.locator.putAll(locator);
+        Object semanticLocatorObj = row.get("semantic_locator");
+        if (semanticLocatorObj == null) {
+            semanticLocatorObj = row.get("semantic_descriptor");
+        }
+        if (semanticLocatorObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> semanticLocator = (Map<String, Object>) semanticLocatorObj;
+            step.semanticLocator.putAll(semanticLocator);
+            step.semanticNote = firstNonBlank(
+                    stringOrEmpty(semanticLocator.get("page_context")),
+                    stringOrEmpty(semanticLocator.get("source_observation"))
+            );
+            if (step.expected.isEmpty()) {
+                step.expected = stringOrEmpty(semanticLocator.get("expected_after_tap"));
             }
-            Object descriptorObj = row.get("semantic_descriptor");
-            if (descriptorObj instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> descriptor = (Map<String, Object>) descriptorObj;
-                step.semanticDescriptor.putAll(descriptor);
-                step.semanticNote = stringOrEmpty(descriptor.get("page_context"));
-            }
-            step.portableKind = PORTABLE_KIND_LOCAL_LOCATOR;
-            step.adaptationStatus = ADAPTATION_STATUS_NONE;
-            return step;
         }
 
-        if (PORTABLE_KIND_SEMANTIC_TAP.equals(portableKind)) {
-            Object descriptorObj = row.get("semantic_descriptor");
-            if (descriptorObj instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> descriptor = (Map<String, Object>) descriptorObj;
-                step.semanticDescriptor.putAll(descriptor);
-                step.semanticNote = firstNonBlank(
-                        stringOrEmpty(descriptor.get("instruction")),
-                        stringOrEmpty(descriptor.get("page_context")),
-                        stringOrEmpty(descriptor.get("source_observation"))
-                );
-                if (step.expected.isEmpty()) {
-                    step.expected = stringOrEmpty(descriptor.get("expected_after_tap"));
-                }
-            }
-            step.portableKind = PORTABLE_KIND_SEMANTIC_TAP;
-            step.adaptationStatus = ADAPTATION_STATUS_PENDING;
-            step.locator.clear();
-            step.containerProbe.clear();
-            step.tapPoint.clear();
-            step.fallbackPoint = "";
-            return step;
+        step.portableKind = stringOrEmpty(row.get("portable_kind"));
+        step.adaptationStatus = stringOrEmpty(row.get("adaptation_status"));
+        step.adaptationError = stringOrEmpty(row.get("adaptation_error"));
+        step.adaptationAttemptedAtMs = toLong(row.get("adaptation_attempted_at_ms"), 0L);
+        step.materializedFromStepId = stringOrEmpty(row.get("materialized_from_step_id"));
+        step.materializedAtMs = toLong(row.get("materialized_at_ms"), 0L);
+
+        if ("TAP".equals(step.op) && step.semanticLocator.isEmpty()) {
+            step.semanticLocator.putAll(buildFallbackSemanticLocator(step, row));
         }
-        throw new IllegalArgumentException("unsupported_portable_kind:" + portableKind);
+        return step;
     }
 
 
@@ -328,6 +322,30 @@ public final class PortableTaskRouteCodec {
 
     private static String normalizeOp(String op) {
         return stringOrEmpty(op).toUpperCase(Locale.ROOT);
+    }
+
+    private static Map<String, Object> buildFallbackSemanticLocator(TaskMap.Step step, Map<String, Object> row) {
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        String semanticNote = firstNonBlank(
+                stringOrEmpty(row.get("semantic_note")),
+                stringOrEmpty(step != null ? step.semanticNote : "")
+        );
+        String expected = firstNonBlank(
+                stringOrEmpty(row.get("expected")),
+                stringOrEmpty(step != null ? step.expected : "")
+        );
+        String instruction = firstNonBlank(semanticNote, expected, "点击目标控件");
+        out.put("version", 1);
+        out.put("instruction", instruction);
+        out.put("target_name", "");
+        out.put("target_role", "");
+        out.put("visual_hint", "");
+        out.put("page_context", semanticNote);
+        out.put("expected_after_tap", expected);
+        out.put("source_observation", semanticNote);
+        out.put("source_command", stringOrEmpty(row.get("raw_command")));
+        out.put("descriptor_quality", "weak");
+        return out;
     }
 
     private static boolean toBoolean(Object v, boolean def) {

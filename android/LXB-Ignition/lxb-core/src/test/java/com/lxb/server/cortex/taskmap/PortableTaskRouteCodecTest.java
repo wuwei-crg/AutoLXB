@@ -15,8 +15,8 @@ public class PortableTaskRouteCodecTest {
         TaskMap map = baseMap();
         map.finishAfterReplay = true;
         TaskMap.Step step = tapStep("s0001", "a0001");
-        step.locator.put("resource_id", "discover_tab");
-        step.locator.put("class", "TextView");
+        step.xmlLocator.put("resource_id", "discover_tab");
+        step.xmlLocator.put("class", "TextView");
         map.segments.get(0).steps.add(step);
 
         TaskRouteRecord record = new TaskRouteRecord();
@@ -47,21 +47,19 @@ public class PortableTaskRouteCodecTest {
         Assert.assertFalse("portable task_info must not carry source task ids", taskInfo.containsKey("task_id"));
         Assert.assertFalse("portable task_info must not carry route ids", taskInfo.containsKey("route_id"));
         Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_SCHEMA, exported.bundle.get("schema"));
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_LOCAL_LOCATOR, stepRow.get("portable_kind"));
-        Assert.assertEquals("discover_tab", ((Map<String, Object>) stepRow.get("locator")).get("resource_id"));
-        Assert.assertEquals(1, exported.locatorStepCount);
-        Assert.assertEquals(0, exported.semanticStepCount);
+        Assert.assertEquals("discover_tab", ((Map<String, Object>) stepRow.get("xml_locator")).get("resource_id"));
+        Assert.assertFalse(stepRow.containsKey("portable_kind"));
+        Assert.assertEquals("当前页面是首页", ((Map<String, Object>) stepRow.get("semantic_locator")).get("instruction"));
+        Assert.assertEquals(1, exported.xmlLocatorStepCount);
+        Assert.assertEquals(1, exported.semanticLocatorStepCount);
     }
 
     @Test
-    public void export_semanticTapWithoutLocator_becomesSemanticTap() {
+    public void export_semanticLocatorWithoutXmlLocator_buildsSemanticLocatorPayload() {
         TaskMap map = baseMap();
         TaskMap.Step step = tapStep("s0001", "a0001");
-        step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
-        step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_NONE;
         step.semanticNote = "当前页面是贴吧首页";
         step.expected = "进入发布帖子页面";
-        step.semanticDescriptor.put("instruction", "点击右下角加号按钮");
         map.segments.get(0).steps.add(step);
 
         TaskRouteRecord record = new TaskRouteRecord();
@@ -75,17 +73,18 @@ public class PortableTaskRouteCodecTest {
         PortableTaskRouteCodec.ExportResult exported = PortableTaskRouteCodec.exportPortable(map, record);
         Map<String, Object> stepRow = firstStep(exported.bundle);
 
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, stepRow.get("portable_kind"));
-        Assert.assertFalse(stepRow.containsKey("source_local_kind"));
+        Assert.assertFalse(stepRow.containsKey("portable_kind"));
+        Assert.assertFalse(stepRow.containsKey("xml_locator"));
         Assert.assertFalse(stepRow.containsKey("tap_point"));
         Assert.assertFalse(stepRow.containsKey("container_probe"));
-        Assert.assertTrue(stepRow.containsKey("semantic_descriptor"));
-        Assert.assertEquals(0, exported.locatorStepCount);
-        Assert.assertEquals(1, exported.semanticStepCount);
+        Assert.assertTrue(stepRow.containsKey("semantic_locator"));
+        Assert.assertEquals("当前页面是贴吧首页", ((Map<String, Object>) stepRow.get("semantic_locator")).get("instruction"));
+        Assert.assertEquals(0, exported.xmlLocatorStepCount);
+        Assert.assertEquals(1, exported.semanticLocatorStepCount);
     }
 
     @Test
-    public void import_semanticTap_containsNoExecutableLocalFields() {
+    public void import_semanticLocator_containsXmlAndSemanticLocators() {
         String bundleJson = "{"
                 + "\"schema\":\"task_route_asset.v1\","
                 + "\"finish_after_replay\":true,"
@@ -96,9 +95,8 @@ public class PortableTaskRouteCodecTest {
                 + "\"sub_task_description\":\"发帖\",\"success_criteria\":\"\",\"package_name\":\"com.demo\",\"package_label\":\"Demo\","
                 + "\"inputs\":[],\"outputs\":[],"
                 + "\"steps\":[{\"step_id\":\"s0001\",\"source_action_id\":\"a0001\",\"op\":\"TAP\",\"args\":[],"
-                + "\"portable_kind\":\"semantic_tap\","
-                + "\"source_local_kind\":\"tap_point\","
-                + "\"semantic_descriptor\":{\"instruction\":\"点击发布帖子入口\",\"expected_after_tap\":\"进入发布页面\"},"
+                + "\"xml_locator\":{\"resource_id\":\"publish_button\",\"class\":\"Button\"},"
+                + "\"semantic_locator\":{\"instruction\":\"点击发布帖子入口\",\"expected_after_tap\":\"进入发布页面\"},"
                 + "\"expected\":\"进入发布页面\"}]}]}";
 
         PortableTaskRouteCodec.ImportResult imported = PortableTaskRouteCodec.importPortable("target-hash", "com.demo", bundleJson);
@@ -108,13 +106,12 @@ public class PortableTaskRouteCodecTest {
         Assert.assertTrue(imported.map.finishAfterReplay);
         Assert.assertEquals("source-task", imported.taskInfo.get("task_id"));
         Assert.assertEquals("post", imported.taskInfo.get("user_task"));
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, step.portableKind);
-        Assert.assertEquals(PortableTaskRouteCodec.ADAPTATION_STATUS_PENDING, step.adaptationStatus);
-        Assert.assertTrue(step.locator.isEmpty());
-        Assert.assertTrue(step.containerProbe.isEmpty());
-        Assert.assertTrue(step.tapPoint.isEmpty());
-        Assert.assertEquals("", step.fallbackPoint);
-        Assert.assertEquals(1, imported.pendingAdaptationCount);
+        Assert.assertEquals("publish_button", step.xmlLocator.get("resource_id"));
+        Assert.assertEquals("Button", step.xmlLocator.get("class"));
+        Assert.assertEquals("点击发布帖子入口", step.semanticLocator.get("instruction"));
+        Assert.assertEquals("进入发布页面", step.semanticLocator.get("expected_after_tap"));
+        Assert.assertEquals(1, imported.xmlLocatorStepCount);
+        Assert.assertEquals(1, imported.semanticLocatorStepCount);
     }
 
     @Test

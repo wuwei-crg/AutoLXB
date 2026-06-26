@@ -39,11 +39,6 @@ public final class TaskMapAssembler {
             if (!REPLAYABLE_OPS.contains(op)) {
                 continue;
             }
-            if ("TAP".equals(op)
-                    && (action.locator == null || action.locator.isEmpty())
-                    && !hasSemanticTapContext(action)) {
-                continue;
-            }
             if ("SWIPE".equals(op)
                     && (action.swipe == null || action.swipe.isEmpty())
                     && (action.args == null || action.args.size() < 5)) {
@@ -69,7 +64,7 @@ public final class TaskMapAssembler {
             step.op = op;
             step.args.addAll(resolveStepArgs(action, op));
             if (action.locator != null) {
-                step.locator.putAll(action.locator);
+                step.xmlLocator.putAll(action.locator);
             }
             if (action.swipe != null) {
                 step.swipe.putAll(action.swipe);
@@ -81,10 +76,9 @@ public final class TaskMapAssembler {
                     action.createdPageSemantics,
                     action.rawCommand
             ));
-            if ("TAP".equals(op) && step.locator.isEmpty() && SemanticTapDescriptor.hasSemanticContext(step, action)) {
-                step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
-                step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_NONE;
-                step.semanticDescriptor.putAll(SemanticTapDescriptor.build(step, action));
+            if ("TAP".equals(op)) {
+                step.semanticLocator.clear();
+                step.semanticLocator.putAll(SemanticTapDescriptor.build(step, action));
             }
             segment.steps.add(step);
         }
@@ -105,10 +99,6 @@ public final class TaskMapAssembler {
         out.lastReplayStatus = "unused";
         out.segments.addAll(segments.values());
         return out.stepCount() > 0 ? out : null;
-    }
-
-    private static boolean hasSemanticTapContext(TaskRouteRecord.Action action) {
-        return SemanticTapDescriptor.hasSemanticContext(null, action);
     }
 
     public static boolean isReplayableOp(String op) {

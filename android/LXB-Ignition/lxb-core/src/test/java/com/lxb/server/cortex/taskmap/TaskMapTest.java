@@ -31,6 +31,8 @@ public class TaskMapTest {
         step.op = "TAP";
         step.history.put("instruction", "tap publish");
         step.history.put("expected", "publish page opens");
+        step.xmlLocator.put("resource_id", "publish_button");
+        step.semanticLocator.put("instruction", "tap publish");
         segment.steps.add(step);
         map.segments.add(segment);
 
@@ -45,11 +47,15 @@ public class TaskMapTest {
 
         Assert.assertEquals(TaskMap.SCHEMA_V2, map.toMap().get("schema"));
         Assert.assertTrue(serializedStep.containsKey("history"));
+        Assert.assertTrue(serializedStep.containsKey("xml_locator"));
+        Assert.assertTrue(serializedStep.containsKey("semantic_locator"));
 
         TaskMap restored = TaskMap.fromObject(map.toMap());
         Assert.assertNotNull(restored);
         Assert.assertEquals(TaskMap.SCHEMA_V2, restored.schema);
         Assert.assertEquals("tap publish", restored.segments.get(0).steps.get(0).history.get("instruction"));
+        Assert.assertEquals("publish_button", restored.segments.get(0).steps.get(0).xmlLocator.get("resource_id"));
+        Assert.assertEquals("tap publish", restored.segments.get(0).steps.get(0).semanticLocator.get("instruction"));
     }
 
     @Test
@@ -66,30 +72,30 @@ public class TaskMapTest {
     }
 
     @Test
-    public void fromObject_restoresPortableAdaptationFields() {
-        TaskMap map = new TaskMap();
-        map.taskKeyHash = "hash";
-        TaskMap.Segment segment = new TaskMap.Segment();
-        segment.segmentId = "seg0001";
-        segment.packageName = "com.demo";
-        TaskMap.Step step = new TaskMap.Step();
-        step.stepId = "s0001";
-        step.op = "TAP";
-        step.portableKind = PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP;
-        step.semanticDescriptor.put("instruction", "点击发布帖子入口");
-        step.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_FAILED;
-        step.adaptationError = "no_match";
-        step.materializedFromStepId = "s0001";
-        step.materializedAtMs = 8L;
-        segment.steps.add(step);
-        map.segments.add(segment);
+    public void fromObject_acceptsLegacyLocatorFieldNames() {
+        Map<String, Object> raw = new java.util.LinkedHashMap<String, Object>();
+        raw.put("schema", TaskMap.SCHEMA_V2);
+        raw.put("route_id", "hash");
+        raw.put("mode", "ai");
+        raw.put("last_replay_status", "unused");
 
-        TaskMap restored = TaskMap.fromObject(map.toMap());
+        Map<String, Object> segment = new java.util.LinkedHashMap<String, Object>();
+        segment.put("segment_id", "seg0001");
+        segment.put("package_name", "com.demo");
+
+        Map<String, Object> step = new java.util.LinkedHashMap<String, Object>();
+        step.put("step_id", "s0001");
+        step.put("op", "TAP");
+        step.put("locator", java.util.Collections.singletonMap("resource_id", "publish_button"));
+        step.put("semantic_descriptor", java.util.Collections.singletonMap("instruction", "点击发布帖子入口"));
+        segment.put("steps", java.util.Collections.singletonList(step));
+
+        raw.put("segments", java.util.Collections.singletonList(segment));
+
+        TaskMap restored = TaskMap.fromObject(raw);
 
         Assert.assertNotNull(restored);
-        Assert.assertEquals(PortableTaskRouteCodec.PORTABLE_KIND_SEMANTIC_TAP, restored.segments.get(0).steps.get(0).portableKind);
-        Assert.assertEquals("点击发布帖子入口", restored.segments.get(0).steps.get(0).semanticDescriptor.get("instruction"));
-        Assert.assertEquals("no_match", restored.segments.get(0).steps.get(0).adaptationError);
-        Assert.assertEquals(8L, restored.segments.get(0).steps.get(0).materializedAtMs);
+        Assert.assertEquals("publish_button", restored.segments.get(0).steps.get(0).xmlLocator.get("resource_id"));
+        Assert.assertEquals("点击发布帖子入口", restored.segments.get(0).steps.get(0).semanticLocator.get("instruction"));
     }
 }

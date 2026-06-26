@@ -93,7 +93,7 @@ public class CortexExecutionHistoryTest {
 
         Map<String, Object> summary = new LinkedHashMap<String, Object>();
         summary.put("result", "resolve_fail");
-        summary.put("reason", "missing locator");
+        summary.put("reason", "missing xml locator");
 
         Map<String, Object> row = CortexExecutionHistory.rowFromTaskMapStep(step, summary);
 

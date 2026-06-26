@@ -130,7 +130,7 @@ public final class TaskMapStore {
         target.adaptationStatus = PortableTaskRouteCodec.ADAPTATION_STATUS_FAILED;
         target.adaptationError = normalize(error);
         target.adaptationAttemptedAtMs = attemptedAtMs;
-        target.locator.clear();
+        target.xmlLocator.clear();
         target.containerProbe.clear();
         target.tapPoint.clear();
         target.fallbackPoint = "";
@@ -420,8 +420,8 @@ public final class TaskMapStore {
         target.op = src.op;
         target.args.clear();
         target.args.addAll(src.args);
-        target.locator.clear();
-        target.locator.putAll(src.locator);
+        target.xmlLocator.clear();
+        target.xmlLocator.putAll(src.xmlLocator);
         target.containerProbe.clear();
         target.containerProbe.putAll(src.containerProbe);
         target.tapPoint.clear();
@@ -434,8 +434,8 @@ public final class TaskMapStore {
         target.history.clear();
         target.history.putAll(src.history);
         target.portableKind = src.portableKind;
-        target.semanticDescriptor.clear();
-        target.semanticDescriptor.putAll(src.semanticDescriptor);
+        target.semanticLocator.clear();
+        target.semanticLocator.putAll(src.semanticLocator);
         target.adaptationStatus = src.adaptationStatus;
         target.adaptationError = src.adaptationError;
         target.adaptationAttemptedAtMs = src.adaptationAttemptedAtMs;

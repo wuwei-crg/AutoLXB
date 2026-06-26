@@ -142,7 +142,7 @@ public class WorkflowPortableCodecTest {
         step.stepId = "step1";
         step.sourceActionId = "action1";
         step.op = "TAP";
-        step.locator.put("resource_id", "publish");
+        step.xmlLocator.put("resource_id", "publish");
         segment.steps.add(step);
         map.segments.add(segment);
         return map;

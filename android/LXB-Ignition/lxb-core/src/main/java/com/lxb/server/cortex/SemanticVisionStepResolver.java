@@ -98,7 +98,7 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
     public static String buildPrompt(StepVisualResolveRequest request) {
         TaskMap.Step step = request != null ? request.step : null;
         StringBuilder sb = new StringBuilder();
-        sb.append("You are a constrained visual locator for Android task-route replay.\n");
+        sb.append("You are a constrained semantic locator for Android task-route replay.\n");
         sb.append("Your only job: locate the tap target for the CURRENT route step in the screenshot.\n");
         sb.append("Do not plan the user's task. Do not choose the next business action. Do not output TAP/BACK/WAIT commands.\n");
         sb.append("Coordinates must be screenshot/device pixel coordinates, not normalized 0-1000 action coordinates.\n");
@@ -127,8 +127,8 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
             sb.append("- expected: ").append(stringOrEmpty(history.get(CortexExecutionHistory.KEY_EXPECTED))).append("\n");
             sb.append("- carry_context: ").append(stringOrEmpty(history.get(CortexExecutionHistory.KEY_CARRY_CONTEXT))).append("\n");
         }
-        if (step != null && step.semanticDescriptor != null && !step.semanticDescriptor.isEmpty()) {
-            sb.append("Semantic descriptor: ").append(Json.stringify(step.semanticDescriptor)).append("\n");
+        if (step != null && step.semanticLocator != null && !step.semanticLocator.isEmpty()) {
+            sb.append("Semantic locator: ").append(Json.stringify(step.semanticLocator)).append("\n");
         }
         String historyText = request != null ? stringOrEmpty(request.historyText) : "";
         if (!historyText.isEmpty()) {

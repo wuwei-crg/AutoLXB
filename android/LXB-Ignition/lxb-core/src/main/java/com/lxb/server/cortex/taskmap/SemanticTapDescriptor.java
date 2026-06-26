@@ -12,7 +12,7 @@ final class SemanticTapDescriptor {
             if (!stringOrEmpty(step.semanticNote).isEmpty()
                     || !stringOrEmpty(step.expected).isEmpty()
                     || (step.history != null && !step.history.isEmpty())
-                    || (step.semanticDescriptor != null && !step.semanticDescriptor.isEmpty())) {
+                    || (step.semanticLocator != null && !step.semanticLocator.isEmpty())) {
                 return true;
             }
         }

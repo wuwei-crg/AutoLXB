@@ -2367,14 +2367,10 @@ public class CortexFsmEngine {
         try {
             String op = step.op != null ? step.op.trim().toUpperCase(Locale.ROOT) : "";
             if ("TAP".equals(op)) {
-                TaskMap.Step executableStep = ensureSemanticTapMaterialized(ctx, pkg, step, summary);
-                if (executableStep == null) {
-                    trace.event("fsm_script_act_task_map_step_end", summary);
-                    return new RouteStepExec(summary, false);
-                }
+                summary.put("locator_mode", hasXmlLocator(step) ? "xml_locator" : "semantic_locator");
                 TaskMapResolvedPoint point = index == 0
-                        ? resolveFirstTaskMapTapPointWithWindow(ctx, pkg, executableStep, resolver, index)
-                        : resolveRegularTaskMapTapPoint(ctx, pkg, executableStep, resolver, index);
+                        ? resolveFirstTaskMapTapPointWithWindow(ctx, pkg, step, resolver, index)
+                        : resolveRegularTaskMapTapPoint(ctx, pkg, step, resolver, index);
                 boolean ok = execTapAtPoint(ctx, point.x, point.y);
                 summary.put("picked_stage", point.pickedStage);
                 summary.put("picked_bounds", point.bounds != null ? point.bounds.toList() : null);
@@ -2570,8 +2566,8 @@ public class CortexFsmEngine {
         target.op = src.op;
         target.args.clear();
         target.args.addAll(src.args);
-        target.locator.clear();
-        target.locator.putAll(src.locator);
+        target.xmlLocator.clear();
+        target.xmlLocator.putAll(src.xmlLocator);
         target.containerProbe.clear();
         target.containerProbe.putAll(src.containerProbe);
         target.tapPoint.clear();
@@ -2583,6 +2579,8 @@ public class CortexFsmEngine {
         target.expected = src.expected;
         target.history.clear();
         target.history.putAll(src.history);
+        target.semanticLocator.clear();
+        target.semanticLocator.putAll(src.semanticLocator);
         target.portableKind = src.portableKind;
         target.semanticDescriptor.clear();
         target.semanticDescriptor.putAll(src.semanticDescriptor);
@@ -2636,14 +2634,13 @@ public class CortexFsmEngine {
             LocatorResolver resolver,
             int index
     ) throws Exception {
-        if (!hasTaskMapLocator(step)) {
-            return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_locator_missing");
-        }
-
+        boolean useXmlLocator = hasXmlLocator(step);
         Exception last = null;
         for (int attempt = 1; attempt <= SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX; attempt++) {
             try {
-                TaskMapResolvedPoint point = resolveTaskMapTapPointByLocatorOnly(step, resolver);
+                TaskMapResolvedPoint point = useXmlLocator
+                        ? resolveTaskMapTapPointByLocatorOnly(step, resolver)
+                        : resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_xml_locator_missing");
                 if (attempt > 1) {
                     Map<String, Object> recovered = new LinkedHashMap<>();
                     recovered.put("task_id", ctx.taskId);
@@ -2671,16 +2668,17 @@ public class CortexFsmEngine {
                 }
             }
         }
-        String reason = last != null ? String.valueOf(last) : "task_map_tap_resolve_failed";
-        return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, reason);
+        String reason = last != null ? String.valueOf(last)
+                : (useXmlLocator ? "task_map_xml_locator_resolve_failed" : "task_map_semantic_locator_resolve_failed");
+        throw new IllegalStateException(reason);
     }
 
     private TaskMapResolvedPoint resolveTaskMapTapPointByLocatorOnly(TaskMap.Step step, LocatorResolver resolver) throws Exception {
         if (step == null) {
             throw new IllegalStateException("task_map_step_missing");
         }
-        Map<String, Object> safeLocator = step.locator != null
-                ? step.locator
+        Map<String, Object> safeLocator = step.xmlLocator != null
+                ? step.xmlLocator
                 : Collections.<String, Object>emptyMap();
         Locator locator = Locator.fromMap(safeLocator);
         if (!hasUsableLocator(locator)) {
@@ -2736,10 +2734,14 @@ public class CortexFsmEngine {
     }
 
     private boolean hasTaskMapLocator(TaskMap.Step step) {
-        if (step == null || step.locator == null || step.locator.isEmpty()) {
+        if (step == null || step.xmlLocator == null || step.xmlLocator.isEmpty()) {
             return false;
         }
-        return hasUsableLocator(Locator.fromMap(step.locator));
+        return hasUsableLocator(Locator.fromMap(step.xmlLocator));
+    }
+
+    private boolean hasXmlLocator(TaskMap.Step step) {
+        return hasTaskMapLocator(step);
     }
 
     private SwipeReplaySpec resolveTaskMapSwipeSpec(Context ctx, TaskMap.Step step) throws Exception {

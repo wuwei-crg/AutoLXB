@@ -2070,8 +2070,8 @@ public class CortexTaskManager {
         out.put("route_id", resolved);
         out.put("schema", PortableTaskRouteCodec.PORTABLE_SCHEMA);
         out.put("bundle_json", Json.stringify(exported.bundle));
-        out.put("locator_step_count", exported.locatorStepCount);
-        out.put("semantic_step_count", exported.semanticStepCount);
+        out.put("xml_locator_step_count", exported.xmlLocatorStepCount);
+        out.put("semantic_locator_step_count", exported.semanticLocatorStepCount);
         return out;
     }
 
@@ -2124,8 +2124,8 @@ public class CortexTaskManager {
             out.put("task_id", normalizedKey);
             out.put("route_id", normalizedKey);
             out.put("task_info", new LinkedHashMap<String, Object>(imported.taskInfo));
-            out.put("pending_adaptation_count", imported.pendingAdaptationCount);
-            out.put("materialized_count", imported.executableImportCount);
+            out.put("xml_locator_step_count", imported.xmlLocatorStepCount);
+            out.put("semantic_locator_step_count", imported.semanticLocatorStepCount);
             if (!saved) {
                 out.put("err", "portable_import_save_failed");
             }

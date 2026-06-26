@@ -22,25 +22,28 @@ import java.util.List;
 public class CortexTaskMapReplayTest {
 
     @Test
-    public void executeTaskMapRoutingStep_failedSemanticTapStopsBeforeTapResolution() throws Exception {
+    public void executeTaskMapRoutingStep_withoutXmlLocator_usesSemanticLocatorPath() throws Exception {
         byte[] payload = buildDumpActionsPayload(
                 actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", "")
         );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(321, 654, "semantic match", "semantic_visual")
+        );
         FakeExecutionEngine execution = new FakeExecutionEngine();
         CortexFsmEngine engine = new CortexFsmEngine(
-                new FakePerceptionEngine(payload),
+                new FakePerceptionEngine(payload, screenshotPayload()),
                 execution,
                 null,
                 new TraceLogger(64),
-                new TaskMapStore(Files.createTempDirectory("taskmap-replay-semantic").toFile())
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-semantic").toFile()),
+                visualResolver
         );
 
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
-        step.portableKind = "semantic_tap";
-        step.adaptationStatus = "failed";
-        step.adaptationError = "no_match";
+        step.semanticLocator.put("instruction", "tap the publish entry");
+        step.semanticLocator.put("expected_after_tap", "publish page opens");
 
         TaskMap.Segment segment = new TaskMap.Segment();
         segment.segmentId = "seg0001";
@@ -53,12 +56,15 @@ public class CortexTaskMapReplayTest {
 
         LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload), new TraceLogger(64));
         Object exec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", step, resolver, 0);
-        Assert.assertFalse((Boolean) readField(exec, "ok"));
+        Assert.assertTrue((Boolean) readField(exec, "ok"));
         @SuppressWarnings("unchecked")
         java.util.Map<String, Object> summary = (java.util.Map<String, Object>) readField(exec, "step");
-        Assert.assertEquals("semantic_adaptation_failed", summary.get("result"));
-        Assert.assertEquals("no_match", summary.get("reason"));
-        Assert.assertEquals(0, execution.tapCount);
+        Assert.assertEquals("semantic_locator", summary.get("locator_mode"));
+        Assert.assertEquals("ok", summary.get("result"));
+        Assert.assertEquals("", summary.get("reason"));
+        Assert.assertEquals("semantic_visual", summary.get("picked_stage"));
+        Assert.assertEquals(1, execution.tapCount);
+        Assert.assertEquals(1, visualResolver.calls);
     }
 
     @Test
@@ -82,8 +88,9 @@ public class CortexTaskMapReplayTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
-        step.locator.put("resource_id", "publish_button");
-        step.locator.put("class", "Button");
+        step.semanticLocator.put("instruction", "tap the publish entry");
+        step.xmlLocator.put("resource_id", "publish_button");
+        step.xmlLocator.put("class", "Button");
 
         CortexFsmEngine.Context ctx = contextWithSegment(step);
         LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload, screenshotPayload()), new TraceLogger(64));
@@ -115,6 +122,7 @@ public class CortexTaskMapReplayTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
+        step.semanticLocator.put("instruction", "tap the publish entry");
         step.history.put("instruction", "tap the publish entry");
 
         CortexFsmEngine.Context ctx = contextWithSegment(step);
@@ -150,6 +158,7 @@ public class CortexTaskMapReplayTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
+        step.semanticLocator.put("instruction", "tap the feed item");
         step.tapPoint.add(200);
         step.tapPoint.add(420);
         step.containerProbe.put("resource_id", "feed_item");
@@ -164,7 +173,7 @@ public class CortexTaskMapReplayTest {
         } catch (InvocationTargetException e) {
             Assert.assertTrue(String.valueOf(e.getCause()).contains("task_map_visual_no_match"));
         }
-        Assert.assertEquals(1, visualResolver.calls);
+        Assert.assertEquals(3, visualResolver.calls);
     }
 
     @Test
@@ -187,6 +196,7 @@ public class CortexTaskMapReplayTest {
         TaskMap.Step step = new TaskMap.Step();
         step.stepId = "s0001";
         step.op = "TAP";
+        step.semanticLocator.put("instruction", "tap fallback target");
         step.fallbackPoint = "[200, 420]";
 
         CortexFsmEngine.Context ctx = contextWithSegment(step);
@@ -198,7 +208,7 @@ public class CortexTaskMapReplayTest {
         } catch (InvocationTargetException e) {
             Assert.assertTrue(String.valueOf(e.getCause()).contains("task_map_visual_ambiguous"));
         }
-        Assert.assertEquals(1, visualResolver.calls);
+        Assert.assertEquals(3, visualResolver.calls);
     }
 
     private static Object invokeExecuteTaskMapRoutingStep(
