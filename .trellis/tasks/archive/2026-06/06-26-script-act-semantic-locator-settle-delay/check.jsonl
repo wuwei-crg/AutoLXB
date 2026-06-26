@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Command-boundary and validation patterns for backend timing helpers"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend test and compatibility rules for lxb-core changes"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guidelines for Cortex daemon changes in lxb-core"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Trace event naming and structured logging conventions"}
