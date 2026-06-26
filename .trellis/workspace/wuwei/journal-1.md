@@ -375,3 +375,37 @@ Fixed script-act task-map visual resolver JSON parsing by accepting fenced or te
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Script act locator replay split
+
+**Date**: 2026-06-26
+**Task**: Script act locator replay split
+**Branch**: `dev`
+
+### Summary
+
+Split SCRIPT_ACT TAP replay into explicit xml locator and semantic locator paths, preserved legacy input compatibility, updated tests, and recorded the backend locator contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d6a123` | (see git log) |
+| `1ee5f8b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
