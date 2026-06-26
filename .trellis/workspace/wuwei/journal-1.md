@@ -442,3 +442,36 @@ Added a dedicated 2s settle delay before semantic screenshot capture in SCRIPT_A
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Semantic locator post-verification
+
+**Date**: 2026-06-26
+**Task**: Semantic locator post-verification
+**Branch**: `dev`
+
+### Summary
+
+Added semantic tap post-verification with JSON model output, checkpoint-based replay context, normalized tap command handling, and regression tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `44aec32` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
