@@ -215,6 +215,7 @@ public final class CortexExecutionHistory {
         String picked = stringOrEmpty(summary.get("picked_stage"));
         String op = stringOrEmpty(step != null ? step.op : "");
         String stepId = stringOrEmpty(step != null ? step.stepId : "");
+        boolean routeProgress = parseBool(summary.get("advance_index"), "ok".equalsIgnoreCase(result));
         String instruction = firstNonEmpty(
                 stringOrEmpty(seed.get(KEY_INSTRUCTION)),
                 firstNonEmpty(
@@ -234,6 +235,7 @@ public final class CortexExecutionHistory {
         if (!op.isEmpty()) actual.append(" op=").append(op);
         if (!stepId.isEmpty()) actual.append(" step=").append(stepId);
         if (!result.isEmpty()) actual.append(" result=").append(result);
+        if (!routeProgress) actual.append(" advance_index=false");
         if (!picked.isEmpty()) actual.append(" picked_stage=").append(picked);
         if (!reason.isEmpty()) actual.append(" reason=").append(reason);
 
@@ -242,8 +244,12 @@ public final class CortexExecutionHistory {
         row.put(KEY_EXPECTED, expected);
         row.put(KEY_ACTUAL, firstNonEmpty(actual.toString(), stringOrEmpty(seed.get(KEY_ACTUAL))));
         boolean ok = "ok".equalsIgnoreCase(result);
-        row.put(KEY_JUDGEMENT_PREV, ok ? "script_replay_ok" : "script_replay_failed");
-        row.put(KEY_JUDGEMENT_GLOBAL, ok ? "route_replay_progress" : "route_replay_fallback");
+        row.put(KEY_JUDGEMENT_PREV, ok
+                ? (routeProgress ? "script_replay_ok" : "script_replay_retry_ok")
+                : "script_replay_failed");
+        row.put(KEY_JUDGEMENT_GLOBAL, ok
+                ? (routeProgress ? "route_replay_progress" : "route_replay_retry")
+                : "route_replay_fallback");
         row.put(KEY_CARRY_CONTEXT, firstNonEmpty(stringOrEmpty(seed.get(KEY_CARRY_CONTEXT)), "none"));
         return normalizeRow(row);
     }
@@ -273,5 +279,25 @@ public final class CortexExecutionHistory {
     private static String firstNonEmpty(String a, String b) {
         String av = stringOrEmpty(a);
         return !av.isEmpty() ? av : stringOrEmpty(b);
+    }
+
+    private static boolean parseBool(Object o, boolean defVal) {
+        if (o == null) {
+            return defVal;
+        }
+        if (o instanceof Boolean) {
+            return ((Boolean) o).booleanValue();
+        }
+        String s = String.valueOf(o).trim().toLowerCase();
+        if (s.isEmpty()) {
+            return defVal;
+        }
+        if ("1".equals(s) || "true".equals(s) || "yes".equals(s) || "on".equals(s)) {
+            return true;
+        }
+        if ("0".equals(s) || "false".equals(s) || "no".equals(s) || "off".equals(s)) {
+            return false;
+        }
+        return defVal;
     }
 }

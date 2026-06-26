@@ -19,6 +19,16 @@ public class SemanticVisionStepResolverTest {
     }
 
     @Test
+    public void parse_pointJson_rejectsCoordinatesOutsideNormalizedRange() {
+        StepVisualResolveResult result = SemanticVisionStepResolver.parseResult(
+                "{\"result\":\"point\",\"x\":100,\"y\":1200,\"reason\":\"target\"}"
+        );
+
+        Assert.assertEquals(StepVisualResolveResult.STATUS_ERROR, result.status);
+        Assert.assertEquals("point_coordinates_out_of_range", result.reason);
+    }
+
+    @Test
     public void parse_noMatchAmbiguousBlocked_acceptsStatuses() {
         Assert.assertEquals(StepVisualResolveResult.STATUS_NO_MATCH,
                 SemanticVisionStepResolver.parseResult("{\"result\":\"no_match\",\"reason\":\"not visible\"}").status);
@@ -74,7 +84,8 @@ public class SemanticVisionStepResolverTest {
         Assert.assertTrue(prompt.contains("CURRENT route step"));
         Assert.assertTrue(prompt.contains("Do not plan the user's task"));
         Assert.assertTrue(prompt.contains("Do not output TAP/BACK/WAIT commands"));
-        Assert.assertTrue(prompt.contains("pixel coordinates"));
+        Assert.assertTrue(prompt.contains("1000x1000 logical plane"));
+        Assert.assertTrue(prompt.contains("Do not output screenshot/device pixel coordinates"));
     }
 
     @Test

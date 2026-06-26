@@ -17,6 +17,9 @@ public final class SemanticAdaptationPromptBuilder {
         sb.append("{\"result\":\"point\",\"x\":123,\"y\":456,\"reason\":\"...\"}\n");
         sb.append("{\"result\":\"no_match\",\"reason\":\"...\"}\n");
         sb.append("{\"result\":\"ambiguous\",\"reason\":\"...\"}\n");
+        sb.append("Coordinates must be normalized integers in a 1000x1000 logical plane.\n");
+        sb.append("Top-left is (0,0), bottom-right is (1000,1000). Do not output screenshot/device pixel coordinates.\n");
+        sb.append("The engine will map normalized coordinates to device pixels after parsing.\n");
         sb.append("Do not output any command text. Do not plan multiple actions. Only locate one tap target.\n\n");
         sb.append("Package: ").append(stringOrEmpty(pkg)).append("\n");
         sb.append("Step ID: ").append(stringOrEmpty(step != null ? step.stepId : "")).append("\n");

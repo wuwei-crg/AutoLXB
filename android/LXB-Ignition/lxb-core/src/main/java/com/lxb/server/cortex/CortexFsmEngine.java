@@ -173,6 +173,7 @@ public class CortexFsmEngine {
         public String taskMapReplayFallbackReason = "";
         public boolean taskMapReplayUsed = false;
         public boolean taskRouteRecordStarted = false;
+        public TapReplayCheckpoint taskMapLastTapCheckpoint = null;
 
         public Context(String taskId) {
             this.taskId = taskId;
@@ -186,6 +187,7 @@ public class CortexFsmEngine {
     private final MapManager mapManager;
     private final TaskMapStore taskMapStore;
     private final TaskMapStepVisualResolver taskMapStepVisualResolver;
+    private final TaskMapTapVerificationResolver taskMapTapReplayVerifier;
     private static final int LAUNCH_RETRY_MAX = 3;
     private static final long LAUNCH_WAIT_TIMEOUT_MS = 8000L;
     private static final long LAUNCH_WAIT_SAMPLE_MS = 350L;
@@ -237,7 +239,7 @@ public class CortexFsmEngine {
                            MapManager mapManager,
                            TraceLogger trace,
                            TaskMapStore taskMapStore) {
-        this(perception, execution, mapManager, trace, taskMapStore, null);
+        this(perception, execution, mapManager, trace, taskMapStore, null, null);
     }
 
     public CortexFsmEngine(PerceptionEngine perception,
@@ -246,6 +248,16 @@ public class CortexFsmEngine {
                            TraceLogger trace,
                            TaskMapStore taskMapStore,
                            TaskMapStepVisualResolver taskMapStepVisualResolver) {
+        this(perception, execution, mapManager, trace, taskMapStore, taskMapStepVisualResolver, null);
+    }
+
+    public CortexFsmEngine(PerceptionEngine perception,
+                           ExecutionEngine execution,
+                           MapManager mapManager,
+                           TraceLogger trace,
+                           TaskMapStore taskMapStore,
+                           TaskMapStepVisualResolver taskMapStepVisualResolver,
+                           TaskMapTapVerificationResolver taskMapTapReplayVerifier) {
         this.perception = perception;
         this.execution = execution;
         this.trace = trace;
@@ -255,6 +267,9 @@ public class CortexFsmEngine {
         this.taskMapStepVisualResolver = taskMapStepVisualResolver != null
                 ? taskMapStepVisualResolver
                 : new SemanticVisionStepResolver(this.llmClient, this.trace);
+        this.taskMapTapReplayVerifier = taskMapTapReplayVerifier != null
+                ? taskMapTapReplayVerifier
+                : new TaskMapTapReplayVerifier(this.llmClient, this.trace);
     }
 
     /**
@@ -2067,15 +2082,20 @@ public class CortexFsmEngine {
         int failedIndex = -1;
         int index = 0;
         int recoveryAttempts = 0;
+        ctx.taskMapLastTapCheckpoint = null;
 
         while (index < ctx.currentTaskMapSegment.steps.size()) {
             TaskMap.Step step = ctx.currentTaskMapSegment.steps.get(index);
             RouteStepExec exec = executeTaskMapRoutingStep(ctx, pkg, step, resolver, index);
             stepSummaries.add(exec.step);
-            appendScriptActHistory(ctx, step, exec.step, "task_map_step");
+            appendScriptActHistory(ctx, exec.historyStep != null ? exec.historyStep : step, exec.step, "task_map_step");
             if (exec.ok) {
-                index += 1;
-                sleepQuiet(400L);
+                if (exec.advanceIndex) {
+                    index += 1;
+                    sleepQuiet(400L);
+                } else {
+                    sleepQuiet(300L);
+                }
                 continue;
             }
 
@@ -2362,7 +2382,7 @@ public class CortexFsmEngine {
             summary.put("result", "invalid_step");
             summary.put("reason", "null_step");
             trace.event("fsm_script_act_task_map_step_end", summary);
-            return new RouteStepExec(summary, false);
+            return new RouteStepExec(summary, false, true, null, index);
         }
 
         try {
@@ -2372,14 +2392,31 @@ public class CortexFsmEngine {
                 TaskMapResolvedPoint point = index == 0
                         ? resolveFirstTaskMapTapPointWithWindow(ctx, pkg, step, resolver, index)
                         : resolveRegularTaskMapTapPoint(ctx, pkg, step, resolver, index);
+                TaskMap.Step executedStep = point.historyStep != null ? point.historyStep : step;
                 boolean ok = execTapAtPoint(ctx, point.x, point.y);
                 summary.put("picked_stage", point.pickedStage);
                 summary.put("picked_bounds", point.bounds != null ? point.bounds.toList() : null);
                 summary.put("picked_point", java.util.Arrays.asList(point.x, point.y));
+                summary.put("verification_decision", point.verificationDecision);
+                summary.put("verification_reason", point.verificationReason);
+                summary.put("verification_observing", point.verificationObserving);
+                summary.put("verification_judging_prev", point.verificationJudgingPrev);
+                summary.put("verification_judge_prev_result", point.verificationJudgePrevResult);
+                summary.put("verification_thinking", point.verificationThinking);
+                summary.put("execution_step_id", executedStep != null ? executedStep.stepId : "");
+                summary.put("execution_step_index", point.historyIndex);
+                summary.put("advance_index", point.advanceIndex);
                 summary.put("result", ok ? "ok" : "tap_fail");
-                summary.put("reason", ok ? "" : "tap_exec_failed");
+                summary.put("reason", ok ? (point.advanceIndex ? "" : "retry_previous_tap") : "tap_exec_failed");
                 trace.event("fsm_script_act_task_map_step_end", summary);
-                return new RouteStepExec(summary, ok);
+                if (ok) {
+                    if (point.advanceIndex) {
+                        ctx.taskMapLastTapCheckpoint = createTapReplayCheckpoint(executedStep, point, summary, index);
+                    } else if (ctx.taskMapLastTapCheckpoint != null) {
+                        ctx.taskMapLastTapCheckpoint.retryCount = Math.min(1, ctx.taskMapLastTapCheckpoint.retryCount + 1);
+                    }
+                }
+                return new RouteStepExec(summary, ok, point.advanceIndex, executedStep, index);
             }
             if ("SWIPE".equals(op)) {
                 SwipeReplaySpec spec = resolveTaskMapSwipeSpec(ctx, step);
@@ -2391,7 +2428,7 @@ public class CortexFsmEngine {
                 summary.put("result", ok ? "ok" : "swipe_fail");
                 summary.put("reason", ok ? "" : "swipe_exec_failed");
                 trace.event("fsm_script_act_task_map_step_end", summary);
-                return new RouteStepExec(summary, ok);
+                return new RouteStepExec(summary, ok, true, step, index);
             }
             if ("INPUT".equals(op) || "BACK".equals(op) || "WAIT".equals(op)) {
                 Instruction cmd = new Instruction(op, new ArrayList<String>(step.args), op + " " + String.join(" ", step.args));
@@ -2399,17 +2436,17 @@ public class CortexFsmEngine {
                 summary.put("result", ok ? "ok" : "action_fail");
                 summary.put("reason", ok ? "" : "action_exec_failed");
                 trace.event("fsm_script_act_task_map_step_end", summary);
-                return new RouteStepExec(summary, ok);
+                return new RouteStepExec(summary, ok, true, step, index);
             }
             summary.put("result", "unsupported");
             summary.put("reason", "unsupported_task_map_op:" + op);
             trace.event("fsm_script_act_task_map_step_end", summary);
-            return new RouteStepExec(summary, false);
+            return new RouteStepExec(summary, false, true, step, index);
         } catch (Exception e) {
             summary.put("result", "resolve_fail");
             summary.put("reason", String.valueOf(e));
             trace.event("fsm_script_act_task_map_step_end", summary);
-            return new RouteStepExec(summary, false);
+            return new RouteStepExec(summary, false, true, step, index);
         }
     }
 
@@ -2612,6 +2649,22 @@ public class CortexFsmEngine {
         target.materializedAtMs = src.materializedAtMs;
     }
 
+    private TapReplayCheckpoint createTapReplayCheckpoint(
+            TaskMap.Step executedStep,
+            TaskMapResolvedPoint point,
+            Map<String, Object> summary,
+            int currentIndex
+    ) {
+        if (executedStep == null || point == null) {
+            return null;
+        }
+        TaskMap.Step snapshot = new TaskMap.Step();
+        copyTaskMapStep(snapshot, executedStep);
+        String locatorMode = stringOrEmpty(summary != null ? summary.get("locator_mode") : "");
+        String reason = stringOrEmpty(summary != null ? summary.get("reason") : "");
+        return new TapReplayCheckpoint(snapshot, currentIndex, locatorMode, point.x, point.y, reason);
+    }
+
     private TaskMapResolvedPoint resolveFirstTaskMapTapPointWithWindow(
             Context ctx,
             String pkg,
@@ -2661,7 +2714,7 @@ public class CortexFsmEngine {
             try {
                 TaskMapResolvedPoint point = useXmlLocator
                         ? resolveTaskMapTapPointByLocatorOnly(step, resolver)
-                        : resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_xml_locator_missing");
+                        : resolveTaskMapTapPointByPostVerification(ctx, pkg, step, resolver, index);
                 if (attempt > 1) {
                     Map<String, Object> recovered = new LinkedHashMap<>();
                     recovered.put("task_id", ctx.taskId);
@@ -2675,6 +2728,9 @@ public class CortexFsmEngine {
                 return point;
             } catch (Exception e) {
                 last = e;
+                if (String.valueOf(e).contains("task_map_post_verify_previous_retry_exhausted")) {
+                    throw e;
+                }
                 Map<String, Object> retryEv = new LinkedHashMap<>();
                 retryEv.put("task_id", ctx.taskId);
                 retryEv.put("package", pkg);
@@ -2694,6 +2750,129 @@ public class CortexFsmEngine {
         throw new IllegalStateException(reason);
     }
 
+    private TaskMapResolvedPoint resolveTaskMapTapPointByPostVerification(
+            Context ctx,
+            String pkg,
+            TaskMap.Step step,
+            LocatorResolver resolver,
+            int index
+    ) throws Exception {
+        TapReplayCheckpoint checkpoint = ctx != null ? ctx.taskMapLastTapCheckpoint : null;
+        if (checkpoint == null) {
+            return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_post_tap_checkpoint_missing");
+        }
+
+        waitBeforeSemanticScreenshot(ctx, pkg, step, "task_map_post_tap_verifier");
+        byte[] screenshotPng = captureScreenshotPng();
+        if (screenshotPng == null || screenshotPng.length == 0) {
+            return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, "task_map_post_tap_verifier_screenshot_missing");
+        }
+
+        TaskMapTapVerificationRequest request = new TaskMapTapVerificationRequest(
+                ctx != null ? ctx.taskId : "",
+                ctx != null ? ctx.taskRouteKeyHash : "",
+                pkg,
+                ctx != null && ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "",
+                index,
+                step,
+                checkpoint.step,
+                checkpoint.stepIndex,
+                hasXmlLocator(step) ? "xml_locator" : "semantic_locator",
+                checkpoint.locatorMode,
+                checkpoint.tapX,
+                checkpoint.tapY,
+                checkpoint.retryCount,
+                checkpoint.resultReason,
+                screenshotPng,
+                renderExecutionHistoryForResolver(ctx)
+        );
+
+        TaskMapTapVerificationResult verificationResult = taskMapTapReplayVerifier != null
+                ? taskMapTapReplayVerifier.verify(request)
+                : TaskMapTapVerificationResult.error("task_map_post_tap_verifier_missing", TaskMapTapReplayVerifier.VERIFIER_NAME);
+
+        if (verificationResult == null || verificationResult.isError()) {
+            TaskMapResolvedPoint fallback = resolveTaskMapTapPointByVisual(
+                    ctx,
+                    pkg,
+                    step,
+                    index,
+                    "task_map_post_tap_verifier_fallback",
+                    screenshotPng,
+                    request.historyText
+            );
+            return new TaskMapResolvedPoint(
+                    fallback.x,
+                    fallback.y,
+                    fallback.bounds,
+                    fallback.pickedStage,
+                    TaskMapTapVerificationResult.DECISION_ERROR,
+                    true,
+                    step,
+                    index,
+                    firstNonEmpty(verificationResult != null ? verificationResult.reason : "", "task_map_post_tap_verifier_error"),
+                    verificationResult
+            );
+        }
+
+        if (verificationResult.isPrevious()) {
+            if (checkpoint.retryCount >= 1) {
+                throw new IllegalStateException("task_map_post_verify_previous_retry_exhausted");
+            }
+            int[] mapped = mapPointByProbe(ctx, verificationResult.tapX, verificationResult.tapY);
+            return new TaskMapResolvedPoint(
+                    mapped[0],
+                    mapped[1],
+                    null,
+                    "task_map_post_tap_verifier_previous",
+                    TaskMapTapVerificationResult.DECISION_PREVIOUS,
+                    false,
+                    checkpoint.step,
+                    checkpoint.stepIndex,
+                    verificationResult.reason,
+                    verificationResult
+            );
+        }
+
+        if (verificationResult.isCurrent()) {
+            int[] mapped = mapPointByProbe(ctx, verificationResult.tapX, verificationResult.tapY);
+            return new TaskMapResolvedPoint(
+                    mapped[0],
+                    mapped[1],
+                    null,
+                    "task_map_post_tap_verifier_current",
+                    TaskMapTapVerificationResult.DECISION_CURRENT,
+                    true,
+                    step,
+                    index,
+                    verificationResult.reason,
+                    verificationResult
+            );
+        }
+
+        TaskMapResolvedPoint fallback = resolveTaskMapTapPointByVisual(
+                ctx,
+                pkg,
+                step,
+                index,
+                "task_map_post_tap_verifier_defer",
+                screenshotPng,
+                request.historyText
+        );
+        return new TaskMapResolvedPoint(
+                fallback.x,
+                fallback.y,
+                fallback.bounds,
+                fallback.pickedStage,
+                TaskMapTapVerificationResult.DECISION_DEFER,
+                true,
+                step,
+                index,
+                verificationResult.reason,
+                verificationResult
+        );
+    }
+
     private TaskMapResolvedPoint resolveTaskMapTapPointByLocatorOnly(TaskMap.Step step, LocatorResolver resolver) throws Exception {
         if (step == null) {
             throw new IllegalStateException("task_map_step_missing");
@@ -2708,7 +2887,7 @@ public class CortexFsmEngine {
         ResolvedNode node = resolver.resolve(locator);
         int cx = (node.bounds.left + node.bounds.right) / 2;
         int cy = (node.bounds.top + node.bounds.bottom) / 2;
-        return new TaskMapResolvedPoint(cx, cy, node.bounds, "locator:" + node.pickedStage);
+        return new TaskMapResolvedPoint(cx, cy, node.bounds, "locator:" + node.pickedStage, "", true, step, -1, "");
     }
 
     private TaskMapResolvedPoint resolveTaskMapTapPointByVisual(
@@ -2723,6 +2902,21 @@ public class CortexFsmEngine {
         if (screenshotPng == null || screenshotPng.length == 0) {
             throw new IllegalStateException("task_map_visual_screenshot_missing:" + locatorFailureReason);
         }
+        return resolveTaskMapTapPointByVisual(ctx, pkg, step, index, locatorFailureReason, screenshotPng, renderExecutionHistoryForResolver(ctx));
+    }
+
+    private TaskMapResolvedPoint resolveTaskMapTapPointByVisual(
+            Context ctx,
+            String pkg,
+            TaskMap.Step step,
+            int index,
+            String locatorFailureReason,
+            byte[] screenshotPng,
+            String historyText
+    ) throws Exception {
+        if (screenshotPng == null || screenshotPng.length == 0) {
+            throw new IllegalStateException("task_map_visual_screenshot_missing:" + locatorFailureReason);
+        }
         StepVisualResolveRequest request = new StepVisualResolveRequest(
                 ctx != null ? ctx.taskId : "",
                 ctx != null ? ctx.taskRouteKeyHash : "",
@@ -2731,7 +2925,7 @@ public class CortexFsmEngine {
                 index,
                 step,
                 screenshotPng,
-                renderExecutionHistoryForResolver(ctx),
+                historyText != null ? historyText : renderExecutionHistoryForResolver(ctx),
                 locatorFailureReason
         );
         TaskMapStepVisualResolver visualResolver = taskMapStepVisualResolver;
@@ -2740,8 +2934,14 @@ public class CortexFsmEngine {
         }
         StepVisualResolveResult result = visualResolver.resolve(request);
         if (result != null && result.isPoint()) {
-            return new TaskMapResolvedPoint(result.x, result.y, null,
-                    firstNonEmpty(result.resolverName, "semantic_visual"));
+            int[] mapped = mapPointByProbe(ctx, result.x, result.y);
+            return new TaskMapResolvedPoint(mapped[0], mapped[1], null,
+                    firstNonEmpty(result.resolverName, "semantic_visual"),
+                    "",
+                    true,
+                    step,
+                    index,
+                    "");
         }
         String status = result != null ? result.status : StepVisualResolveResult.STATUS_ERROR;
         String reason = result != null ? result.reason : "visual_resolver_null_result";
@@ -4666,10 +4866,16 @@ public class CortexFsmEngine {
     private static class RouteStepExec {
         final Map<String, Object> step;
         final boolean ok;
+        final boolean advanceIndex;
+        final TaskMap.Step historyStep;
+        final int historyIndex;
 
-        RouteStepExec(Map<String, Object> step, boolean ok) {
+        RouteStepExec(Map<String, Object> step, boolean ok, boolean advanceIndex, TaskMap.Step historyStep, int historyIndex) {
             this.step = step != null ? step : new LinkedHashMap<String, Object>();
             this.ok = ok;
+            this.advanceIndex = advanceIndex;
+            this.historyStep = historyStep;
+            this.historyIndex = historyIndex;
         }
     }
 
@@ -4678,12 +4884,76 @@ public class CortexFsmEngine {
         final int y;
         final Bounds bounds;
         final String pickedStage;
+        final String verificationDecision;
+        final String verificationReason;
+        final String verificationObserving;
+        final String verificationJudgingPrev;
+        final String verificationJudgePrevResult;
+        final String verificationThinking;
+        final boolean advanceIndex;
+        final TaskMap.Step historyStep;
+        final int historyIndex;
 
-        TaskMapResolvedPoint(int x, int y, Bounds bounds, String pickedStage) {
+        TaskMapResolvedPoint(
+                int x,
+                int y,
+                Bounds bounds,
+                String pickedStage,
+                String verificationDecision,
+                boolean advanceIndex,
+                TaskMap.Step historyStep,
+                int historyIndex,
+                String verificationReason
+        ) {
+            this(x, y, bounds, pickedStage, verificationDecision, advanceIndex,
+                    historyStep, historyIndex, verificationReason, null);
+        }
+
+        TaskMapResolvedPoint(
+                int x,
+                int y,
+                Bounds bounds,
+                String pickedStage,
+                String verificationDecision,
+                boolean advanceIndex,
+                TaskMap.Step historyStep,
+                int historyIndex,
+                String verificationReason,
+                TaskMapTapVerificationResult verificationResult
+        ) {
             this.x = x;
             this.y = y;
             this.bounds = bounds;
             this.pickedStage = pickedStage != null ? pickedStage : "";
+            this.verificationDecision = verificationDecision != null ? verificationDecision : "";
+            this.verificationReason = verificationReason != null ? verificationReason : "";
+            this.verificationObserving = verificationResult != null ? verificationResult.observing : "";
+            this.verificationJudgingPrev = verificationResult != null ? verificationResult.judgingPrev : "";
+            this.verificationJudgePrevResult = verificationResult != null ? verificationResult.judgePrevResult : "";
+            this.verificationThinking = verificationResult != null ? verificationResult.thinking : "";
+            this.advanceIndex = advanceIndex;
+            this.historyStep = historyStep;
+            this.historyIndex = historyIndex;
+        }
+    }
+
+    private static final class TapReplayCheckpoint {
+        final TaskMap.Step step;
+        final int stepIndex;
+        final String locatorMode;
+        final int tapX;
+        final int tapY;
+        final String resultReason;
+        int retryCount;
+
+        TapReplayCheckpoint(TaskMap.Step step, int stepIndex, String locatorMode, int tapX, int tapY, String resultReason) {
+            this.step = step;
+            this.stepIndex = stepIndex;
+            this.locatorMode = locatorMode != null ? locatorMode : "";
+            this.tapX = tapX;
+            this.tapY = tapY;
+            this.resultReason = resultReason != null ? resultReason : "";
+            this.retryCount = 0;
         }
     }
 
@@ -5378,80 +5648,24 @@ public class CortexFsmEngine {
     }
 
     /**
-     * Map logical (VLM) coordinates to screen pixels using coord_probe.
-     * Java port of Python _map_point_by_probe.
+     * Map normalized model coordinates to screen pixels.
      */
     private int[] mapPointByProbe(Context ctx, double xf, double yf) {
-        int w = parseIntLike(ctx.deviceInfo.get("width"), 0);
-        int h = parseIntLike(ctx.deviceInfo.get("height"), 0);
-        Map<String, Object> probe = ctx.coordProbe;
-        if (w <= 1 || h <= 1) {
-            int rx = (int) Math.round(xf);
-            int ry = (int) Math.round(yf);
-            return new int[]{rx, ry};
+        int w = parseIntLike(ctx != null ? ctx.deviceInfo.get("width") : null, 0);
+        int h = parseIntLike(ctx != null ? ctx.deviceInfo.get("height") : null, 0);
+        if (w <= 1) {
+            w = 1001;
         }
-
-        // Preferred mode: normalized coordinate space [0, 1000].
-        if (xf >= 0.0d && xf <= 1000.0d && yf >= 0.0d && yf <= 1000.0d) {
-            int rx = (int) Math.round((xf / 1000.0d) * (double) (w - 1));
-            int ry = (int) Math.round((yf / 1000.0d) * (double) (h - 1));
-            rx = Math.max(0, Math.min(w - 1, rx));
-            ry = Math.max(0, Math.min(h - 1, ry));
-            return new int[]{rx, ry};
+        if (h <= 1) {
+            h = 1001;
         }
-
-        // Compatibility fallback for legacy outputs:
-        // keep old probe-based mapping if values are outside [0,1000].
-        double maxX = toDouble(probe.get("max_x"));
-        double maxY = toDouble(probe.get("max_y"));
-        if (maxX <= 0.0d || maxY <= 0.0d) {
-            int rx = (int) Math.round(xf);
-            int ry = (int) Math.round(yf);
-            rx = Math.max(0, Math.min(w - 1, rx));
-            ry = Math.max(0, Math.min(h - 1, ry));
-            return new int[]{rx, ry};
-        }
-
-        // If looks like absolute screen coordinates that exceed probe range, bypass scaling.
-        if (xf >= 0.0 && xf <= (double) (w - 1) && yf >= 0.0 && yf <= (double) (h - 1)) {
-            if (xf > maxX * 1.2 || yf > maxY * 1.2) {
-                int rx = (int) Math.round(xf);
-                int ry = (int) Math.round(yf);
-                rx = Math.max(0, Math.min(w - 1, rx));
-                ry = Math.max(0, Math.min(h - 1, ry));
-                return new int[]{rx, ry};
-            }
-        }
-
-        double xMin = toDouble(probe.get("x_min"));
-        double xMax = toDouble(probe.get("x_max"));
-        double yMin = toDouble(probe.get("y_min"));
-        double yMax = toDouble(probe.get("y_max"));
-
-        int rx;
-        int ry;
-        if (xMax > xMin && yMax > yMin) {
-            double nx = (xf - xMin) / (xMax - xMin);
-            double ny = (yf - yMin) / (yMax - yMin);
-            rx = (int) Math.round(nx * (double) (w - 1));
-            ry = (int) Math.round(ny * (double) (h - 1));
-        } else {
-            rx = (int) Math.round((xf / maxX) * (double) (w - 1));
-            ry = (int) Math.round((yf / maxY) * (double) (h - 1));
-        }
-
+        double nx = Math.max(0.0d, Math.min(1000.0d, xf));
+        double ny = Math.max(0.0d, Math.min(1000.0d, yf));
+        int rx = (int) Math.round((nx / 1000.0d) * (double) (w - 1));
+        int ry = (int) Math.round((ny / 1000.0d) * (double) (h - 1));
         rx = Math.max(0, Math.min(w - 1, rx));
         ry = Math.max(0, Math.min(h - 1, ry));
         return new int[]{rx, ry};
     }
 
-    private double toDouble(Object o) {
-        if (o == null) return 0.0;
-        if (o instanceof Number) return ((Number) o).doubleValue();
-        try {
-            return Double.parseDouble(String.valueOf(o));
-        } catch (Exception ignored) {
-            return 0.0;
-        }
-    }
 }

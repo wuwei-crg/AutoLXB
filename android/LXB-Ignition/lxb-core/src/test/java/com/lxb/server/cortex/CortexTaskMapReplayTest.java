@@ -69,6 +69,42 @@ public class CortexTaskMapReplayTest {
     }
 
     @Test
+    public void semanticLocator_normalizedPointIsMappedBeforeTapExecution() throws Exception {
+        byte[] payload = buildDumpActionsPayload(
+                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", "")
+        );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(500, 500, "semantic center", "semantic_visual")
+        );
+        FakeExecutionEngine execution = new FakeExecutionEngine();
+        CortexFsmEngine engine = new CortexFsmEngine(
+                new FakePerceptionEngine(payload, screenshotPayload()),
+                execution,
+                null,
+                new TraceLogger(64),
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-normalized").toFile()),
+                visualResolver
+        );
+
+        TaskMap.Step step = new TaskMap.Step();
+        step.stepId = "s0001";
+        step.op = "TAP";
+        step.semanticLocator.put("instruction", "tap the normalized center");
+
+        CortexFsmEngine.Context ctx = contextWithSegment(step);
+        ctx.deviceInfo.put("width", 1080);
+        ctx.deviceInfo.put("height", 2200);
+
+        LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload), new TraceLogger(64));
+        Object exec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", step, resolver, 0);
+
+        Assert.assertTrue((Boolean) readField(exec, "ok"));
+        Assert.assertEquals(1, execution.tapCount);
+        Assert.assertEquals(540, execution.lastTapX);
+        Assert.assertEquals(1100, execution.lastTapY);
+    }
+
+    @Test
     public void tapWithValidLocator_doesNotCallVisualResolver() throws Exception {
         byte[] payload = buildDumpActionsPayload(
                 actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", ""),
@@ -77,13 +113,17 @@ public class CortexTaskMapReplayTest {
         CountingVisualResolver visualResolver = new CountingVisualResolver(
                 StepVisualResolveResult.point(10, 20, "unused", "fake_visual")
         );
+        SequencedTapVerificationResolver verifier = new SequencedTapVerificationResolver(
+                TaskMapTapVerificationResult.current(10, 20, "unused", TaskMapTapReplayVerifier.VERIFIER_NAME)
+        );
         CortexFsmEngine engine = new CortexFsmEngine(
                 new FakePerceptionEngine(payload, screenshotPayload()),
                 null,
                 null,
                 new TraceLogger(64),
                 new TaskMapStore(Files.createTempDirectory("taskmap-replay-locator").toFile()),
-                visualResolver
+                visualResolver,
+                verifier
         );
 
         TaskMap.Step step = new TaskMap.Step();
@@ -101,6 +141,241 @@ public class CortexTaskMapReplayTest {
         Assert.assertEquals(200, ((Number) readField(point, "x")).intValue());
         Assert.assertEquals(280, ((Number) readField(point, "y")).intValue());
         Assert.assertEquals(0, visualResolver.calls);
+        Assert.assertEquals(0, verifier.calls);
+    }
+
+    @Test
+    public void tapRetryVerification_previousKeepsRouteOnSameIndexAndRetriesOnce() throws Exception {
+        byte[] payload = buildDumpActionsPayload(
+                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", ""),
+                actionNode(100, 200, 300, 360, "android.widget.Button", "进入游戏", "enter_game_button", "")
+        );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(111, 222, "unused", "semantic_visual")
+        );
+        SequencedTapVerificationResolver verifier = new SequencedTapVerificationResolver(
+                TaskMapTapVerificationResult.previous(
+                        111,
+                        222,
+                        "old page still visible",
+                        "previous tap target remains and expected page did not appear",
+                        "mismatch",
+                        "retry the previous tap from verifier output",
+                        "previous target still visible",
+                        TaskMapTapReplayVerifier.VERIFIER_NAME
+                ),
+                TaskMapTapVerificationResult.current(
+                        333,
+                        444,
+                        "new page visible",
+                        "previous tap landed",
+                        "match",
+                        "execute the current tap from verifier output",
+                        "current target visible",
+                        TaskMapTapReplayVerifier.VERIFIER_NAME
+                )
+        );
+        FakeExecutionEngine execution = new FakeExecutionEngine();
+        CortexFsmEngine engine = new CortexFsmEngine(
+                new FakePerceptionEngine(payload, screenshotPayload()),
+                execution,
+                null,
+                new TraceLogger(64),
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-previous").toFile()),
+                visualResolver,
+                verifier
+        );
+
+        TaskMap.Step seedStep = new TaskMap.Step();
+        seedStep.stepId = "seed-step";
+        seedStep.op = "TAP";
+        seedStep.expected = "seed page opens";
+        seedStep.semanticLocator.put("instruction", "tap the enter game entry");
+        seedStep.xmlLocator.put("resource_id", "enter_game_button");
+        seedStep.xmlLocator.put("class", "Button");
+
+        TaskMap.Step currentStep = new TaskMap.Step();
+        currentStep.stepId = "current-step";
+        currentStep.op = "TAP";
+        currentStep.expected = "detail page opens";
+        currentStep.semanticLocator.put("instruction", "tap the detail entry");
+        currentStep.semanticLocator.put("expected_after_tap", "detail page opens");
+
+        CortexFsmEngine.Context ctx = contextWithSegment(seedStep, currentStep);
+        ctx.taskRouteKeyHash = "hash";
+        LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload, screenshotPayload()), new TraceLogger(64));
+
+        Object seedExec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", seedStep, resolver, 0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> seedSummary = (Map<String, Object>) readField(seedExec, "step");
+        Assert.assertEquals("ok", seedSummary.get("result"));
+        Assert.assertEquals("", seedSummary.get("verification_decision"));
+        Assert.assertEquals(0, verifier.calls);
+        Assert.assertEquals("seed-step", readField(readField(ctx.taskMapLastTapCheckpoint, "step"), "stepId"));
+
+        Object retryExec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", currentStep, resolver, 1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> retrySummary = (Map<String, Object>) readField(retryExec, "step");
+        Assert.assertEquals("ok", retrySummary.get("result"));
+        Assert.assertEquals(Boolean.FALSE, readField(retryExec, "advanceIndex"));
+        Assert.assertEquals("previous", retrySummary.get("verification_decision"));
+        Assert.assertEquals("previous target still visible", retrySummary.get("verification_reason"));
+        Assert.assertEquals("old page still visible", retrySummary.get("verification_observing"));
+        Assert.assertEquals("previous tap target remains and expected page did not appear", retrySummary.get("verification_judging_prev"));
+        Assert.assertEquals("mismatch", retrySummary.get("verification_judge_prev_result"));
+        Assert.assertEquals("retry the previous tap from verifier output", retrySummary.get("verification_thinking"));
+        Assert.assertEquals("seed-step", retrySummary.get("execution_step_id"));
+        Assert.assertEquals(0, ((Number) retrySummary.get("execution_step_index")).intValue());
+        Assert.assertEquals("retry_previous_tap", retrySummary.get("reason"));
+        Assert.assertEquals(1, verifier.calls);
+        Assert.assertEquals(1, verifier.requests.size());
+        Assert.assertEquals("seed-step", verifier.requests.get(0).lastTapStep.stepId);
+        Assert.assertEquals("current-step", verifier.requests.get(0).currentStep.stepId);
+        Assert.assertEquals("xml_locator", verifier.requests.get(0).lastTapLocatorMode);
+        Assert.assertEquals("semantic_locator", verifier.requests.get(0).currentStepLocatorMode);
+        Assert.assertEquals("seed page opens", verifier.requests.get(0).lastTapStep.expected);
+        Assert.assertEquals(1, ((Number) readField(ctx.taskMapLastTapCheckpoint, "retryCount")).intValue());
+
+        Object advanceExec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", currentStep, resolver, 1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> advanceSummary = (Map<String, Object>) readField(advanceExec, "step");
+        Assert.assertEquals("ok", advanceSummary.get("result"));
+        Assert.assertEquals(Boolean.TRUE, readField(advanceExec, "advanceIndex"));
+        Assert.assertEquals("current", advanceSummary.get("verification_decision"));
+        Assert.assertEquals("current target visible", advanceSummary.get("verification_reason"));
+        Assert.assertEquals("new page visible", advanceSummary.get("verification_observing"));
+        Assert.assertEquals("previous tap landed", advanceSummary.get("verification_judging_prev"));
+        Assert.assertEquals("match", advanceSummary.get("verification_judge_prev_result"));
+        Assert.assertEquals("execute the current tap from verifier output", advanceSummary.get("verification_thinking"));
+        Assert.assertEquals("current-step", advanceSummary.get("execution_step_id"));
+        Assert.assertEquals(1, ((Number) advanceSummary.get("execution_step_index")).intValue());
+        Assert.assertEquals("", advanceSummary.get("reason"));
+        Assert.assertEquals(2, verifier.calls);
+        Assert.assertEquals("current-step", readField(readField(ctx.taskMapLastTapCheckpoint, "step"), "stepId"));
+        Assert.assertEquals(0, ((Number) readField(ctx.taskMapLastTapCheckpoint, "retryCount")).intValue());
+        Assert.assertEquals(3, execution.tapCount);
+        Assert.assertEquals(0, visualResolver.calls);
+    }
+
+    @Test
+    public void tapRetryVerification_currentNormalizedCommandIsMappedBeforeTapExecution() throws Exception {
+        byte[] payload = buildDumpActionsPayload(
+                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", ""),
+                actionNode(100, 200, 300, 360, "android.widget.Button", "进入游戏", "enter_game_button", "")
+        );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(111, 222, "unused", "semantic_visual")
+        );
+        SequencedTapVerificationResolver verifier = new SequencedTapVerificationResolver(
+                TaskMapTapVerificationResult.current(500, 500, "current target visible", TaskMapTapReplayVerifier.VERIFIER_NAME)
+        );
+        FakeExecutionEngine execution = new FakeExecutionEngine();
+        CortexFsmEngine engine = new CortexFsmEngine(
+                new FakePerceptionEngine(payload, screenshotPayload()),
+                execution,
+                null,
+                new TraceLogger(64),
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-verifier-normalized").toFile()),
+                visualResolver,
+                verifier
+        );
+
+        TaskMap.Step seedStep = new TaskMap.Step();
+        seedStep.stepId = "seed-step";
+        seedStep.op = "TAP";
+        seedStep.expected = "seed page opens";
+        seedStep.semanticLocator.put("instruction", "tap the enter game entry");
+        seedStep.xmlLocator.put("resource_id", "enter_game_button");
+        seedStep.xmlLocator.put("class", "Button");
+
+        TaskMap.Step currentStep = new TaskMap.Step();
+        currentStep.stepId = "current-step";
+        currentStep.op = "TAP";
+        currentStep.expected = "detail page opens";
+        currentStep.semanticLocator.put("instruction", "tap the detail entry");
+
+        CortexFsmEngine.Context ctx = contextWithSegment(seedStep, currentStep);
+        ctx.taskRouteKeyHash = "hash";
+        ctx.deviceInfo.put("width", 1080);
+        ctx.deviceInfo.put("height", 2200);
+        LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload, screenshotPayload()), new TraceLogger(64));
+
+        invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", seedStep, resolver, 0);
+        Object exec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", currentStep, resolver, 1);
+
+        Assert.assertTrue((Boolean) readField(exec, "ok"));
+        Assert.assertEquals(Boolean.TRUE, readField(exec, "advanceIndex"));
+        Assert.assertEquals(2, execution.tapCount);
+        Assert.assertEquals(540, execution.lastTapX);
+        Assert.assertEquals(1100, execution.lastTapY);
+        Assert.assertEquals(0, visualResolver.calls);
+    }
+
+    @Test
+    public void tapRetryVerification_deferFallsBackToVisualResolver() throws Exception {
+        byte[] payload = buildDumpActionsPayload(
+                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", ""),
+                actionNode(100, 200, 300, 360, "android.widget.Button", "进入游戏", "enter_game_button", "")
+        );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(777, 888, "fallback target", "semantic_visual")
+        );
+        SequencedTapVerificationResolver verifier = new SequencedTapVerificationResolver(
+                TaskMapTapVerificationResult.defer("", "page still loading", TaskMapTapReplayVerifier.VERIFIER_NAME)
+        );
+        FakeExecutionEngine execution = new FakeExecutionEngine();
+        CortexFsmEngine engine = new CortexFsmEngine(
+                new FakePerceptionEngine(payload, screenshotPayload()),
+                execution,
+                null,
+                new TraceLogger(64),
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-defer").toFile()),
+                visualResolver,
+                verifier
+        );
+
+        TaskMap.Step seedStep = new TaskMap.Step();
+        seedStep.stepId = "seed-step";
+        seedStep.op = "TAP";
+        seedStep.expected = "seed page opens";
+        seedStep.semanticLocator.put("instruction", "tap the enter game entry");
+        seedStep.xmlLocator.put("resource_id", "enter_game_button");
+        seedStep.xmlLocator.put("class", "Button");
+
+        TaskMap.Step currentStep = new TaskMap.Step();
+        currentStep.stepId = "current-step";
+        currentStep.op = "TAP";
+        currentStep.expected = "detail page opens";
+        currentStep.semanticLocator.put("instruction", "tap the detail entry");
+        currentStep.semanticLocator.put("expected_after_tap", "detail page opens");
+
+        CortexFsmEngine.Context ctx = contextWithSegment(seedStep, currentStep);
+        ctx.taskRouteKeyHash = "hash";
+        LocatorResolver resolver = new LocatorResolver(new FakePerceptionEngine(payload, screenshotPayload()), new TraceLogger(64));
+
+        Object seedExec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", seedStep, resolver, 0);
+        Assert.assertEquals(Boolean.TRUE, readField(seedExec, "advanceIndex"));
+
+        Object deferExec = invokeExecuteTaskMapRoutingStep(engine, ctx, "com.demo", currentStep, resolver, 1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> deferSummary = (Map<String, Object>) readField(deferExec, "step");
+        Assert.assertEquals("ok", deferSummary.get("result"));
+        Assert.assertEquals(Boolean.TRUE, readField(deferExec, "advanceIndex"));
+        Assert.assertEquals("defer", deferSummary.get("verification_decision"));
+        Assert.assertEquals("page still loading", deferSummary.get("verification_reason"));
+        Assert.assertEquals("semantic_visual", deferSummary.get("picked_stage"));
+        Assert.assertEquals("current-step", deferSummary.get("execution_step_id"));
+        Assert.assertEquals(1, ((Number) deferSummary.get("execution_step_index")).intValue());
+        Assert.assertEquals("", deferSummary.get("reason"));
+        Assert.assertEquals(1, verifier.calls);
+        Assert.assertEquals(1, visualResolver.calls);
+        Assert.assertEquals(2, execution.tapCount);
+        Assert.assertEquals("current-step", readField(readField(ctx.taskMapLastTapCheckpoint, "step"), "stepId"));
+        Assert.assertEquals(0, ((Number) readField(ctx.taskMapLastTapCheckpoint, "retryCount")).intValue());
+        Assert.assertEquals("seed-step", verifier.requests.get(0).lastTapStep.stepId);
+        Assert.assertEquals("current-step", verifier.requests.get(0).currentStep.stepId);
+        Assert.assertEquals("xml_locator", verifier.requests.get(0).lastTapLocatorMode);
+        Assert.assertEquals("semantic_locator", verifier.requests.get(0).currentStepLocatorMode);
     }
 
     @Test
@@ -294,11 +569,17 @@ public class CortexTaskMapReplayTest {
         return method.invoke(engine, ctx, pkg, step, resolver, index);
     }
 
-    private static CortexFsmEngine.Context contextWithSegment(TaskMap.Step step) {
+    private static CortexFsmEngine.Context contextWithSegment(TaskMap.Step... steps) {
         TaskMap.Segment segment = new TaskMap.Segment();
         segment.segmentId = "seg0001";
         segment.packageName = "com.demo";
-        segment.steps.add(step);
+        if (steps != null) {
+            for (TaskMap.Step step : steps) {
+                if (step != null) {
+                    segment.steps.add(step);
+                }
+            }
+        }
         CortexFsmEngine.Context ctx = new CortexFsmEngine.Context("task1");
         ctx.taskRouteKeyHash = "hash";
         ctx.currentTaskMapSegment = segment;
@@ -465,12 +746,45 @@ public class CortexTaskMapReplayTest {
         }
     }
 
+    private static final class SequencedTapVerificationResolver implements TaskMapTapVerificationResolver {
+        private final List<TaskMapTapVerificationResult> results = new ArrayList<TaskMapTapVerificationResult>();
+        private final List<TaskMapTapVerificationRequest> requests = new ArrayList<TaskMapTapVerificationRequest>();
+        private int calls = 0;
+
+        private SequencedTapVerificationResolver(TaskMapTapVerificationResult... results) {
+            if (results != null) {
+                for (TaskMapTapVerificationResult result : results) {
+                    this.results.add(result);
+                }
+            }
+        }
+
+        @Override
+        public TaskMapTapVerificationResult verify(TaskMapTapVerificationRequest request) {
+            requests.add(request);
+            if (results.isEmpty()) {
+                calls += 1;
+                return TaskMapTapVerificationResult.error("no_result", TaskMapTapReplayVerifier.VERIFIER_NAME);
+            }
+            int index = Math.min(calls, results.size() - 1);
+            calls += 1;
+            return results.get(index);
+        }
+    }
+
     private static final class FakeExecutionEngine extends com.lxb.server.execution.ExecutionEngine {
         private int tapCount = 0;
+        private int lastTapX = -1;
+        private int lastTapY = -1;
 
         @Override
         public byte[] handleTap(byte[] payload) {
             tapCount += 1;
+            if (payload != null && payload.length >= 4) {
+                ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+                lastTapX = buf.getShort() & 0xFFFF;
+                lastTapY = buf.getShort() & 0xFFFF;
+            }
             return new byte[]{0x01};
         }
     }

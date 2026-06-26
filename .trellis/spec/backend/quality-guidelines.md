@@ -94,6 +94,14 @@ possible.
   - otherwise -> semantic locator mode
 - xml locator mode resolves the XML locator directly.
 - semantic locator mode routes through the semantic visual resolver directly.
+- After a semantic TAP is executed, the next semantic step may run a
+  post-tap verifier before the route index advances. The verifier compares the
+  current screenshot against the last TAP locator, the current step locator,
+  and the last TAP expected result, then chooses previous/current/defer.
+- Semantic visual locator and post-tap verifier model outputs use normalized
+  0-1000 coordinates. The FSM maps those normalized coordinates to device
+  pixels immediately before execution. XML locator bounds remain device-pixel
+  coordinates because they come from the accessibility dump.
 - Before screenshot-driven semantic locator analysis begins, replay inserts a
   dedicated settle delay so the screenshot is less likely to capture a
   half-rendered page.
@@ -110,11 +118,16 @@ possible.
 
 - TAP with xml locator -> replay in xml locator mode.
 - TAP without xml locator but with semantic locator -> replay in semantic
-  locator mode.
+  locator mode, with post-tap verification when a prior TAP checkpoint exists.
 - TAP missing semantic locator in old persisted data -> synthesize fallback
   semantic locator during import/load, then replay normally.
 - Locator resolution failure -> retry per replay policy, then fall through to
   the existing visual recovery path.
+- Post-tap verifier decision `previous` retries the last TAP once and keeps the
+  same route index; `current` advances normally; `defer` falls back to the
+  existing visual logic when the page is still transitioning.
+- Semantic visual locator or post-tap verifier coordinates outside `[0,1000]`
+  are invalid model output and must not be executed directly as device pixels.
 - Semantic visual `no_match` / `ambiguous` / `blocked` / `error` -> route step
   fails and outer popup recovery decides whether to continue or hand off.
 - Semantic visual resolve or semantic adaptation screenshot capture ->
@@ -129,8 +142,12 @@ possible.
   `semantic_locator`, then replays from xml first.
 - Base: a pure vision tap with no XML locator still replays via the semantic
   locator with a weak default instruction.
+- Good: a semantic TAP that did not land is retried from the last TAP
+  checkpoint instead of advancing blindly.
 - Bad: storing a TAP step with only `portable_kind` and expecting runtime
   materialization to fill in the missing semantic context.
+- Bad: marking a TAP step successful just because the click command returned
+  ok, even when the post-tap verifier says the page did not transition.
 
 ### 6. Tests Required
 
@@ -142,6 +159,8 @@ possible.
   compatibility.
 - `CortexTaskMapReplayTest` covers xml path, semantic path, and retry behavior
   without container/fallback coupling.
+- `TaskMapTapReplayVerifierTest` covers the verifier prompt contract and JSON
+  decision parsing.
 - `CortexTaskMapReplayTest` also covers the dedicated semantic screenshot
   settle delay and its trace event before screenshot capture.
 - `SemanticVisionStepResolverTest` covers semantic locator prompt text.

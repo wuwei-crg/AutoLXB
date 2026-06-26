@@ -68,6 +68,10 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
                 if (x == Integer.MIN_VALUE || y == Integer.MIN_VALUE) {
                     return StepVisualResolveResult.status(StepVisualResolveResult.STATUS_ERROR, "point_missing_coordinates", RESOLVER_NAME);
                 }
+                if (!isNormalizedCoordinate(x) || !isNormalizedCoordinate(y)) {
+                    return StepVisualResolveResult.status(StepVisualResolveResult.STATUS_ERROR,
+                            "point_coordinates_out_of_range", RESOLVER_NAME);
+                }
                 return StepVisualResolveResult.point(x, y, stringOrEmpty(obj.get("reason")), RESOLVER_NAME);
             }
             String normalized = StepVisualResolveResult.normalizeStatus(status);
@@ -101,7 +105,9 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
         sb.append("You are a constrained semantic locator for Android task-route replay.\n");
         sb.append("Your only job: locate the tap target for the CURRENT route step in the screenshot.\n");
         sb.append("Do not plan the user's task. Do not choose the next business action. Do not output TAP/BACK/WAIT commands.\n");
-        sb.append("Coordinates must be screenshot/device pixel coordinates, not normalized 0-1000 action coordinates.\n");
+        sb.append("Coordinates must be normalized integers in a 1000x1000 logical plane.\n");
+        sb.append("Top-left is (0,0), bottom-right is (1000,1000). Do not output screenshot/device pixel coordinates.\n");
+        sb.append("The engine will map normalized coordinates to device pixels after parsing.\n");
         sb.append("Return JSON only with one of these shapes:\n");
         sb.append("{\"result\":\"point\",\"x\":123,\"y\":456,\"reason\":\"...\"}\n");
         sb.append("{\"result\":\"no_match\",\"reason\":\"target is not visible\"}\n");
@@ -168,6 +174,10 @@ public final class SemanticVisionStepResolver implements TaskMapStepVisualResolv
         } catch (Exception ignored) {
             return defVal;
         }
+    }
+
+    private static boolean isNormalizedCoordinate(int v) {
+        return v >= 0 && v <= 1000;
     }
 
     private static String stringOrEmpty(Object o) {
