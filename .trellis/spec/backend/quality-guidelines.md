@@ -63,84 +63,94 @@ possible.
 
 ### 1. Scope / Trigger
 
-- Trigger: changing route recording, task-map assembly, portable route
-  import/export, semantic tap adaptation, or locator replay for TAP steps.
-- Applies to `RuntimeLocatorBuilder`, `TaskMapLocalTapBuilder`,
-  `TaskMapAssembler`, `PortableTaskRouteCodec`, `SemanticStepMaterializer`,
-  `LocatorResolver`, and `CortexFsmEngine` task-map replay.
+- Trigger: changing TAP route recording, task-map assembly, portable route
+  import/export, or SCRIPT_ACT replay selection.
+- Applies to `TaskMap.Step`, `TaskMapAssembler`, `PortableTaskRouteCodec`,
+  `TaskMapStore` compatibility helpers, `SemanticVisionStepResolver`,
+  `LocatorResolver`, `CortexFsmEngine`, and `CortexTaskManager`.
 
 ### 2. Signatures
 
-- `TaskMap.Step.portableKind` allowed TAP target kinds:
-  - `local_locator` for XML/accessibility locator-backed taps.
-  - `semantic_tap` for semantic target descriptions when no unique XML locator
-    is available.
-  - `materialized` for imported semantic steps adapted on the local device.
-- XML locator fields include `resource_id`, `text`, `content_desc`, `class`,
-  `parent_rid`, `locator_index`, `locator_count`, and `bounds_hint`.
-- Legacy fields `container_probe`, `tap_point`, and `fallback_point` may still
-  be parsed for compatibility, but must not be new targeting strategies.
+- `TaskMap.Step` now carries:
+  - `xml_locator` as the optional XML/accessibility locator payload.
+  - `semantic_locator` as the semantic payload required for every TAP step.
+- Legacy input aliases remain parseable for compatibility:
+  - `locator` -> `xml_locator`
+  - `semantic_descriptor` -> `semantic_locator`
+- Portable export/import counters use:
+  - `xml_locator_step_count`
+  - `semantic_locator_step_count`
+- Legacy runtime-adapter fields (`portable_kind`, `adaptation_status`,
+  `adaptation_error`, `materialized_*`) may still be read from old persisted
+  data, but new serialization paths must not emit them.
 
 ### 3. Contracts
 
-- Route construction must first attempt an XML locator. If the uniqueness gate
-  rejects it, the TAP must become semantic-context backed instead of
-  coordinate-backed.
-- `TaskMapAssembler` keeps a locator-less TAP only when it has semantic context
-  from vision rows, page semantics, expected result, history, or a semantic
-  descriptor.
-- Runtime replay attempts XML locator resolution first. Missing or failing XML
-  locators fall back to semantic visual targeting for the current step.
-- `bounds_hint` is a locator tie-breaker only; by itself it is not a usable XML
-  locator.
-- Portable export emits either `local_locator` or `semantic_tap`; it must not
-  export `container_probe`, `tap_point`, or `source_local_kind` as target
-  strategy fields.
+- `TaskMapAssembler` always builds a semantic locator for TAP steps. If an XML
+  locator is present, it is copied too. If the route has no semantic context, a
+  weak fallback semantic locator is synthesized so the step still replays.
+- SCRIPT_ACT replay chooses the path from the step payload:
+  - xml locator present -> xml locator mode
+  - otherwise -> semantic locator mode
+- xml locator mode resolves the XML locator directly.
+- semantic locator mode routes through the semantic visual resolver directly.
+- The outer popup-detection stage and the existing no-popup -> `VISION_ACT`
+  handoff stay unchanged.
+- Portable export writes `semantic_locator` for every TAP and `xml_locator`
+  only when it exists.
+- Portable import and persisted map loading still accept legacy field names and
+  synthesize a fallback semantic locator when older data omitted one.
+- `bounds_hint` remains a locator tie-breaker only; it is not a standalone
+  targeting strategy.
 
 ### 4. Validation & Error Matrix
 
-- TAP with unique XML locator -> save/replay as locator-backed.
-- TAP with no XML locator and no semantic context -> drop from assembled map or
-  reject portable export as `unsupported_step:no_tap_target`.
-- TAP with no XML locator but semantic context -> save/export as
-  `semantic_tap`.
-- Locator replay failure -> retry per replay policy, then semantic visual
-  fallback.
+- TAP with xml locator -> replay in xml locator mode.
+- TAP without xml locator but with semantic locator -> replay in semantic
+  locator mode.
+- TAP missing semantic locator in old persisted data -> synthesize fallback
+  semantic locator during import/load, then replay normally.
+- Locator resolution failure -> retry per replay policy, then fall through to
+  the existing visual recovery path.
 - Semantic visual `no_match` / `ambiguous` / `blocked` / `error` -> route step
-  fails and the task map segment falls back to normal visual execution.
+  fails and outer popup recovery decides whether to continue or hand off.
+- Portable import/export still rejects unsupported schemas, versions, and
+  malformed bundles.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: duplicate buttons produce `locator_index` disambiguation and no
-  `fallback_point`; locator replay uses the index before bounds hint.
-- Base: a pure icon tap with vision instruction but no XML locator becomes
-  `semantic_tap` and carries a semantic descriptor.
-- Bad: persisting a local tap point, container probe, or fallback coordinate as
-  a replay strategy for a TAP step.
+- Good: a locator-backed button tap exports both `xml_locator` and
+  `semantic_locator`, then replays from xml first.
+- Base: a pure vision tap with no XML locator still replays via the semantic
+  locator with a weak default instruction.
+- Bad: storing a TAP step with only `portable_kind` and expecting runtime
+  materialization to fill in the missing semantic context.
 
 ### 6. Tests Required
 
-- `LocatorSemanticsTest` asserts locator construction and disambiguation, and
-  that new locators do not emit fallback coordinates.
-- `TaskMapAssemblerTest` asserts locator-less semantic TAPs become
-  `semantic_tap` and pure coordinate taps without semantics are skipped.
-- `PortableTaskRouteCodecTest` asserts exports contain `local_locator` or
-  `semantic_tap` only, while legacy `source_local_kind` imports remain
-  tolerated.
-- Replay changes must preserve `:lxb-core:test`.
+- `TaskMapAssemblerTest` covers locator-backed TAPs, fallback semantic
+  locators, and pure coordinate taps.
+- `PortableTaskRouteCodecTest` covers export/import of `xml_locator` and
+  `semantic_locator` plus legacy input tolerance.
+- `TaskMapTest` covers new-field round trips and legacy field-name
+  compatibility.
+- `CortexTaskMapReplayTest` covers xml path, semantic path, and retry behavior
+  without container/fallback coupling.
+- `SemanticVisionStepResolverTest` covers semantic locator prompt text.
+- `:lxb-core:test` must remain green.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-When locator uniqueness fails, write `container_probe`, `tap_point`, or
-`fallback_point` and replay that coordinate-backed target later.
+Keep `semantic_tap` / `materialized` as the active replay state and only
+materialize semantic steps at runtime.
 
 #### Correct
 
-When locator uniqueness fails, preserve semantic context as `semantic_tap`; at
-replay time, use semantic visual targeting if the XML locator is missing or
-fails.
+Persist the semantic locator on the step itself, choose xml vs semantic replay
+from the step payload, and keep old runtime-adapter fields only as
+compatibility input.
 
 ## Scenario: Cortex Task Templates And Workflows
 
