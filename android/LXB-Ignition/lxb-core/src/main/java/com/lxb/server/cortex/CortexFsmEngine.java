@@ -174,6 +174,8 @@ public class CortexFsmEngine {
         public boolean taskMapReplayUsed = false;
         public boolean taskRouteRecordStarted = false;
         public TapReplayCheckpoint taskMapLastTapCheckpoint = null;
+        public CancellationChecker cancellationChecker = null;
+        public boolean cancellationTraced = false;
 
         public Context(String taskId) {
             this.taskId = taskId;
@@ -531,6 +533,8 @@ public class CortexFsmEngine {
         ctx.userPlaybook = userPlaybook != null ? userPlaybook.trim() : "";
         ctx.unlockReadyCallback = unlockReadyCallback;
         ctx.unlockReadyNotified = false;
+        ctx.cancellationChecker = cancellationChecker;
+        ctx.cancellationTraced = false;
         ctx.source = source != null ? source.trim() : "manual";
         ctx.sourceId = sourceId != null ? sourceId.trim() : "";
         ctx.sourceConfigHash = "";
@@ -2013,6 +2017,9 @@ public class CortexFsmEngine {
     }
 
     private State runScriptActState(Context ctx) {
+        if (checkCancellationAndSetFail(ctx)) {
+            return State.FAIL;
+        }
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("task_id", ctx.taskId);
         ev.put("state", State.SCRIPT_ACT.name());
@@ -2055,6 +2062,9 @@ public class CortexFsmEngine {
     }
 
     private State replayTaskMapSegmentScript(Context ctx, String pkg) {
+        if (checkCancellationAndSetFail(ctx)) {
+            return State.FAIL;
+        }
         Map<String, Object> begin = new LinkedHashMap<>();
         begin.put("task_id", ctx.taskId);
         begin.put("package", pkg);
@@ -2074,7 +2084,9 @@ public class CortexFsmEngine {
             return State.VISION_ACT;
         }
 
-        sleepQuiet(1500L);
+        if (!sleepCancelable(ctx, 1500L)) {
+            return State.FAIL;
+        }
 
         LocatorResolver resolver = new LocatorResolver(perception, trace);
         List<Map<String, Object>> stepSummaries = new ArrayList<>();
@@ -2085,16 +2097,26 @@ public class CortexFsmEngine {
         ctx.taskMapLastTapCheckpoint = null;
 
         while (index < ctx.currentTaskMapSegment.steps.size()) {
+            if (checkCancellationAndSetFail(ctx)) {
+                return State.FAIL;
+            }
             TaskMap.Step step = ctx.currentTaskMapSegment.steps.get(index);
             RouteStepExec exec = executeTaskMapRoutingStep(ctx, pkg, step, resolver, index);
             stepSummaries.add(exec.step);
             appendScriptActHistory(ctx, exec.historyStep != null ? exec.historyStep : step, exec.step, "task_map_step");
+            if (checkCancellationAndSetFail(ctx)) {
+                return State.FAIL;
+            }
             if (exec.ok) {
                 if (exec.advanceIndex) {
                     index += 1;
-                    sleepQuiet(400L);
+                    if (!sleepCancelable(ctx, 400L)) {
+                        return State.FAIL;
+                    }
                 } else {
-                    sleepQuiet(300L);
+                    if (!sleepCancelable(ctx, 300L)) {
+                        return State.FAIL;
+                    }
                 }
                 continue;
             }
@@ -2118,7 +2140,9 @@ public class CortexFsmEngine {
                         "task_map_recovery");
                 if (recovered) {
                     recoveryAttempts += 1;
-                    sleepQuiet(SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS);
+                    if (!sleepCancelable(ctx, SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS)) {
+                        return State.FAIL;
+                    }
                     continue;
                 }
             }
@@ -2362,6 +2386,17 @@ public class CortexFsmEngine {
             LocatorResolver resolver,
             int index
     ) {
+        if (checkCancellationAndSetFail(ctx)) {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("index", index);
+            summary.put("step_id", step != null ? step.stepId : "");
+            summary.put("source_action_id", step != null ? step.sourceActionId : "");
+            summary.put("op", step != null ? step.op : "");
+            summary.put("result", "cancelled");
+            summary.put("reason", "cancelled_by_user");
+            trace.event("fsm_script_act_task_map_step_end", summary);
+            return new RouteStepExec(summary, false, true, step, index);
+        }
         Map<String, Object> stepEv = new LinkedHashMap<>();
         stepEv.put("task_id", ctx.taskId);
         stepEv.put("package", pkg);
@@ -2601,7 +2636,7 @@ public class CortexFsmEngine {
         ev.put("reason", reason != null ? reason : "");
         ev.put("wait_ms", SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS);
         trace.event("task_map_semantic_screenshot_settle", ev);
-        sleepQuiet(SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS);
+        throwIfSleepCancelled(ctx, SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS);
     }
 
     private byte[] captureScreenshotPng() {
@@ -2676,6 +2711,7 @@ public class CortexFsmEngine {
         int probes = 0;
         String lastErr = "";
         while (System.currentTimeMillis() <= deadline) {
+            throwIfCancelled(ctx);
             probes += 1;
             try {
                 TaskMapResolvedPoint point = resolveRegularTaskMapTapPoint(ctx, pkg, step, resolver, index);
@@ -2692,9 +2728,9 @@ public class CortexFsmEngine {
             }
             boolean skipTapped = tryTapScriptActSkipCandidate(ctx, pkg, index, probes);
             if (skipTapped) {
-                sleepQuiet(SCRIPT_ACT_FIRST_STEP_AFTER_SKIP_SLEEP_MS);
+                throwIfSleepCancelled(ctx, SCRIPT_ACT_FIRST_STEP_AFTER_SKIP_SLEEP_MS);
             }
-            sleepQuiet(SCRIPT_ACT_FIRST_STEP_SAMPLE_MS);
+            throwIfSleepCancelled(ctx, SCRIPT_ACT_FIRST_STEP_SAMPLE_MS);
         }
         throw new IllegalStateException(lastErr.isEmpty()
                 ? "task_map_first_step_window_timeout"
@@ -2711,6 +2747,7 @@ public class CortexFsmEngine {
         boolean useXmlLocator = hasXmlLocator(step);
         Exception last = null;
         for (int attempt = 1; attempt <= SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX; attempt++) {
+            throwIfCancelled(ctx);
             try {
                 TaskMapResolvedPoint point = useXmlLocator
                         ? resolveTaskMapTapPointByLocatorOnly(step, resolver)
@@ -2741,7 +2778,7 @@ public class CortexFsmEngine {
                 retryEv.put("retrying", attempt < SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX);
                 trace.event("fsm_script_act_task_map_step_retry", retryEv);
                 if (attempt < SCRIPT_ACT_STEP_RESOLVE_RETRY_MAX) {
-                    sleepQuiet(SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS);
+                    throwIfSleepCancelled(ctx, SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS);
                 }
             }
         }
@@ -4252,6 +4289,9 @@ public class CortexFsmEngine {
     }
 
     private State runVisionActState(Context ctx) {
+        if (checkCancellationAndSetFail(ctx)) {
+            return State.FAIL;
+        }
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("task_id", ctx.taskId);
         ev.put("state", State.VISION_ACT.name());
@@ -4288,7 +4328,12 @@ public class CortexFsmEngine {
 
         // First turn uses the same dump-actions based settle logic as action-post settle.
         if (ctx.visionTurns == 1) {
-            waitForUiStableByDumpActions(ctx, "FIRST_TURN_PRE_SCREENSHOT");
+            if (!waitForUiStableByDumpActions(ctx, "FIRST_TURN_PRE_SCREENSHOT")) {
+                return State.FAIL;
+            }
+        }
+        if (checkCancellationAndSetFail(ctx)) {
+            return State.FAIL;
         }
 
         // Fast local splash-ad skip:
@@ -4348,6 +4393,9 @@ public class CortexFsmEngine {
 
         String retryReason = "";
         for (int attempt = 1; attempt <= maxVisionAttempts; attempt++) {
+            if (checkCancellationAndSetFail(ctx)) {
+                return State.FAIL;
+            }
             String raw = "";
             String normalized = "";
             String observing = "";
@@ -4979,6 +5027,7 @@ public class CortexFsmEngine {
      */
     private boolean execActionCommand(Context ctx, Instruction cmd) {
         try {
+            throwIfCancelled(ctx);
             if ("TAP".equals(cmd.op)) {
                 double xf = Double.parseDouble(cmd.args.get(0));
                 double yf = Double.parseDouble(cmd.args.get(1));
@@ -5041,7 +5090,7 @@ public class CortexFsmEngine {
                 waitEv.put("op", "SWIPE");
                 waitEv.put("wait_ms", SWIPE_POST_WAIT_MS);
                 trace.event("exec_swipe_post_wait", waitEv);
-                sleepQuiet(SWIPE_POST_WAIT_MS);
+                throwIfSleepCancelled(ctx, SWIPE_POST_WAIT_MS);
                 return waitForUiStableByDumpActions(ctx, "SWIPE");
             }
             if ("INPUT".equals(cmd.op)) {
@@ -5103,10 +5152,7 @@ public class CortexFsmEngine {
                 ev.put("task_id", ctx.taskId);
                 ev.put("ms", ms);
                 trace.event("exec_wait_start", ev);
-                try {
-                    Thread.sleep(Math.max(0, ms));
-                } catch (InterruptedException ignored) {
-                }
+                throwIfSleepCancelled(ctx, ms);
                 trace.event("exec_wait_done", ev);
                 return true;
             }
@@ -5131,6 +5177,12 @@ public class CortexFsmEngine {
             trace.event("exec_action_unsupported", ev);
             return false;
         } catch (Exception e) {
+            if (isCancellationException(e)) {
+                if (ctx.error == null || ctx.error.isEmpty()) {
+                    ctx.error = "cancelled_by_user";
+                }
+                return false;
+            }
             ctx.error = "action_exec_error:" + cmd.op + ":" + e;
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("task_id", ctx.taskId);
@@ -5241,6 +5293,9 @@ public class CortexFsmEngine {
     }
 
     private boolean waitForUiStableByDumpActions(Context ctx, String op) {
+        if (checkCancellationAndSetFail(ctx)) {
+            return false;
+        }
         Map<String, Object> begin = new LinkedHashMap<>();
         begin.put("task_id", ctx.taskId);
         begin.put("op", op);
@@ -5253,7 +5308,7 @@ public class CortexFsmEngine {
         try {
             // Always wait a bit before starting stability sampling.
             // This improves reliability on pages with inertial motion / delayed rendering.
-            sleepQuiet(UI_SETTLE_PRE_WAIT_MS);
+            throwIfSleepCancelled(ctx, UI_SETTLE_PRE_WAIT_MS);
             DumpSnapshot prev = captureDumpActionsSnapshot();
             if (!prev.valid) {
                 Map<String, Object> ev = new LinkedHashMap<>();
@@ -5262,7 +5317,7 @@ public class CortexFsmEngine {
                 ev.put("reason", "dump_unavailable");
                 ev.put("fallback_wait_ms", UI_SETTLE_FALLBACK_MS);
                 trace.event("vision_settle_fallback", ev);
-                sleepQuiet(UI_SETTLE_FALLBACK_MS);
+                throwIfSleepCancelled(ctx, UI_SETTLE_FALLBACK_MS);
                 return true;
             }
 
@@ -5271,7 +5326,7 @@ public class CortexFsmEngine {
             int samples = 0;
 
             while (System.currentTimeMillis() < deadline) {
-                sleepQuiet(UI_SETTLE_SAMPLE_MS);
+                throwIfSleepCancelled(ctx, UI_SETTLE_SAMPLE_MS);
                 DumpSnapshot cur = captureDumpActionsSnapshot();
                 if (!cur.valid) {
                     Map<String, Object> ev = new LinkedHashMap<>();
@@ -5280,7 +5335,7 @@ public class CortexFsmEngine {
                     ev.put("reason", "dump_unavailable_midway");
                     ev.put("fallback_wait_ms", UI_SETTLE_FALLBACK_MS);
                     trace.event("vision_settle_fallback", ev);
-                    sleepQuiet(UI_SETTLE_FALLBACK_MS);
+                    throwIfSleepCancelled(ctx, UI_SETTLE_FALLBACK_MS);
                     return true;
                 }
 
@@ -5326,7 +5381,11 @@ public class CortexFsmEngine {
             err.put("op", op);
             err.put("err", String.valueOf(e));
             trace.event("vision_settle_error", err);
-            sleepQuiet(UI_SETTLE_FALLBACK_MS);
+            if (isCancellationException(e)) {
+                checkCancellationAndSetFail(ctx);
+                return false;
+            }
+            sleepCancelable(ctx, UI_SETTLE_FALLBACK_MS);
             return true;
         }
     }
@@ -5377,10 +5436,88 @@ public class CortexFsmEngine {
         return ((double) inter) / ((double) union);
     }
 
+    private boolean checkCancellationAndSetFail(Context ctx) {
+        if (!isCancellationRequested(ctx)) {
+            return false;
+        }
+        if (ctx != null) {
+            ctx.error = "cancelled_by_user";
+        }
+        emitCancellationTraceIfNeeded(ctx);
+        return true;
+    }
+
+    private boolean isCancellationRequested(Context ctx) {
+        return ctx != null
+                && ctx.cancellationChecker != null
+                && ctx.cancellationChecker.isCancelled();
+    }
+
+    private void throwIfCancelled(Context ctx) {
+        if (isCancellationRequested(ctx)) {
+            if (ctx != null) {
+                ctx.error = "cancelled_by_user";
+            }
+            emitCancellationTraceIfNeeded(ctx);
+            throw new CancellationException("cancelled_by_user");
+        }
+    }
+
+    private boolean sleepCancelable(Context ctx, long ms) {
+        long remaining = Math.max(0L, ms);
+        while (remaining > 0L) {
+            if (isCancellationRequested(ctx)) {
+                if (ctx != null) {
+                    ctx.error = "cancelled_by_user";
+                }
+                emitCancellationTraceIfNeeded(ctx);
+                return false;
+            }
+            long slice = Math.min(remaining, 100L);
+            sleepQuiet(slice);
+            remaining -= slice;
+        }
+        if (isCancellationRequested(ctx)) {
+            if (ctx != null) {
+                ctx.error = "cancelled_by_user";
+            }
+            emitCancellationTraceIfNeeded(ctx);
+            return false;
+        }
+        return true;
+    }
+
+    private void throwIfSleepCancelled(Context ctx, long ms) {
+        if (!sleepCancelable(ctx, ms)) {
+            throw new CancellationException("cancelled_by_user");
+        }
+    }
+
+    private void emitCancellationTraceIfNeeded(Context ctx) {
+        if (ctx == null || ctx.cancellationTraced) {
+            return;
+        }
+        Map<String, Object> cancelEv = new LinkedHashMap<>();
+        cancelEv.put("task_id", ctx.taskId);
+        trace.event("fsm_task_cancelled", cancelEv);
+        ctx.cancellationTraced = true;
+    }
+
+    private static boolean isCancellationException(Exception e) {
+        return e instanceof CancellationException
+                || (e != null && String.valueOf(e.getMessage()).contains("cancelled_by_user"));
+    }
+
     private static void sleepQuiet(long ms) {
         try {
             Thread.sleep(Math.max(0L, ms));
         } catch (InterruptedException ignored) {
+        }
+    }
+
+    private static final class CancellationException extends RuntimeException {
+        CancellationException(String message) {
+            super(message);
         }
     }
 

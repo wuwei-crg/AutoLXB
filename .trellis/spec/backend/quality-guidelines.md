@@ -179,6 +179,97 @@ Persist the semantic locator on the step itself, choose xml vs semantic replay
 from the step payload, and keep old runtime-adapter fields only as
 compatibility input.
 
+## Scenario: Cortex FSM Manual Cancellation Safe Points
+
+### 1. Scope / Trigger
+
+- Trigger: changing frontend manual stop behavior, `CMD_CORTEX_FSM_CANCEL`,
+  `CortexTaskManager` cancellation propagation, or long-running
+  `CortexFsmEngine` replay / wait / retry helpers.
+- Applies to `CortexFacade`, `CommandDispatcher`, `CortexTaskManager`,
+  `CortexFsmEngine`, app-side `TraceEventMapper`, and task-runtime UI status.
+
+### 2. Signatures
+
+- Command id:
+  - `CMD_CORTEX_FSM_CANCEL`
+- Runtime hook:
+  - `CortexFsmEngine.CancellationChecker`
+- Trace events:
+  - `fsm_cancel_requested`
+  - `fsm_task_cancelled`
+- Task failure reason:
+  - `cancelled_by_user`
+
+### 3. Contracts
+
+- Frontend manual stop remains an async best-effort cancel request. The cancel
+  command still ACKs immediately with `{"ok":true,"reason":"cancel_requested"}`.
+- `CortexTaskManager` owns the shared cancel flag and passes a
+  `CancellationChecker` into the running FSM.
+- `CortexFsmEngine` must observe cancellation at shared safe points, not only
+  at the outer state loop. Required safe-point categories include:
+  - SCRIPT_ACT replay loop boundaries
+  - shared settle / retry sleeps
+  - action `WAIT` and post-action settle waits
+  - VISION_ACT first-turn settle and retry loop boundaries
+- When cancellation is observed, the FSM sets `ctx.error="cancelled_by_user"`
+  and exits through the existing fail/cancel path.
+- `fsm_task_cancelled` must be emitted once per cancelled task run, even if
+  multiple helpers observe the same cancel flag.
+- First-pass cancellation is cooperative. It does not promise forced abortion
+  of an already in-flight LLM HTTP call; cancellation takes effect after that
+  call returns to a shared safe point.
+
+### 4. Validation & Error Matrix
+
+- Cancel before entering `SCRIPT_ACT` or `VISION_ACT` -> fail immediately with
+  `cancelled_by_user` and emit `fsm_task_cancelled` once.
+- Cancel during replay sleep / retry / settle wait -> exit at that wait helper
+  instead of waiting for the outer FSM loop.
+- Cancel during post-action UI settle -> stop before the next screenshot /
+  planner turn.
+- Cancel while inside an in-flight LLM request -> request may finish or time
+  out first; FSM exits on the next safe point afterward.
+- Duplicate cancel checks after the first observed cancel -> no duplicate
+  `fsm_task_cancelled` events.
+
+### 5. Good/Base/Bad Cases
+
+- Good: user taps stop during SCRIPT_ACT route replay and the task exits during
+  the next shared wait/retry boundary.
+- Good: user taps stop during VISION_ACT first-turn settle and the planner
+  never takes another screenshot-driven turn.
+- Base: user taps stop while a model call is already blocked in HTTP; the UI
+  shows cancelling, and the task exits as soon as control returns from that
+  call.
+- Bad: only polling cancellation at the outer FSM loop, leaving long replay or
+  settle helpers uninterruptible for seconds.
+- Bad: emitting `fsm_task_cancelled` from every helper that notices the flag.
+
+### 6. Tests Required
+
+- `CortexScriptActResultTest` covers cancellation during SCRIPT_ACT replay and
+  asserts fail-state plus `fsm_task_cancelled`.
+- `CortexFsmCancellationTest` covers cancellation before VISION_ACT first-turn
+  settle and asserts no settle trace is emitted.
+- `:lxb-core:test` must remain green.
+- `:app:testDebugUnitTest` should remain green because app-side cancel trace
+  mapping is part of the contract.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Treat frontend stop as a pure UI flag while the backend keeps replaying until
+an outer FSM state finishes naturally.
+
+#### Correct
+
+Keep the existing cancel command contract, but make the FSM cooperatively poll
+shared safe points so manual stop takes effect promptly without forcing thread
+interrupt semantics or transport redesign.
+
 ## Scenario: Cortex Task Templates And Workflows
 
 ### 1. Scope / Trigger

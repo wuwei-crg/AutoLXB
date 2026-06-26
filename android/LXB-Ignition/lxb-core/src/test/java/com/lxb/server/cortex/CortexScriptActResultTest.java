@@ -77,6 +77,25 @@ public class CortexScriptActResultTest {
         Assert.assertTrue(traceContains(trace, "fsm_script_act_result", "\"result\":\"FALLBACK_VISION\""));
     }
 
+    @Test
+    public void scriptAct_cancelledDuringReplayFailsAndEmitsTaskCancelled() throws Exception {
+        TraceLogger trace = new TraceLogger(128);
+        CortexFsmEngine engine = newEngine(trace);
+        CortexFsmEngine.Context ctx = newContextWithSegment("task-cancelled", successfulWaitSegment());
+        ctx.cancellationChecker = new CortexFsmEngine.CancellationChecker() {
+            @Override
+            public boolean isCancelled() {
+                return true;
+            }
+        };
+
+        CortexFsmEngine.State next = invokeScriptAct(engine, ctx);
+
+        Assert.assertEquals(CortexFsmEngine.State.FAIL, next);
+        Assert.assertEquals("cancelled_by_user", ctx.error);
+        Assert.assertTrue(traceContains(trace, "fsm_task_cancelled", "\"task_id\":\"task-cancelled\""));
+    }
+
     private static CortexFsmEngine newEngine(TraceLogger trace) throws Exception {
         return new CortexFsmEngine(
                 null,
