@@ -409,3 +409,36 @@ Split SCRIPT_ACT TAP replay into explicit xml locator and semantic locator paths
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Delay semantic screenshot settle in SCRIPT_ACT
+
+**Date**: 2026-06-26
+**Task**: Delay semantic screenshot settle in SCRIPT_ACT
+**Branch**: `dev`
+
+### Summary
+
+Added a dedicated 2s settle delay before semantic screenshot capture in SCRIPT_ACT semantic adaptation and visual resolve paths; added regression coverage and updated backend quality guidelines.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f9b4376` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
