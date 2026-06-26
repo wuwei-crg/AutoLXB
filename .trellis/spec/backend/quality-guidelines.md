@@ -94,6 +94,9 @@ possible.
   - otherwise -> semantic locator mode
 - xml locator mode resolves the XML locator directly.
 - semantic locator mode routes through the semantic visual resolver directly.
+- Before screenshot-driven semantic locator analysis begins, replay inserts a
+  dedicated settle delay so the screenshot is less likely to capture a
+  half-rendered page.
 - The outer popup-detection stage and the existing no-popup -> `VISION_ACT`
   handoff stay unchanged.
 - Portable export writes `semantic_locator` for every TAP and `xml_locator`
@@ -114,6 +117,9 @@ possible.
   the existing visual recovery path.
 - Semantic visual `no_match` / `ambiguous` / `blocked` / `error` -> route step
   fails and outer popup recovery decides whether to continue or hand off.
+- Semantic visual resolve or semantic adaptation screenshot capture ->
+  emit `task_map_semantic_screenshot_settle` with the wait duration before
+  grabbing the screenshot.
 - Portable import/export still rejects unsupported schemas, versions, and
   malformed bundles.
 
@@ -136,6 +142,8 @@ possible.
   compatibility.
 - `CortexTaskMapReplayTest` covers xml path, semantic path, and retry behavior
   without container/fallback coupling.
+- `CortexTaskMapReplayTest` also covers the dedicated semantic screenshot
+  settle delay and its trace event before screenshot capture.
 - `SemanticVisionStepResolverTest` covers semantic locator prompt text.
 - `:lxb-core:test` must remain green.
 

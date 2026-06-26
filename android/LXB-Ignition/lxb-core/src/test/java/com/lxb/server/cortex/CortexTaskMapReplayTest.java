@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class CortexTaskMapReplayTest {
 
@@ -135,6 +136,48 @@ public class CortexTaskMapReplayTest {
         Assert.assertEquals("semantic_visual", readField(point, "pickedStage"));
         Assert.assertEquals(1, visualResolver.calls);
         Assert.assertTrue(visualResolver.lastRequest.historyText.contains("Recent turns"));
+    }
+
+    @Test
+    public void tapWithMissingLocator_waitsBeforeSemanticScreenshot() throws Exception {
+        byte[] payload = buildDumpActionsPayload(
+                actionNode(0, 0, 1080, 2200, "android.widget.FrameLayout", "", "root", "")
+        );
+        CountingVisualResolver visualResolver = new CountingVisualResolver(
+                StepVisualResolveResult.point(321, 654, "semantic match", "semantic_visual")
+        );
+        TimingPerceptionEngine perception = new TimingPerceptionEngine(payload, screenshotPayload());
+        TraceLogger trace = new TraceLogger(64);
+        CortexFsmEngine engine = new CortexFsmEngine(
+                perception,
+                null,
+                null,
+                trace,
+                new TaskMapStore(Files.createTempDirectory("taskmap-replay-settle").toFile()),
+                visualResolver
+        );
+
+        TaskMap.Step step = new TaskMap.Step();
+        step.stepId = "s0001";
+        step.op = "TAP";
+        step.semanticLocator.put("instruction", "tap the publish entry");
+
+        CortexFsmEngine.Context ctx = contextWithSegment(step);
+        LocatorResolver resolver = new LocatorResolver(perception, new TraceLogger(64));
+
+        long startedAt = System.currentTimeMillis();
+        invokeResolveRegularTaskMapTapPoint(engine, ctx, "com.demo", step, resolver, 0);
+
+        Assert.assertTrue(perception.firstScreenshotAtMs > 0L);
+        Assert.assertTrue(
+                "expected semantic screenshot settle delay before screenshot",
+                perception.firstScreenshotAtMs - startedAt >= 1800L
+        );
+
+        Map<String, Object> lastTrace = lastTraceObject(trace);
+        Assert.assertEquals("task_map_semantic_screenshot_settle", lastTrace.get("event"));
+        Assert.assertEquals("semantic_visual_resolve", lastTrace.get("reason"));
+        Assert.assertEquals(2000L, ((Number) lastTrace.get("wait_ms")).longValue());
     }
 
     @Test
@@ -381,6 +424,30 @@ public class CortexTaskMapReplayTest {
         }
     }
 
+    private static final class TimingPerceptionEngine extends PerceptionEngine {
+        private final byte[] payload;
+        private final byte[] screenshot;
+        private long firstScreenshotAtMs = 0L;
+
+        private TimingPerceptionEngine(byte[] payload, byte[] screenshot) {
+            this.payload = payload;
+            this.screenshot = screenshot;
+        }
+
+        @Override
+        public byte[] handleDumpActions(byte[] payload) {
+            return this.payload;
+        }
+
+        @Override
+        public byte[] handleScreenshot() {
+            if (firstScreenshotAtMs == 0L) {
+                firstScreenshotAtMs = System.currentTimeMillis();
+            }
+            return screenshot != null ? screenshot : super.handleScreenshot();
+        }
+    }
+
     private static final class CountingVisualResolver implements TaskMapStepVisualResolver {
         private final StepVisualResolveResult result;
         private int calls = 0;
@@ -406,5 +473,11 @@ public class CortexTaskMapReplayTest {
             tapCount += 1;
             return new byte[]{0x01};
         }
+    }
+
+    private static Map<String, Object> lastTraceObject(TraceLogger trace) {
+        TraceLogger.PullPage page = trace.pullTail(1);
+        Assert.assertEquals(1, page.items.size());
+        return com.lxb.server.cortex.json.Json.parseObject(page.items.get(0).line);
     }
 }

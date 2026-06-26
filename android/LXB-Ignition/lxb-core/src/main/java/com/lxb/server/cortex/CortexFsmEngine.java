@@ -214,6 +214,7 @@ public class CortexFsmEngine {
     private static final long SCRIPT_ACT_STEP_RESOLVE_RETRY_SLEEP_MS = 300L;
     private static final int SCRIPT_ACT_RECOVERY_MAX = 2;
     private static final long SCRIPT_ACT_RECOVERY_POST_ACTION_SLEEP_MS = 300L;
+    private static final long SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS = 2000L;
     private static final int KEYCODE_HOME = 3;
     private static final int KEYCODE_WAKEUP = 224;
     private static final int KEYCODE_POWER = 26;
@@ -2440,6 +2441,7 @@ public class CortexFsmEngine {
             return step;
         }
         try {
+            waitBeforeSemanticScreenshot(ctx, pkg, step, "semantic_adaptation");
             byte[] screenshotPng = captureScreenshotPng();
             if (screenshotPng == null || screenshotPng.length == 0) {
                 String err = "semantic_adaptation_screenshot_missing";
@@ -2544,6 +2546,25 @@ public class CortexFsmEngine {
         ev.put("step_id", step != null ? step.stepId : "");
         ev.put("reason", error);
         trace.event("task_map_semantic_adaptation_failed", ev);
+    }
+
+    private void waitBeforeSemanticScreenshot(
+            Context ctx,
+            String pkg,
+            TaskMap.Step step,
+            String reason
+    ) {
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("task_id", ctx != null ? ctx.taskId : "");
+        ev.put("package", pkg != null ? pkg : "");
+        ev.put("route_id", ctx != null ? ctx.taskRouteKeyHash : "");
+        ev.put("segment_id", ctx != null && ctx.currentTaskMapSegment != null ? ctx.currentTaskMapSegment.segmentId : "");
+        ev.put("step_id", step != null ? step.stepId : "");
+        ev.put("source_action_id", step != null ? step.sourceActionId : "");
+        ev.put("reason", reason != null ? reason : "");
+        ev.put("wait_ms", SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS);
+        trace.event("task_map_semantic_screenshot_settle", ev);
+        sleepQuiet(SCRIPT_ACT_SEMANTIC_SCREENSHOT_SETTLE_MS);
     }
 
     private byte[] captureScreenshotPng() {
@@ -2697,6 +2718,7 @@ public class CortexFsmEngine {
             int index,
             String locatorFailureReason
     ) throws Exception {
+        waitBeforeSemanticScreenshot(ctx, pkg, step, "semantic_visual_resolve");
         byte[] screenshotPng = captureScreenshotPng();
         if (screenshotPng == null || screenshotPng.length == 0) {
             throw new IllegalStateException("task_map_visual_screenshot_missing:" + locatorFailureReason);
