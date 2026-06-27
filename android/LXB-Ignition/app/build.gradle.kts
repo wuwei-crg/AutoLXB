@@ -205,8 +205,8 @@ android {
         applicationId = "com.example.lxb_ignition"
         minSdk = 30
         targetSdk = 36
-        versionCode = 701
-        versionName = "0.7.1"
+        versionCode = 702
+        versionName = "0.7.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
